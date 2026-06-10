@@ -193,3 +193,198 @@ POST /admin/products/${productId}/variants/${variantId}/images/batch  <= admin.p
 POST /admin/products/${productId}/variants/batch  <= admin.product.batchVariants
 POST /admin/products/${productId}/variants/inventory-items/batch  <= admin.product.batchVariantInventoryItems
 GET /admin/products/${productId}/variants  <= admin.product.listVariants
+POST /admin/products/${productId}/variants  <= admin.product.createVariant
+POST /admin/products/export  <= admin.product.export
+POST /admin/products/imports/${transactionId}/confirm  <= admin.product.confirmImport
+POST /admin/products/imports  <= admin.product.createImport
+GET /admin/products  <= admin.product.list
+POST /admin/products  <= admin.product.create
+POST /admin/promotions/${id}/${ruleType}/batch  <= admin.promotion.addRules
+POST /admin/promotions/${id}/${ruleType}/batch  <= admin.promotion.removeRules
+POST /admin/promotions/${id}/${ruleType}/batch  <= admin.promotion.updateRules
+GET /admin/promotions/${id}/${ruleType}  <= admin.promotion.listRules
+GET /admin/promotions/${id}  <= admin.promotion.retrieve
+POST /admin/promotions/${id}  <= admin.promotion.update
+GET /admin/promotions/rule-attribute-options/${ruleType}  <= admin.promotion.listRuleAttributes
+GET /admin/promotions/rule-value-options/${ruleType}/${ruleValue}  <= admin.promotion.listRuleValues
+GET /admin/promotions  <= admin.promotion.list
+POST /admin/promotions  <= admin.promotion.create
+DELETE /admin/property-labels/${id}  <= admin.propertyLabel.delete
+GET /admin/property-labels/${id}  <= admin.propertyLabel.retrieve
+POST /admin/property-labels/${id}  <= admin.propertyLabel.update
+POST /admin/property-labels/batch  <= admin.propertyLabel.batch
+GET /admin/property-labels  <= admin.propertyLabel.list
+POST /admin/property-labels  <= admin.propertyLabel.create
+GET /admin/rbac/me/permissions  <= admin.rbacRole.mePermissions
+GET /admin/rbac/policies/${id}/roles  <= admin.rbacPolicy.listRoles
+DELETE /admin/rbac/policies/${id}  <= admin.rbacPolicy.delete
+GET /admin/rbac/policies/${id}  <= admin.rbacPolicy.retrieve
+POST /admin/rbac/policies/${id}  <= admin.rbacPolicy.update
+GET /admin/rbac/policies/assignable  <= admin.rbacPolicy.listAssignable
+GET /admin/rbac/policies  <= admin.rbacPolicy.list
+POST /admin/rbac/policies  <= admin.rbacPolicy.create
+DELETE /admin/rbac/roles/${id}  <= admin.rbacRole.delete
+GET /admin/rbac/roles/${id}  <= admin.rbacRole.retrieve
+POST /admin/rbac/roles/${id}  <= admin.rbacRole.update
+DELETE /admin/rbac/roles/${roleId}/policies/${policyId}  <= admin.rbacRole.removePolicy
+GET /admin/rbac/roles/${roleId}/policies  <= admin.rbacRole.listPolicies
+POST /admin/rbac/roles/${roleId}/policies  <= admin.rbacRole.addPolicies
+DELETE /admin/rbac/roles/${roleId}/users  <= admin.rbacRole.removeUsers
+GET /admin/rbac/roles/${roleId}/users  <= admin.rbacRole.listUsers
+POST /admin/rbac/roles/${roleId}/users  <= admin.rbacRole.addUsers
+GET /admin/rbac/roles/assignable  <= admin.rbacRole.listAssignable
+GET /admin/rbac/roles  <= admin.rbacRole.list
+POST /admin/rbac/roles  <= admin.rbacRole.create
+DELETE /admin/regions/${id}  <= admin.region.delete
+GET /admin/regions/${id}  <= admin.region.retrieve
+POST /admin/regions/${id}  <= admin.region.update
+GET /admin/regions  <= admin.region.list
+POST /admin/regions  <= admin.region.create
+DELETE /admin/reservations/${id}  <= admin.reservation.delete
+GET /admin/reservations/${id}  <= admin.reservation.retrieve
+POST /admin/reservations/${id}  <= admin.reservation.update
+GET /admin/reservations  <= admin.reservation.list
+POST /admin/reservations  <= admin.reservation.create
+DELETE /admin/return-reasons/${id}  <= admin.returnReason.delete
+GET /admin/return-reasons/${id}  <= admin.returnReason.retrieve
+POST /admin/return-reasons/${id}  <= admin.returnReason.update
+GET /admin/return-reasons  <= admin.returnReason.list
+POST /admin/return-reasons  <= admin.returnReason.create
+POST /admin/returns/${id}/cancel  <= admin.return.cancel
+DELETE /admin/returns/${id}/dismiss-items/${actionId}  <= admin.return.removeDismissItem
+POST /admin/returns/${id}/dismiss-items/${actionId}  <= admin.return.updateDismissItem
+POST /admin/returns/${id}/dismiss-items  <= admin.return.dismissItems
+DELETE /admin/returns/${id}/receive-items/${actionId}  <= admin.return.removeReceiveItem
+POST /admin/returns/${id}/receive-items/${actionId}  <= admin.return.updateReceiveItem
+POST /admin/returns/${id}/receive-items  <= admin.return.receiveItems
+POST /admin/returns/${id}/receive/confirm  <= admin.return.confirmReceive
+DELETE /admin/returns/${id}/receive  <= admin.return.cancelReceive
+POST /admin/returns/${id}/receive  <= admin.return.initiateReceive
+DELETE /admin/returns/${id}/request-items/${actionId}  <= admin.return.removeReturnItem
+POST /admin/returns/${id}/request-items/${actionId}  <= admin.return.updateReturnItem
+POST /admin/returns/${id}/request-items  <= admin.return.addReturnItem
+DELETE /admin/returns/${id}/request  <= admin.return.cancelRequest
+POST /admin/returns/${id}/request  <= admin.return.confirmRequest
+DELETE /admin/returns/${id}/shipping-method/${actionId}  <= admin.return.deleteReturnShipping
+POST /admin/returns/${id}/shipping-method/${actionId}  <= admin.return.updateReturnShipping
+POST /admin/returns/${id}/shipping-method  <= admin.return.addReturnShipping
+GET /admin/returns/${id}  <= admin.return.retrieve
+POST /admin/returns/${id}  <= admin.return.updateRequest
+GET /admin/returns  <= admin.return.list
+POST /admin/returns  <= admin.return.initiateRequest
+POST /admin/sales-channels/${id}/products  <= admin.salesChannel.batchProducts
+DELETE /admin/sales-channels/${id}  <= admin.salesChannel.delete
+GET /admin/sales-channels/${id}  <= admin.salesChannel.retrieve
+POST /admin/sales-channels/${id}  <= admin.salesChannel.update
+GET /admin/sales-channels  <= admin.salesChannel.list
+POST /admin/sales-channels  <= admin.salesChannel.create
+POST /admin/search-indexes/${id}/reindex  <= admin.search.reindex
+DELETE /admin/search-indexes/${id}  <= admin.search.deleteIndex
+GET /admin/search-indexes  <= admin.search.listIndexes
+GET /admin/search  <= admin.search.list
+DELETE /admin/shipping-option-types/${id}  <= admin.shippingOptionType.delete
+GET /admin/shipping-option-types/${id}  <= admin.shippingOptionType.retrieve
+POST /admin/shipping-option-types/${id}  <= admin.shippingOptionType.update
+GET /admin/shipping-option-types  <= admin.shippingOptionType.list
+POST /admin/shipping-option-types  <= admin.shippingOptionType.create
+DELETE /admin/shipping-options/${id}  <= admin.shippingOption.delete
+GET /admin/shipping-options/${id}  <= admin.shippingOption.retrieve
+POST /admin/shipping-options/${id}  <= admin.shippingOption.update
+GET /admin/shipping-options  <= admin.shippingOption.list
+POST /admin/shipping-options  <= admin.shippingOption.create
+DELETE /admin/shipping-profiles/${id}  <= admin.shippingProfile.delete
+GET /admin/shipping-profiles/${id}  <= admin.shippingProfile.retrieve
+POST /admin/shipping-profiles/${id}  <= admin.shippingProfile.update
+GET /admin/shipping-profiles  <= admin.shippingProfile.list
+POST /admin/shipping-profiles  <= admin.shippingProfile.create
+POST /admin/stock-locations/${id}/fulfillment-providers  <= admin.stockLocation.updateFulfillmentProviders
+POST /admin/stock-locations/${id}/fulfillment-sets  <= admin.stockLocation.createFulfillmentSet
+POST /admin/stock-locations/${id}/sales-channels  <= admin.stockLocation.updateSalesChannels
+DELETE /admin/stock-locations/${id}  <= admin.stockLocation.delete
+GET /admin/stock-locations/${id}  <= admin.stockLocation.retrieve
+POST /admin/stock-locations/${id}  <= admin.stockLocation.update
+GET /admin/stock-locations  <= admin.stockLocation.list
+POST /admin/stock-locations  <= admin.stockLocation.create
+POST /admin/stores/${id}  <= admin.store.update
+GET /admin/stores  <= admin.store.list
+POST /admin/translations/batch  <= admin.translation.batch
+GET /admin/translations/entities  <= admin.translation.entities
+POST /admin/translations/settings/batch  <= admin.translation.batchSettings
+GET /admin/translations/settings  <= admin.translation.settings
+GET /admin/translations/statistics  <= admin.translation.statistics
+GET /admin/translations  <= admin.translation.list
+GET /admin/users/${id}/auth-providers  <= admin.user.listAuthProviders
+POST /admin/users/${id}/reset-password  <= admin.user.generateResetPasswordToken
+DELETE /admin/users/${id}  <= admin.user.delete
+GET /admin/users/${id}  <= admin.user.retrieve
+POST /admin/users/${id}  <= admin.user.update
+GET /admin/users/me  <= admin.user.me
+GET /admin/users  <= admin.user.list
+GET /admin/views/${entity}/columns  <= admin.views.columns
+DELETE /admin/views/${entity}/configurations/${id}  <= admin.views.deleteConfiguration
+GET /admin/views/${entity}/configurations/${id}  <= admin.views.retrieveConfiguration
+POST /admin/views/${entity}/configurations/${id}  <= admin.views.updateConfiguration
+GET /admin/views/${entity}/configurations/active  <= admin.views.retrieveActiveConfiguration
+POST /admin/views/${entity}/configurations/active  <= admin.views.setActiveConfiguration
+GET /admin/views/${entity}/configurations  <= admin.views.listConfigurations
+POST /admin/views/${entity}/configurations  <= admin.views.createConfiguration
+GET /admin/views/entities  <= admin.views.listEntities
+GET /admin/workflows-executions/${id}  <= admin.workflowExecution.retrieve
+GET /admin/workflows-executions  <= admin.workflowExecution.list
+GET /auth/${actor}/${method}/callback  <= auth.callback
+POST /auth/${actor}/${method}/register  <= auth.register
+POST /auth/${actor}/${method}  <= auth.login
+POST /auth/${actor}/${provider}/reset-password  <= auth.resetPassword
+POST /auth/${actor}/${provider}/update  <= auth.updateProvider
+GET /auth/${actor}/providers  <= auth.listProviders
+POST /auth/${provider}/user  <= auth.createUser
+DELETE ${taxRateUrl}/${id}  <= admin.taxRate.delete
+GET ${taxRateUrl}/${id}  <= admin.taxRate.retrieve
+POST ${taxRateUrl}/${id}  <= admin.taxRate.update
+DELETE ${taxRegionUrl}/${id}  <= admin.taxRegion.delete
+GET ${taxRegionUrl}/${id}  <= admin.taxRegion.retrieve
+POST ${taxRegionUrl}/${id}  <= admin.taxRegion.update
+
+=== UNRESOLVED (20) ===
+admin.campaign.delete
+admin.order.listChanges
+admin.promotion.delete
+admin.refundReason.create
+admin.refundReason.delete
+admin.refundReason.list
+admin.refundReason.retrieve
+admin.refundReason.update
+admin.taxRate.create
+admin.taxRate.list
+admin.taxRegion.create
+admin.taxRegion.list
+auth.logout
+auth.mfa.disable
+auth.mfa.generateRecoveryCodes
+auth.mfa.list
+auth.mfa.start
+auth.mfa.verify
+auth.mfa.verifyChallenge
+client.fetch
+=== DASHBOARD-ENDPOINT COVERAGE ===
+present in lupus: 327
+MISSING for dashboard: 18
+
+GET /admin/product-tags  <= admin.productTag.list
+POST /admin/product-tags  <= admin.productTag.create
+DELETE /admin/product-tags/${id}  <= admin.productTag.delete
+GET /admin/product-tags/${id}  <= admin.productTag.retrieve
+POST /admin/product-tags/${id}  <= admin.productTag.update
+GET /admin/product-types  <= admin.productType.list
+POST /admin/product-types  <= admin.productType.create
+DELETE /admin/product-types/${id}  <= admin.productType.delete
+GET /admin/product-types/${id}  <= admin.productType.retrieve
+POST /admin/product-types/${id}  <= admin.productType.update
+GET /admin/workflows-executions  <= admin.workflowExecution.list
+GET /admin/workflows-executions/${id}  <= admin.workflowExecution.retrieve
+DELETE ${taxRateUrl}/${id}  <= admin.taxRate.delete
+GET ${taxRateUrl}/${id}  <= admin.taxRate.retrieve
+POST ${taxRateUrl}/${id}  <= admin.taxRate.update
+DELETE ${taxRegionUrl}/${id}  <= admin.taxRegion.delete
+GET ${taxRegionUrl}/${id}  <= admin.taxRegion.retrieve
+POST ${taxRegionUrl}/${id}  <= admin.taxRegion.update
