@@ -1,0 +1,2 @@
+GET /admin/workflows-executions  <= admin.workflowExecution.list
+GET /admin/workflows-executions/${id}  <= admin.workflowExecution.retrieve
