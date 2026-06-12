@@ -1,0 +1,15 @@
+DELETE /admin/product-tags/:p
+DELETE /admin/product-types/:p
+GET /admin/product-tags
+GET /admin/product-tags/:p
+GET /admin/product-types
+GET /admin/product-types/:p
+GET /admin/workflows-executions
+GET /admin/workflows-executions/:p
+POST /admin/product-tags
+POST /admin/product-tags/:p
+POST /admin/product-types
+POST /admin/product-types/:p
+POST /admin/promotions/:p/buy-rules/batch
+POST /admin/promotions/:p/rules/batch
+POST /admin/promotions/:p/target-rules/batch
