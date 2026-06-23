@@ -247,3 +247,252 @@ const BOOKS: Book[] = [
       "Tác phẩm đặt nền móng cho thuyết tiến hóa bằng chọn lọc và là một trong những cuốn sách phi khoa học bán chạy nhất thế kỷ XX.",
     ],
     variants: [
+      { format: PAPERBACK, sku: "LUP-GENE-PB", usd: 15.99, vnd: 299000, weight: 0.5, stock: 48 },
+      { format: EBOOK, sku: "LUP-GENE-EP", usd: 9.99, vnd: 179000, stock: 999 },
+    ],
+  },
+  {
+    handle: "clean-code",
+    title: "Clean Code",
+    subtitle: "Nguyên tắc, kỹ thuật và công cụ cho người lập trình",
+    author: "Robert C. Martin",
+    publisher: "Prentice Hall",
+    year: 2008,
+    pages: 464,
+    isbn: "9780132350884",
+    category: "programming",
+    collection: "best-sellers",
+    tags: ["bestseller"],
+    description: [
+      "Cuốn sách về việc viết mã dễ đọc, dễ bảo trì: đặt tên, hàm, lớp, xử lý lỗi, chú thích, luồng điều khiển và ranh giới vật lý.",
+      "Tác giả xử lý trực tiếp các vấn đề như code smell, kỹ thuật chuẩn hóa, luật ba (Law of Demeter) và cách viết test mà không phụ thuộc thứ tự.",
+    ],
+    variants: [
+      { format: HARDCOVER, sku: "LUP-CLEAN-HC", usd: 32.99, vnd: 629000, weight: 1.2, stock: 28 },
+      { format: PAPERBACK, sku: "LUP-CLEAN-PB", usd: 24.99, vnd: 459000, weight: 0.7, stock: 62 },
+      { format: EBOOK, sku: "LUP-CLEAN-EP", usd: 17.99, vnd: 329000, stock: 999 },
+    ],
+  },
+  {
+    handle: "design-patterns",
+    title: "Design Patterns",
+    subtitle: "Các mẫu thiết kế mềm dùng lại trong hệ đối tượng",
+    author: "Erich Gamma, Richard Helm, Ralph Johnson, John Vlissides",
+    publisher: "Addison-Wesley",
+    year: 1994,
+    pages: 395,
+    isbn: "9780201633610",
+    category: "programming",
+    tags: ["classic"],
+    description: [
+      "Cụm sách Gang of Four là tài liệu gốc về mẫu thiết kế: mô tả 23 mẫu kinh điển như Singleton, Factory Method, Adapter, Observer và Command.",
+      "Mỗi mẫu được trình bày theo cùng một cấu trúc: vấn đề, khi nào dùng, khi nào không nên dùng, và cách hiện thực bằng ngôn ngữ lập trình.",
+    ],
+    variants: [
+      { format: HARDCOVER, sku: "LUP-DP-HC", usd: 39.99, vnd: 769000, weight: 1.4, stock: 18 },
+      { format: PAPERBACK, sku: "LUP-DP-PB", usd: 29.99, vnd: 559000, weight: 0.8, stock: 40 },
+      { format: EBOOK, sku: "LUP-DP-EP", usd: 24.99, vnd: 469000, stock: 999 },
+    ],
+  },
+  {
+    handle: "harry-potter-va-phu-su-qui-dien",
+    title: "Harry Potter and the Philosopher's Stone",
+    author: "J.K. Rowling",
+    publisher: "Bloomsbury",
+    year: 1997,
+    pages: 223,
+    isbn: "9780747532699",
+    category: "children",
+    collection: "staff-picks",
+    tags: ["classic", "new"],
+    languages: ["Tiếng Anh", "Tiếng Việt"],
+    description: [
+      "Harry Potter phát hiện mình là phù thủy vào ngày mười một tuổi, khi những lá thư bắt đầu đến và một tên gọi bí ẩn kéo cậu từ căn nhà dưới gầm cầu thang.",
+      "Tập đầu tiên trong bảy tập đưa Harry vào Hogwarts, trường học phù thủy nơi học phép thuật, chơi Quidditch và đối mặt với Chúa tử Rắn.",
+    ],
+    variants: [
+      { format: PAPERBACK, sku: "LUP-HP1-PB", usd: 12.99, vnd: 249000, weight: 0.4, stock: 80 },
+      { format: EBOOK, sku: "LUP-HP1-EP", usd: 6.99, vnd: 129000, stock: 999 },
+    ],
+  },
+  {
+    handle: "the-little-prince",
+    title: "The Little Prince",
+    author: "Antoine de Saint-Exupery",
+    publisher: "Reynal & Hitchcock",
+    year: 1943,
+    pages: 96,
+    isbn: "9780156012195",
+    category: "children",
+    collection: "staff-picks",
+    tags: ["classic"],
+    languages: ["Tiếng Pháp", "Tiếng Anh", "Tiếng Việt"],
+    description: [
+      "Một phi hành gia gặp một cậu bé nhỏ trên sa mạc, cậu bé đến từ hành tinh B-612 và kể về việc yêu một con cá, một chiếc hộp và một con rồng.",
+      "Bản minh họa gốc của tác giả là một trong những cuốn sách được yêu thích nhất thế kỷ XX, phù hợp cho cả người lớn lẫn trẻ em.",
+    ],
+    variants: [
+      { format: HARDCOVER, sku: "LUP-TLP-HC", usd: 14.99, vnd: 289000, weight: 0.4, stock: 44 },
+      { format: PAPERBACK, sku: "LUP-TLP-PB", usd: 8.99, vnd: 169000, weight: 0.2, stock: 120 },
+      { format: EBOOK, sku: "LUP-TLP-EP", usd: 4.99, vnd: 89000, stock: 999 },
+    ],
+  },
+]
+
+let token = ""
+
+type ApiResult = { status: number; json: any; text: string }
+
+async function api(method: string, path: string, body?: unknown): Promise<ApiResult> {
+  const headers: Record<string, string> = { "content-type": "application/json" }
+  if (token) headers.authorization = `Bearer ${token}`
+  const res = await fetch(`${API}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const text = await res.text()
+  let json: any = null
+  try {
+    json = text ? JSON.parse(text) : null
+  } catch {
+    json = null
+  }
+  return { status: res.status, json, text }
+}
+
+async function expect(method: string, path: string, body: unknown, status: number[]): Promise<any> {
+  const res = await api(method, path, body)
+  if (!status.includes(res.status)) {
+    throw new Error(`${method} ${path} -> ${res.status} (expected ${status.join("|")}): ${res.text.slice(0, 400)}`)
+  }
+  return res.json
+}
+
+async function one<T = any>(sql: string, params: unknown[] = []): Promise<T | null> {
+  const { rows } = await pool.query(sql, params)
+  return (rows[0] ?? null) as T | null
+}
+
+async function many<T = any>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const { rows } = await pool.query(sql, params)
+  return rows as T[]
+}
+
+async function authenticate(): Promise<void> {
+  const credentials = { email: SEED_EMAIL, password: SEED_PASSWORD }
+  let res = await api("POST", "/auth/user/emailpass/register", credentials)
+  if (res.status !== 200 || typeof res.json?.token !== "string") {
+    res = await api("POST", "/auth/user/emailpass", credentials)
+  }
+  if (res.status !== 200 || typeof res.json?.token !== "string") {
+    throw new Error(`Could not authenticate as ${SEED_EMAIL} (${res.status}): ${res.text.slice(0, 300)}`)
+  }
+  token = res.json.token
+  const role = await one<{ id: string }>(
+    `INSERT INTO rbac_role (name) VALUES ('admin') ON CONFLICT (name) DO UPDATE SET name='admin' RETURNING id`
+  )
+  const user = await one<{ id: string }>(`SELECT id FROM admin_user WHERE email=$1`, [SEED_EMAIL])
+  if (user && role) {
+    await pool.query(`INSERT INTO admin_user_role (admin_user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [
+      user.id,
+      role.id,
+    ])
+  }
+}
+
+async function ensureCurrencies(): Promise<void> {
+  const wanted = [
+    { code: "usd", symbol: "$", symbol_native: "$", name: "US Dollar", decimal_digits: 2 },
+    { code: "vnd", symbol: "₫", symbol_native: "đ", name: "Vietnamese Dong", decimal_digits: 0 },
+  ]
+  for (const c of wanted) {
+    await pool.query(
+      `INSERT INTO currency (code, symbol, symbol_native, name, decimal_digits) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (code) DO UPDATE SET symbol=$2, symbol_native=$3, name=$4, decimal_digits=$5`,
+      [c.code, c.symbol, c.symbol_native, c.name, c.decimal_digits]
+    )
+  }
+}
+
+async function ensureSalesChannel(): Promise<string> {
+  const existing = await one<{ id: string }>(
+    `SELECT id FROM sales_channel WHERE name=$1 AND deleted_at IS NULL`,
+    [CHANNEL_NAME]
+  )
+  if (existing) return existing.id
+  const body = await expect(
+    "POST",
+    "/admin/sales-channels",
+    { name: CHANNEL_NAME, description: "Kênh bán hàng trực tuyến (web storefront)" },
+    [201]
+  )
+  return body.sales_channel.id
+}
+
+async function ensureStockLocation(): Promise<string> {
+  const existing = await one<{ id: string }>(
+    `SELECT id FROM stock_location WHERE name=$1 AND deleted_at IS NULL`,
+    [LOCATION_NAME]
+  )
+  if (existing) return existing.id
+  const body = await expect(
+    "POST",
+    "/admin/stock-locations",
+    {
+      name: LOCATION_NAME,
+      address: {
+        address_1: "12 Nguyễn Huệ",
+        city: "Hồ Chí Minh",
+        country_code: "vn",
+        postal_code: "700000",
+        company: STORE_NAME,
+      },
+    },
+    [201]
+  )
+  return body.stock_location.id
+}
+
+async function ensureRegion(name: string, currency: string, countries: string[]): Promise<string> {
+  const existing = await one<{ id: string }>(`SELECT id FROM region WHERE name=$1 AND deleted_at IS NULL`, [name])
+  let regionId = existing?.id
+  if (!regionId) {
+    const body = await expect("POST", "/admin/regions", { name, currency_code: currency, countries: [] }, [201])
+    regionId = body.region.id as string
+  }
+  if (!regionId) throw new Error(`Could not resolve region: ${name}`)
+  for (const iso of countries) {
+    await pool.query(
+      `INSERT INTO region_country (region_id, iso_2) VALUES ($1,$2)
+       ON CONFLICT (region_id, iso_2) WHERE deleted_at IS NULL DO NOTHING`,
+      [regionId, iso]
+    )
+  }
+  await pool.query(
+    `INSERT INTO region_payment_provider (region_id, provider_id) VALUES ($1,'manual') ON CONFLICT DO NOTHING`,
+    [regionId]
+  )
+  return regionId
+}
+
+async function ensureStore(channelId: string, regionId: string, locationId: string): Promise<string> {
+  const existing = await one<{ id: string }>(`SELECT id FROM store WHERE name=$1`, [STORE_NAME])
+  let id = existing?.id
+  if (!id) {
+    const created = await one<{ id: string }>(
+      `INSERT INTO store (name, default_sales_channel_id, default_region_id, default_location_id) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [STORE_NAME, channelId, regionId, locationId]
+    )
+    id = created!.id
+  }
+  for (const [code, isDefault] of [["usd", false], ["vnd", true]] as const) {
+    await pool.query(
+      `UPDATE store_currency SET is_default=FALSE WHERE store_id=$1 AND currency_code<>$2`,
+      [id, code]
+    )
+    await pool.query(
+      `INSERT INTO store_currency (store_id, currency_code, is_default) VALUES ($1,$2,$3)
+       ON CONFLICT (store_id, currency_code) DO UPDATE SET is_default=$3`,
+      [id, code, isDefault]
+    )
