@@ -496,3 +496,250 @@ async function ensureStore(channelId: string, regionId: string, locationId: stri
        ON CONFLICT (store_id, currency_code) DO UPDATE SET is_default=$3`,
       [id, code, isDefault]
     )
+  }
+  for (const locale of ["vi", "en-US"]) {
+    await pool.query(
+      `INSERT INTO store_locale (store_id, locale_code) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      [id, locale]
+    )
+  }
+  const pref = await one<{ id: string }>(
+    `SELECT id FROM price_preference WHERE attribute='currency_code' AND value='vnd' AND deleted_at IS NULL LIMIT 1`
+  )
+  if (!pref) {
+    await pool.query(
+      `INSERT INTO price_preference (attribute, value, is_tax_inclusive) VALUES ('currency_code','vnd',TRUE)`
+    )
+  }
+  return id
+}
+
+async function ensureCategoryTree(): Promise<Map<string, string>> {
+  const ids = new Map<string, string>()
+  const walk = async (node: CategoryNode, parentId: string | null, rank: number): Promise<void> => {
+    const row = await one<{ id: string }>(
+      `INSERT INTO product_category (name, handle, parent_category_id, rank, is_active, is_internal)
+       VALUES ($1,$2,$3,$4,TRUE,FALSE)
+       ON CONFLICT (handle) DO UPDATE
+         SET name=EXCLUDED.name,
+             parent_category_id=EXCLUDED.parent_category_id,
+             rank=EXCLUDED.rank,
+             is_active=TRUE,
+             is_internal=FALSE,
+             deleted_at=NULL
+       RETURNING id`,
+      [node.name, node.handle, parentId, rank]
+    )
+    ids.set(node.handle, row!.id)
+    let childRank = 0
+    for (const child of node.children ?? []) {
+      await walk(child, row!.id, childRank++)
+    }
+  }
+  await walk(CATEGORY_TREE, null, 0)
+  return ids
+}
+
+async function ensureCollections(): Promise<Map<string, string>> {
+  const ids = new Map<string, string>()
+  for (const c of COLLECTIONS) {
+    const row = await one<{ id: string }>(
+      `INSERT INTO product_collection (title, handle) VALUES ($1,$2)
+       ON CONFLICT (handle) DO UPDATE SET title=EXCLUDED.title, deleted_at=NULL
+       RETURNING id`,
+      [c.title, c.handle]
+    )
+    ids.set(c.handle, row!.id)
+  }
+  return ids
+}
+
+async function ensureTaxonomy(): Promise<{ typeId: string; tags: Map<string, string> }> {
+  const type = await one<{ id: string }>(
+    `INSERT INTO product_type (value) VALUES ($1)
+     ON CONFLICT (value) WHERE deleted_at IS NULL DO UPDATE SET value=$1
+     RETURNING id`,
+    [PRODUCT_TYPE]
+  )
+  const tags = new Map<string, string>()
+  for (const value of new Set(BOOKS.flatMap((b) => b.tags))) {
+    const row = await one<{ id: string }>(
+      `INSERT INTO product_tag (value) VALUES ($1)
+       ON CONFLICT (value) WHERE deleted_at IS NULL DO UPDATE SET value=$1
+       RETURNING id`,
+      [value]
+    )
+    tags.set(value, row!.id)
+  }
+  return { typeId: type!.id, tags }
+}
+
+async function resetProduct(handle: string): Promise<void> {
+  const product = await one<{ id: string }>(`SELECT id FROM product WHERE handle=$1`, [handle])
+  if (!product) return
+  const itemIds = await many<{ inventory_item_id: string }>(
+    `SELECT vii.inventory_item_id FROM variant_inventory_item vii
+     JOIN product_variant v ON v.id = vii.variant_id WHERE v.product_id=$1`,
+    [product.id]
+  )
+  await pool.query(`DELETE FROM product WHERE id=$1`, [product.id])
+  for (const item of itemIds) {
+    await pool.query(`DELETE FROM inventory_item WHERE id=$1`, [item.inventory_item_id])
+  }
+}
+
+async function stockVariant(variantId: string, locationId: string, quantity: number): Promise<void> {
+  await pool.query(
+    `INSERT INTO inventory_level_location (inventory_item_id, location_id, stocked_quantity)
+     SELECT vii.inventory_item_id, $2, $3 FROM variant_inventory_item vii WHERE vii.variant_id=$1
+     ON CONFLICT (inventory_item_id, location_id) DO UPDATE SET stocked_quantity=EXCLUDED.stocked_quantity, updated_at=NOW()`,
+    [variantId, locationId, quantity]
+  )
+}
+
+function buildProductPayload(
+  book: Book,
+  categoryId: string,
+  typeId: string,
+  collectionId: string | undefined,
+  tagIds: string[],
+  channelId: string
+): Record<string, unknown> {
+  const cover = `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg`
+  const variants = book.variants.map((v, index) => {
+    const options: Record<string, string> = { [FORMAT]: v.format }
+    if (book.languages) options["Ngôn ngữ"] = book.languages[Math.min(index, book.languages.length - 1)]
+    return {
+      title: book.languages ? `${v.format} / ${options["Ngôn ngữ"]}` : v.format,
+      sku: v.sku,
+      barcode: book.isbn,
+      ean: book.isbn,
+      variant_rank: index,
+      manage_inventory: true,
+      allow_backorder: false,
+      weight: v.weight ?? 0.4,
+      origin_country: "vn",
+      material: "paper",
+      prices: [
+        { currency_code: "usd", amount: Math.round(v.usd * 100) },
+        { currency_code: "vnd", amount: Math.round(v.vnd) },
+      ],
+      options,
+    }
+  })
+  return {
+    title: book.title,
+    handle: book.handle,
+    subtitle: book.subtitle ?? null,
+    description: book.description.map((p) => `<p>${p}</p>`).join("\n"),
+    status: "published",
+    weight: variants[0].weight,
+    origin_country: "vn",
+    material: "paper",
+    metadata: {
+      author: book.author,
+      publisher: book.publisher,
+      publication_year: book.year,
+      pages: book.pages,
+      isbn: book.isbn,
+      languages: book.languages ?? ["Tiếng Anh"],
+    },
+    thumbnail: cover,
+    images: [{ url: cover }, { url: `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg` }],
+    type_id: typeId,
+    collection_id: collectionId ?? null,
+    categories: [{ id: categoryId }],
+    tags: tagIds.map((id) => ({ id })),
+    sales_channels: [{ id: channelId }],
+    options: [
+      { title: FORMAT, values: [...new Set(book.variants.map((v) => v.format))] },
+      ...(book.languages ? [{ title: "Ngôn ngữ", values: book.languages }] : []),
+    ],
+    variants,
+  }
+}
+
+async function seedProducts(
+  categoryIds: Map<string, string>,
+  collectionIds: Map<string, string>,
+  tagIds: Map<string, string>,
+  typeId: string,
+  channelId: string,
+  locationId: string
+): Promise<{ created: number; skipped: number }> {
+  let created = 0
+  let skipped = 0
+  for (const book of BOOKS) {
+    const categoryId = categoryIds.get(book.category)
+    if (!categoryId) throw new Error(`Unknown category handle: ${book.category}`)
+    if (RESET) await resetProduct(book.handle)
+    const existing = await one<{ id: string }>(
+      `SELECT id FROM product WHERE handle=$1 AND deleted_at IS NULL`,
+      [book.handle]
+    )
+    if (existing) {
+      skipped += 1
+      console.log(`  skip   ${book.handle} (đã tồn tại)`)
+      continue
+    }
+    const payload = buildProductPayload(
+      book,
+      categoryId,
+      typeId,
+      book.collection ? collectionIds.get(book.collection) : undefined,
+      book.tags.map((t) => tagIds.get(t)!).filter(Boolean),
+      channelId
+    )
+    const body = await expect("POST", "/admin/products", payload, [201])
+    const product = body.product
+    const createdVariants = Array.isArray(product.variants) ? product.variants : []
+    for (const [index, variant] of book.variants.entries()) {
+      const createdVariant =
+        createdVariants.find((v: any) => v?.sku === variant.sku) ?? createdVariants[index]
+      if (!createdVariant?.id) throw new Error(`Variant ${variant.sku} missing from response`)
+      await stockVariant(createdVariant.id, locationId, variant.stock)
+    }
+    created += 1
+    console.log(`  create ${book.handle} (${createdVariants.length} variants, ${product.id})`)
+  }
+  return { created, skipped }
+}
+
+async function main(): Promise<void> {
+  const health = await api("GET", "/health")
+  if (health.status !== 200) {
+    throw new Error(`Backend chưa chạy tại ${API}. Hãy chạy \`npm run dev\` trước.`)
+  }
+  console.log(`Seeding books catalogue via ${API}${RESET ? " (--reset)" : ""}`)
+
+  await ensureCurrencies()
+  await authenticate()
+  console.log(`  admin token ok (${SEED_EMAIL})`)
+
+  const channelId = await ensureSalesChannel()
+  const locationId = await ensureStockLocation()
+  const regionUs = await ensureRegion("United States", "usd", ["us"])
+  const regionVn = await ensureRegion("Vietnam", "vnd", ["vn"])
+  await ensureStore(channelId, regionVn, locationId)
+  console.log(`  sales channel ${channelId}, stock location ${locationId}`)
+  console.log(`  regions ${regionUs} (usd) / ${regionVn} (vnd)`)
+
+  const categoryIds = await ensureCategoryTree()
+  const collectionIds = await ensureCollections()
+  const { typeId, tags: tagIds } = await ensureTaxonomy()
+  console.log(`  ${categoryIds.size} categories, ${collectionIds.size} collections, ${tagIds.size} tags, type '${PRODUCT_TYPE}'`)
+
+  const { created, skipped } = await seedProducts(categoryIds, collectionIds, tagIds, typeId, channelId, locationId)
+  console.log(`Done: ${created} products created, ${skipped} skipped.`)
+}
+
+main()
+  .then(async () => {
+    await pool.end()
+    process.exit(0)
+  })
+  .catch(async (e) => {
+    console.error(`\nSeed failed: ${e instanceof Error ? e.message : e}`)
+    await pool.end().catch(() => undefined)
+    process.exit(1)
+  })
