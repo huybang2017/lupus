@@ -217,3 +217,222 @@ storeCompatRouter.post("/store/carts/:id/taxes", async (req, res, next) => {
         province: z.string().nullish(),
         postal_code: z.string().nullish(),
       })
+      .parse(req.body ?? {})
+    await requireCartRow(req.params.id)
+    if (body.country_code !== undefined || body.province !== undefined || body.postal_code !== undefined) {
+      const existing = await pool.query(`SELECT * FROM cart_address WHERE cart_id=$1 AND kind='shipping'`, [req.params.id])
+      const cur = existing.rows[0] ?? {}
+      await pool.query(
+        `INSERT INTO cart_address (cart_id, kind, first_name, last_name, address_1, city, country_code, province, postal_code, phone)
+         VALUES ($1,'shipping',$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (cart_id, kind) DO UPDATE SET country_code=$6, province=$7, postal_code=$8`,
+        [
+          req.params.id,
+          cur.first_name ?? null,
+          cur.last_name ?? null,
+          cur.address_1 ?? null,
+          cur.city ?? null,
+          body.country_code !== undefined ? (body.country_code ? body.country_code.toLowerCase() : null) : (cur.country_code ?? null),
+          body.province !== undefined ? (body.province ?? null) : (cur.province ?? null),
+          body.postal_code !== undefined ? (body.postal_code ?? null) : (cur.postal_code ?? null),
+          cur.phone ?? null,
+        ]
+      )
+    }
+    await taxService.refreshForCart(req.params.id)
+    res.json({ cart: await cartService.retrieve(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.delete("/store/carts/:id/promotions", async (req, res, next) => {
+  try {
+    await requireCartRow(req.params.id)
+    await pool.query(`DELETE FROM cart_promotion WHERE cart_id=$1`, [req.params.id])
+    await promotionService.recompute(req.params.id)
+    res.json({ cart: await cartService.retrieve(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// customers/me (requireAuth; actor = customer by auth email)
+// NOTE: GET /store/customers/me is intentionally skipped — owned by customer.routes.ts.
+// ---------------------------------------------------------------------------
+
+const meProfileSchema = z.object({
+  email: z.string().email().optional(),
+  first_name: z.string().nullish(),
+  last_name: z.string().nullish(),
+  company_name: z.string().nullish(),
+  phone: z.string().nullish(),
+  metadata: z.record(z.any()).nullish(),
+  password: z.string().min(8).optional(),
+})
+
+async function meCustomer(req: AuthedRequest): Promise<any> {
+  const customer = await customerService.retrieveByEmail(req.auth!.email)
+  if (!customer) {
+    throw notFound("Customer not found")
+  }
+  return customer
+}
+
+storeCompatRouter.post("/store/customers/me", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = meProfileSchema.parse(req.body ?? {})
+    const email = req.auth!.email.toLowerCase().trim()
+    let customer = await customerService.retrieveByEmail(email)
+    let created = false
+    if (!customer) {
+      customer = await customerService.create({
+        email,
+        first_name: body.first_name ?? undefined,
+        last_name: body.last_name ?? undefined,
+        company_name: body.company_name ?? undefined,
+        phone: body.phone ?? undefined,
+      })
+      created = true
+    }
+    let token: string | undefined
+    if (body.password !== undefined) {
+      const hash = await bcrypt.hash(body.password, 10)
+      const existing = await pool.query(
+        `SELECT * FROM provider_identity WHERE provider='emailpass' AND entity_id=$1 AND deleted_at IS NULL`,
+        [email]
+      )
+      let authIdentityId: string | null = existing.rows[0]?.auth_identity_id ?? null
+      if (existing.rows[0]) {
+        await pool.query(`UPDATE provider_identity SET password_hash=$2 WHERE id=$1`, [existing.rows[0].id, hash])
+      } else {
+        const client = await pool.connect()
+        try {
+          await client.query("BEGIN")
+          const ai = await client.query(`INSERT INTO auth_identity DEFAULT VALUES RETURNING id`)
+          authIdentityId = ai.rows[0].id as string
+          await client.query(
+            `INSERT INTO provider_identity (auth_identity_id, entity_id, provider, password_hash) VALUES ($1,$2,'emailpass',$3)`,
+            [authIdentityId, email, hash]
+          )
+          await client.query("COMMIT")
+        } catch (e) {
+          await client.query("ROLLBACK")
+          throw e
+        } finally {
+          client.release()
+        }
+      }
+      if (authIdentityId) {
+        const issued = await authService.createSessionToken(authIdentityId, "emailpass", email, "customer")
+        token = issued.token
+      }
+    }
+    const { password: _drop, ...profile } = body
+    void _drop
+    const profileKeys = ["email", "first_name", "last_name", "company_name", "phone", "metadata"] as const
+    const hasProfileUpdate = profileKeys.some((k) => (profile as Record<string, unknown>)[k] !== undefined)
+    if (hasProfileUpdate && !created) {
+      const updated = await customerService.update(customer.id, {
+        email: profile.email,
+        first_name: profile.first_name ?? undefined,
+        last_name: profile.last_name ?? undefined,
+        company_name: profile.company_name ?? undefined,
+        phone: profile.phone ?? undefined,
+        metadata: (profile.metadata as Record<string, unknown> | null | undefined) ?? undefined,
+      })
+      if (updated) {
+        customer = updated
+      }
+    } else if (hasProfileUpdate && created && (profile.metadata !== undefined || profile.email !== undefined)) {
+      const updated = await customerService.update(customer.id, {
+        email: profile.email,
+        metadata: (profile.metadata as Record<string, unknown> | null | undefined) ?? undefined,
+      })
+      if (updated) {
+        customer = updated
+      }
+    }
+    if (created) {
+      res.status(201).json(token ? { customer, token } : { customer })
+      return
+    }
+    res.json(token ? { customer, token } : { customer })
+  } catch (e) {
+    next(e)
+  }
+})
+
+const meAddressSchema = z.object({
+  first_name: z.string().nullish(),
+  last_name: z.string().nullish(),
+  address_1: z.string().nullish(),
+  address_2: z.string().nullish(),
+  city: z.string().nullish(),
+  country_code: z.string().nullish(),
+  postal_code: z.string().nullish(),
+  phone: z.string().nullish(),
+  address_name: z.string().nullish(),
+  company: z.string().nullish(),
+  province: z.string().nullish(),
+  is_default_shipping: z.boolean().optional(),
+  is_default_billing: z.boolean().optional(),
+  metadata: z.record(z.any()).nullish(),
+})
+
+storeCompatRouter.get("/store/customers/me/addresses", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const customer = await meCustomer(req)
+    res.json({ addresses: await customerService.listAddresses(customer.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.post("/store/customers/me/addresses", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const customer = await meCustomer(req)
+    const input = meAddressSchema.parse(req.body ?? {})
+    const address = await customerService.createAddress(customer.id, { ...input, metadata: input.metadata ?? undefined })
+    res.status(201).json({ address })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/customers/me/addresses/:address_id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const customer = await meCustomer(req)
+    const address = await customerService.retrieveAddress(customer.id, req.params.address_id)
+    if (!address) {
+      throw notFound("Customer address not found")
+    }
+    res.json({ address })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.post("/store/customers/me/addresses/:address_id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const customer = await meCustomer(req)
+    const input = meAddressSchema.parse(req.body ?? {})
+    const address = await customerService.updateAddress(customer.id, req.params.address_id, {
+      ...input,
+      metadata: input.metadata ?? undefined,
+    })
+    if (!address) {
+      throw notFound("Customer address not found")
+    }
+    res.json({ address })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.delete("/store/customers/me/addresses/:address_id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const customer = await meCustomer(req)
+    const gone = await customerService.deleteAddress(customer.id, req.params.address_id)
+    if (!gone) {
