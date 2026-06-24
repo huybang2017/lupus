@@ -436,3 +436,222 @@ storeCompatRouter.delete("/store/customers/me/addresses/:address_id", requireAut
     const customer = await meCustomer(req)
     const gone = await customerService.deleteAddress(customer.id, req.params.address_id)
     if (!gone) {
+      throw notFound("Customer address not found")
+    }
+    res.json({ id: req.params.address_id, object: "customer_address", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// store orders: list own + transfer flow (requireAuth)
+// NOTE: GET /store/orders/:id is intentionally skipped — owned by order.routes.ts.
+// ---------------------------------------------------------------------------
+
+function isOrderOwner(order: any, customer: any, email: string): boolean {
+  if (customer && order.customer_id && order.customer_id === customer.id) {
+    return true
+  }
+  return (order.email ?? "").toLowerCase() === email.toLowerCase()
+}
+
+async function requireOwnOrder(orderId: string, req: AuthedRequest): Promise<{ order: any; customer: any }> {
+  const email = req.auth!.email.toLowerCase().trim()
+  const customer = await customerService.retrieveByEmail(email)
+  const { rows } = await pool.query(`SELECT * FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [orderId])
+  if (!rows[0]) {
+    throw notFound("Order not found")
+  }
+  if (!isOrderOwner(rows[0], customer, email)) {
+    throw Object.assign(new Error("Order not found"), { statusCode: 404 })
+  }
+  return { order: rows[0], customer }
+}
+
+async function latestPendingTransfer(orderId: string): Promise<any | null> {
+  const { rows } = await pool.query(
+    `SELECT * FROM order_change WHERE order_id=$1 AND change_type='transfer' AND status IN ('pending','requested') AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+    [orderId]
+  )
+  return rows[0] ?? null
+}
+
+function transferPayload(change: any): Record<string, any> {
+  try {
+    return JSON.parse(change.description ?? "{}")
+  } catch {
+    return {}
+  }
+}
+
+storeCompatRouter.get("/store/orders", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { limit, offset } = pageOf(pagingSchema.parse(req.query))
+    const email = req.auth!.email.toLowerCase().trim()
+    const customer = await customerService.retrieveByEmail(email)
+    const params: unknown[] = [customer?.id ?? null, email]
+    const where = `deleted_at IS NULL AND ($1::text IS NOT NULL AND customer_id=$1 OR LOWER(email)=$2)`
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM "order" WHERE ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM "order" WHERE ${where} ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+      [...params, limit, offset]
+    )
+    const orders: unknown[] = []
+    for (const row of rows) {
+      const full = await orderService.retrieve(row.id)
+      orders.push(full ?? row)
+    }
+    res.json({ orders, count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// Lupus order transfer: a signed-in customer asks to take over an order (request); the order's current owner
+// receives the token by email and approves (accept) or refuses (decline) it; the requester can cancel.
+// The pending change is an order_change row whose description carries { kind, token, to_*, from_* }.
+function transferToken(): string {
+  return randomBytes(24).toString("hex")
+}
+
+async function requireTransferOrder(orderId: string): Promise<any> {
+  const { rows } = await pool.query(`SELECT * FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [orderId])
+  if (!rows[0]) {
+    throw notFound("Order not found")
+  }
+  return rows[0]
+}
+
+// The party currently owning the order: its customer, or the email it was placed with (guest orders)
+function ownsOrder(order: any, customer: any, email: string): boolean {
+  return isOrderOwner(order, customer, email)
+}
+
+storeCompatRouter.post("/store/orders/:id/transfer/request", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const order = await requireTransferOrder(req.params.id)
+    const email = req.auth!.email.toLowerCase().trim()
+    const customer = await customerService.retrieveByEmail(email)
+    if (!customer) {
+      throw notFound("Customer not found")
+    }
+    if (order.customer_id === customer.id || (order.email ?? "").toLowerCase() === email) {
+      throw Object.assign(new Error("This order is already yours"), { statusCode: 400 })
+    }
+    if (await latestPendingTransfer(req.params.id)) {
+      throw Object.assign(new Error("This order already has a pending transfer request"), { statusCode: 400 })
+    }
+    const token = transferToken()
+    await pool.query(
+      `INSERT INTO order_change (order_id, change_type, description, status, requested_at) VALUES ($1,'transfer',$2,'requested',NOW())`,
+      [
+        req.params.id,
+        JSON.stringify({ kind: "store-transfer", token, to_email: email, to_customer_id: customer.id, from_email: (order.email ?? "").toLowerCase(), from_customer_id: order.customer_id }),
+      ]
+    )
+    if (order.email) {
+      // the owner approves through the link in this email (/<country>/order/:id/transfer/:token)
+      await pool
+        .query(`INSERT INTO notification (to_address, channel, template, data, status) VALUES ($1,'email','order-transfer-requested',$2,'sent')`, [
+          String(order.email).toLowerCase(),
+          JSON.stringify({ order_id: order.id, token, requested_by: email }),
+        ])
+        .catch(() => undefined)
+    }
+    // only what the requester needs to see (Lupus answers with id + email); the email is masked because the
+    // requester does not own the order
+    const [local, domain] = String(order.email ?? "").split("@")
+    const masked = order.email ? `${local.slice(0, 1)}***@${domain}` : null
+    res.status(201).json({ order: { id: order.id, email: masked } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+async function pendingTransferFor(orderId: string, token: unknown): Promise<{ pending: any; payload: Record<string, any> }> {
+  const pending = await latestPendingTransfer(orderId)
+  if (!pending) {
+    throw notFound("Pending order transfer not found")
+  }
+  const payload = transferPayload(pending)
+  if (typeof token !== "string" || !token || payload.token !== token) {
+    throw Object.assign(new Error("Invalid order transfer token"), { statusCode: 400 })
+  }
+  return { pending, payload }
+}
+
+storeCompatRouter.post("/store/orders/:id/transfer/accept", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { token } = z.object({ token: z.string() }).parse(req.body ?? {})
+    const { pending, payload } = await pendingTransferFor(req.params.id, token)
+    const order = await requireTransferOrder(req.params.id)
+    const email = req.auth!.email.toLowerCase().trim()
+    const customer = await customerService.retrieveByEmail(email)
+    if (!ownsOrder(order, customer, email)) {
+      throw Object.assign(new Error("Order transfer not found"), { statusCode: 404 })
+    }
+    const target = payload.to_customer_id ? await customerService.retrieve(payload.to_customer_id) : null
+    if (!target) {
+      throw notFound("Customer not found")
+    }
+    await pool.query(`UPDATE "order" SET customer_id=$2, email=$3, updated_at=NOW() WHERE id=$1`, [req.params.id, target.id, target.email])
+    await pool.query(`UPDATE order_change SET status='confirmed', confirmed_at=NOW() WHERE id=$1`, [pending.id])
+    res.json({ order: await orderService.retrieve(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.post("/store/orders/:id/transfer/decline", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { token } = z.object({ token: z.string() }).parse(req.body ?? {})
+    const { pending } = await pendingTransferFor(req.params.id, token)
+    const order = await requireTransferOrder(req.params.id)
+    const email = req.auth!.email.toLowerCase().trim()
+    const customer = await customerService.retrieveByEmail(email)
+    if (!ownsOrder(order, customer, email)) {
+      throw Object.assign(new Error("Order transfer not found"), { statusCode: 404 })
+    }
+    await pool.query(`UPDATE order_change SET status='declined', declined_at=NOW() WHERE id=$1`, [pending.id])
+    res.json({ order: await orderService.retrieve(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// the requester withdraws the request
+storeCompatRouter.post("/store/orders/:id/transfer/cancel", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const pending = await latestPendingTransfer(req.params.id)
+    if (!pending) {
+      throw notFound("Pending order transfer not found")
+    }
+    const payload = transferPayload(pending)
+    if ((payload.to_email ?? "").toLowerCase() !== req.auth!.email.toLowerCase().trim()) {
+      throw Object.assign(new Error("Order transfer not found"), { statusCode: 404 })
+    }
+    await pool.query(`UPDATE order_change SET status='canceled', canceled_at=NOW() WHERE id=$1`, [pending.id])
+    res.json({ order: await orderService.retrieve(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// store catalog reads (public)
+// ---------------------------------------------------------------------------
+
+storeCompatRouter.get("/store/collections", async (req, res, next) => {
+  try {
+    const many = z.union([z.string(), z.array(z.string())]).transform((v) => (Array.isArray(v) ? v : [v]))
+    const parsed = pagingSchema.extend({ q: z.string().optional(), handle: many.optional(), id: many.optional() }).parse(req.query)
+    const { limit, offset } = pageOf(parsed)
+    const conds = [`deleted_at IS NULL`]
+    const params: unknown[] = []
+    if (parsed.q) {
+      params.push(`%${parsed.q}%`)
+      conds.push(`(title ILIKE $${params.length} OR handle ILIKE $${params.length})`)
+    }
+    if (parsed.handle) {
+      params.push(parsed.handle)
