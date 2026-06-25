@@ -217,3 +217,222 @@ async function assignVariantOptions(
     if (!optionId) {
       const created = await queryable.query(`INSERT INTO product_option (product_id, title) VALUES ($1,$2) RETURNING id`, [productId, title])
       optionId = created.rows[0].id
+    }
+    const ov = await queryable.query(`SELECT id FROM product_option_value WHERE option_id = $1 AND value = $2 AND deleted_at IS NULL`, [optionId, value])
+    let valueId = ov.rows[0]?.id as string | undefined
+    if (!valueId) {
+      const created = await queryable.query(`INSERT INTO product_option_value (option_id, value) VALUES ($1,$2) RETURNING id`, [optionId, value])
+      valueId = created.rows[0].id
+    }
+    await queryable.query(`INSERT INTO product_variant_option_value (variant_id, option_value_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [variantId, valueId])
+  }
+}
+
+async function applyVariantPrices(variantId: string, prices: { currency_code: string; amount: number }[]): Promise<void> {
+  const psId = await pricingService.ensureVariantPriceSet(variantId)
+  await pool.query(`UPDATE price SET deleted_at = NOW() WHERE price_set_id = $1 AND price_list_id IS NULL AND deleted_at IS NULL`, [psId])
+  for (const p of prices) {
+    await pool.query(
+      `INSERT INTO price (price_set_id, currency_code, amount, price_list_id) VALUES ($1,$2,$3,NULL)
+       ON CONFLICT (price_set_id, currency_code) WHERE price_list_id IS NULL AND deleted_at IS NULL
+       DO UPDATE SET amount = $3, deleted_at = NULL`,
+      [psId, p.currency_code.toLowerCase(), p.amount]
+    )
+  }
+}
+
+async function getVariantInProduct(productId: string, variantId: string): Promise<any | null> {
+  const { rows } = await pool.query(`SELECT * FROM product_variant WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL`, [variantId, productId])
+  if (!rows[0]) {
+    return null
+  }
+  const enriched = await enrichVariants(rows)
+  return enriched[0]
+}
+
+// ---- GET /admin/products (admin.product.list) ----
+catalogCompatRouter.get("/admin/products", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const lq = buildListQuery({
+      base: "p.deleted_at IS NULL",
+      query: req.query,
+      specs: PRODUCT_FILTERS,
+      q: { columns: PRODUCT_Q_COLUMNS },
+      order: PRODUCT_SORT,
+      defaultOrder: "p.created_at DESC",
+    })
+    // sales_channel_id is not a product column: resolve it through the
+    // product_sales_channel pivot with a bound param.
+    const channels = queryList(req.query.sales_channel_id)
+    const extra =
+      channels.length > 0
+        ? {
+            sql: `EXISTS (SELECT 1 FROM product_sales_channel psc WHERE psc.product_id = p.id AND psc.sales_channel_id = ANY($${lq.params.length + 1}))`,
+            params: [channels],
+          }
+        : null
+    // price_list_id: products that have at least one override in those price lists
+    const lists = queryList(req.query.price_list_id)
+    const extras = [extra].filter((x): x is { sql: string; params: any[] } => !!x)
+    if (lists.length > 0) {
+      const at = lq.params.length + extras.reduce((n, x) => n + x.params.length, 0) + 1
+      extras.push({
+        sql: `EXISTS (SELECT 1 FROM price pr JOIN product_variant pv ON pv.price_set_id = pr.price_set_id AND pv.deleted_at IS NULL WHERE pv.product_id = p.id AND pr.deleted_at IS NULL AND pr.price_list_id = ANY($${at}))`,
+        params: [lists],
+      })
+    }
+    // tag_id: products carrying at least one of those tags (the Product Tags detail page filters on it)
+    const tagIds = queryList(req.query.tag_id)
+    if (tagIds.length > 0) {
+      const at = lq.params.length + extras.reduce((n, x) => n + x.params.length, 0) + 1
+      extras.push({
+        sql: `EXISTS (SELECT 1 FROM product_tags ptg WHERE ptg.product_id = p.id AND ptg.tag_id = ANY($${at}))`,
+        params: [tagIds],
+      })
+    }
+    // category_id: products filed under at least one of those categories
+    const categoryIds = queryList(req.query.category_id)
+    if (categoryIds.length > 0) {
+      const at = lq.params.length + extras.reduce((n, x) => n + x.params.length, 0) + 1
+      extras.push({
+        sql: `EXISTS (SELECT 1 FROM product_category_product pcp WHERE pcp.product_id = p.id AND pcp.category_id = ANY($${at}))`,
+        params: [categoryIds],
+      })
+    }
+    const params = [...lq.params, ...extras.flatMap((x) => x.params)]
+    const conditions = [lq.where.replace(/^WHERE\s+/i, ""), ...extras.map((x) => x.sql)].filter((c) => c.length > 0)
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+    const order = lq.order ? `ORDER BY ${lq.order}` : ""
+    const countRes = await pool.query(`SELECT COUNT(*)::int AS count ${PRODUCT_BASE_FROM} ${where}`, params)
+    const dataRes = await pool.query(
+      `SELECT ${PRODUCT_BASE_SELECT} ${PRODUCT_BASE_FROM} ${where} ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lq.limit, lq.offset]
+    )
+    sendList(res, {
+      products: await enrichProducts(dataRes.rows),
+      count: Number(countRes.rows[0].count),
+      offset: lq.offset,
+      limit: lq.limit,
+    })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/products/:id (admin.product.retrieve) ----
+catalogCompatRouter.get("/admin/products/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    z.object({ fields: z.string().optional(), expand: z.string().optional() }).parse(req.query)
+    const product = await getEnrichedProduct(req.params.id)
+    if (!product) {
+      throw notFound("Product not found")
+    }
+    res.json({ product })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/products/:productId/variants/:id (admin.product.retrieveVariant) ----
+catalogCompatRouter.get("/admin/products/:productId/variants/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const variant = await getVariantInProduct(req.params.productId, req.params.id)
+    if (!variant) {
+      throw notFound("Variant not found")
+    }
+    res.json({ variant })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/:productId/variants/:id (admin.product.updateVariant -> { product }) ----
+const compatVariantUpdateSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    sku: z.string().nullable().optional(),
+    barcode: z.string().nullable().optional(),
+    ean: z.string().nullable().optional(),
+    upc: z.string().nullable().optional(),
+    inventory_quantity: z.number().int().nonnegative().optional(),
+    metadata: z.record(z.any()).nullable().optional(),
+    prices: z.array(z.object({ currency_code: z.string(), amount: z.number().int().nonnegative() })).optional(),
+    options: z.record(z.string()).optional(),
+  })
+  .passthrough()
+
+catalogCompatRouter.post("/admin/products/:productId/variants/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    // "batch" is a sibling route registered below, not a variant id.
+    if (req.params.id === "batch") {
+      next("route")
+      return
+    }
+    const body = compatVariantUpdateSchema.parse(req.body)
+    const existing = await getVariantInProduct(req.params.productId, req.params.id)
+    if (!existing) {
+      throw notFound("Variant not found")
+    }
+    const patch: Record<string, unknown> = {}
+    for (const k of ["title", "sku", "barcode", "ean", "upc", "inventory_quantity", "metadata", "manage_inventory", "allow_backorder", "material", "origin_country", "hs_code", "mid_code", "weight", "length", "height", "width"]) {
+      const v = (body as Record<string, unknown>)[k]
+      if (v !== undefined) {
+        patch[k] = v
+      }
+    }
+    if (Object.keys(patch).length > 0) {
+      await productService.updateVariant(req.params.id, patch as { title: string; sku: string | null })
+    }
+    if (body.prices !== undefined) {
+      await applyVariantPrices(req.params.id, body.prices)
+    }
+    if (body.options !== undefined) {
+      await assignVariantOptions(pool, req.params.productId, req.params.id, body.options)
+    }
+    const product = await getEnrichedProduct(req.params.productId)
+    res.json({ product })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- DELETE /admin/products/:productId/variants/:id (admin.product.deleteVariant) ----
+catalogCompatRouter.delete("/admin/products/:productId/variants/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const variant = await getVariantInProduct(req.params.productId, req.params.id)
+    if (!variant) {
+      throw notFound("Variant not found")
+    }
+    await productService.deleteVariant(req.params.id)
+    const parent = await getEnrichedProduct(req.params.productId)
+    res.json({ id: req.params.id, object: "variant", deleted: true, parent })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/:productId/variants/batch (admin.product.batchVariants) ----
+const compatBatchVariantCreateSchema = z
+  .object({
+    title: z.string().min(1),
+    sku: z.string().nullish(),
+    barcode: z.string().nullish(),
+    ean: z.string().nullish(),
+    upc: z.string().nullish(),
+    inventory_quantity: z.number().int().nonnegative().optional(),
+    metadata: z.record(z.any()).nullish(),
+    prices: z.array(z.object({ currency_code: z.string(), amount: z.number().int().nonnegative() })).optional(),
+    options: z.record(z.string()).optional(),
+  })
+  .passthrough()
+
+catalogCompatRouter.post("/admin/products/:productId/variants/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z
+      .object({
+        create: z.array(compatBatchVariantCreateSchema).optional(),
+        update: z.array(compatVariantUpdateSchema.extend({ id: z.string() })).optional(),
+        delete: z.array(z.string()).optional(),
+      })
+      .parse(req.body)
+    const product = await pool.query(`SELECT id FROM product WHERE id = $1 AND deleted_at IS NULL`, [req.params.productId])
