@@ -220,3 +220,224 @@ catalogAdminRouter.delete("/admin/campaigns/:id", requireAuth, async (req, res, 
 })
 
 catalogAdminRouter.post("/admin/campaigns/:id", requireAuth, async (req, res, next) => {
+  try {
+    const patch = campaignSchema.partial().omit({ promotion_ids: true }).parse(lupusCampaignBody(req.body))
+    const sets: string[] = []
+    const params: any[] = []
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue
+      params.push(k === "currency_code" && typeof v === "string" ? v.toLowerCase() : v)
+      sets.push(`${k} = $${params.length}`)
+    }
+    if (sets.length === 0) {
+      const cur = await pool.query(`SELECT * FROM campaign WHERE id = $1`, [req.params.id])
+      res.json({ campaign: cur.rows[0] ?? null })
+      return
+    }
+    params.push(req.params.id)
+    const { rows } = await pool.query(`UPDATE campaign SET ${sets.join(", ")} WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params)
+    if (!rows[0]) throw Object.assign(new Error("Campaign not found"), { statusCode: 404 })
+    res.json({ campaign: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.post("/admin/promotions/:id/rules", requireAuth, async (req, res, next) => {
+  try {
+    const { attribute, operator, values } = z.object({
+      attribute: z.enum(["customer_group_id", "min_subtotal", "currency_code"]),
+      operator: z.enum(["eq", "ne", "gte", "lte", "in"]).default("eq"),
+      values: z.array(z.union([z.string(), z.number()])),
+    }).parse(req.body)
+    const { rows } = await pool.query(
+      `INSERT INTO promotion_rule (promotion_id, attribute, operator, values) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.id, attribute, operator, JSON.stringify(values)]
+    )
+    res.status(201).json({ rule: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+const LEGACY_PROMO_KEYS = new Set(["application_type", "application_target", "application_allocation", "application_value", "application_currency", "application_max_quantity", "buy_min_quantity", "min_subtotal", "customer_group_id", "starts_at", "ends_at"])
+
+catalogAdminRouter.post("/admin/promotions/:id", requireAuth, async (req, res, next) => {
+  try {
+    // dashboard edits (details drawer, campaign drawer, disguised rules) use Lupus's nested payload
+    if (req.body && !Object.keys(req.body).some((k) => LEGACY_PROMO_KEYS.has(k))) {
+      res.json({ promotion: await promotionService.updatePromotion(req.params.id, req.body) })
+      return
+    }
+    const patch = promoBase.partial().omit({ target_rules: true }).extend({ is_automatic: z.boolean().optional(), status: z.enum(["active", "draft"]).optional(), min_subtotal: z.number().int().nonnegative().nullable().optional(), customer_group_id: z.string().nullable().optional(), campaign_id: z.string().nullable().optional() }).parse(req.body)
+    const sets: string[] = []
+    const params: any[] = []
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue
+      params.push(typeof v === "string" && (k === "code" || k === "application_currency") ? v.toLowerCase() : v)
+      sets.push(`${k} = $${params.length}`)
+    }
+    if (sets.length === 0) {
+      const cur = await pool.query(`SELECT * FROM promotion WHERE id = $1`, [req.params.id])
+      res.json({ promotion: cur.rows[0] ?? null })
+      return
+    }
+    params.push(req.params.id)
+    const { rows } = await pool.query(`UPDATE promotion SET ${sets.join(", ")} WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params)
+    if (!rows[0]) throw Object.assign(new Error("Promotion not found"), { statusCode: 404 })
+    res.json({ promotion: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.delete("/admin/promotions/:id", requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(`UPDATE promotion SET deleted_at = NOW() WHERE id = $1`, [req.params.id])
+    res.json({ id: req.params.id, deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+
+
+catalogAdminRouter.post("/admin/tax-regions/:id/rules", requireAuth, async (req, res, next) => {
+  try {
+    const { reference, reference_id } = z.object({ reference: z.enum(["province", "postal"]), reference_id: z.string().min(1) }).parse(req.body)
+    const { rows } = await pool.query(`INSERT INTO tax_region_rule (tax_region_id, reference, reference_id) VALUES ($1,$2,$3) RETURNING *`, [req.params.id, reference, reference_id.toLowerCase()])
+    res.status(201).json({ rule: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.post("/admin/products/:id/tax-code", requireAuth, async (req, res, next) => {
+  try {
+    const { tax_code } = z.object({ tax_code: z.string().min(1).nullable() }).parse(req.body)
+    await pool.query(`UPDATE product SET tax_code = $2 WHERE id = $1`, [req.params.id, tax_code])
+    res.json({ id: req.params.id, tax_code })
+  } catch (e) {
+    next(e)
+  }
+})
+
+const priceListPrice = z.object({
+  variant_id: z.string().min(1),
+  currency_code: z.string().length(3),
+  amount: z.number().int().nonnegative(),
+  min_quantity: z.number().int().positive().nullish(),
+  max_quantity: z.number().int().positive().nullish(),
+  // Lupus sends the quantity range under `rules`
+  rules: z.object({ min_quantity: z.coerce.number().int().positive().optional(), max_quantity: z.coerce.number().int().positive().optional() }).passthrough().nullish(),
+})
+
+const priceListBody = z.object({
+  title: z.string().trim().min(1),
+  type: z.enum(["sale", "override"]).default("sale"),
+  description: z.string().nullish(),
+  status: z.enum(["active", "draft"]).optional(),
+  starts_at: z.string().datetime().nullish(),
+  ends_at: z.string().datetime().nullish(),
+  customer_group_ids: z.array(z.string()).optional(),
+  rules: z.record(z.string(), z.unknown()).nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
+  prices: z.array(priceListPrice).default([]),
+})
+
+catalogAdminRouter.post("/admin/price-lists", requireAuth, async (req, res, next) => {
+  try {
+    const body = priceListBody.parse(req.body)
+    const prices = body.prices.map(({ rules, ...p }) => ({
+      ...p,
+      min_quantity: p.min_quantity ?? rules?.min_quantity ?? null,
+      max_quantity: p.max_quantity ?? rules?.max_quantity ?? null,
+    }))
+    const price_list = await pricingService.createPriceList({ ...body, prices })
+    res.status(201).json({ price_list, price_list_id: price_list.id })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.get("/admin/price-lists", requireAuth, async (req, res, next) => {
+  try {
+    const { body } = await runList({
+      req,
+      table: "price_list",
+      alias: "pl",
+      select: `pl.*, (SELECT COUNT(*)::int FROM price p WHERE p.price_list_id = pl.id AND p.deleted_at IS NULL) AS price_count`,
+      base: "pl.deleted_at IS NULL",
+      specs: PRICE_LIST_FILTERS,
+      q: { columns: PRICE_LIST_Q_COLUMNS },
+      order: PRICE_LIST_SORT,
+      defaultOrder: "pl.created_at DESC",
+      key: "price_lists",
+    })
+    sendList(res, body)
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.delete("/admin/price-lists/:id", requireAuth, async (req, res, next) => {
+  try {
+    await pricingService.deletePriceList(req.params.id)
+    res.json({ id: req.params.id, object: "price_list", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- variant base prices (set/replace per currency, stored in price/price_set) ----
+catalogAdminRouter.post("/admin/variants/:id/prices", requireAuth, async (req, res, next) => {
+  try {
+    const { prices } = z.object({ prices: z.array(z.object({ currency_code: z.string().length(3), amount: z.number().int().nonnegative() })) }).parse(req.body)
+    const psId = await pricingService.ensureVariantPriceSet(req.params.id)
+    for (const p of prices) {
+      await pool.query(
+        `INSERT INTO price (price_set_id, currency_code, amount, price_list_id)
+         VALUES ($1,$2,$3,NULL)
+         ON CONFLICT (price_set_id, currency_code) WHERE price_list_id IS NULL AND deleted_at IS NULL
+         DO UPDATE SET amount = $3`,
+        [psId, p.currency_code.toLowerCase(), p.amount]
+      )
+    }
+    const { rows } = await pool.query(
+      `SELECT currency_code, amount FROM price WHERE price_set_id = $1 AND price_list_id IS NULL AND deleted_at IS NULL`,
+      [psId]
+    )
+    res.json({ prices: rows })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.get("/admin/variants/:id/prices", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.currency_code, p.amount
+       FROM product_variant v
+       JOIN price p ON p.price_set_id = v.price_set_id AND p.price_list_id IS NULL AND p.deleted_at IS NULL
+       WHERE v.id = $1`,
+      [req.params.id]
+    )
+    res.json({ prices: rows })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogAdminRouter.post("/admin/inventory/:variantId", requireAuth, async (req, res, next) => {
+  try {
+    const { stocked_quantity } = z.object({ stocked_quantity: z.number().int().nonnegative() }).parse(req.body)
+    await pool.query(
+      `INSERT INTO inventory_level (variant_id, stocked_quantity) VALUES ($1,$2)
+       ON CONFLICT (variant_id) DO UPDATE SET stocked_quantity=$2, updated_at=NOW()`,
+      [req.params.variantId, stocked_quantity]
+    )
+    res.json({ variant_id: req.params.variantId, stocked_quantity })
+  } catch (e) {
+    next(e)
+  }
+})
