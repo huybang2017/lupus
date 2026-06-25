@@ -436,3 +436,222 @@ catalogCompatRouter.post("/admin/products/:productId/variants/batch", requireAut
       })
       .parse(req.body)
     const product = await pool.query(`SELECT id FROM product WHERE id = $1 AND deleted_at IS NULL`, [req.params.productId])
+    if (!product.rows[0]) {
+      throw notFound("Product not found")
+    }
+    const created: any[] = []
+    for (const c of body.create ?? []) {
+      const row = await productService.createVariant(req.params.productId, {
+        title: c.title,
+        sku: c.sku ?? undefined,
+        prices: c.prices ?? [],
+        options: c.options ?? {},
+      })
+      if (c.prices === undefined && c.options === undefined) {
+        created.push((await enrichVariants([row]))[0])
+      } else {
+        const full = await getVariantInProduct(req.params.productId, row.id)
+        created.push(full)
+      }
+      if (c.barcode !== undefined || c.ean !== undefined || c.upc !== undefined || c.inventory_quantity !== undefined || c.metadata !== undefined) {
+        const extra: Record<string, unknown> = {}
+        if (c.barcode !== undefined) extra.barcode = c.barcode
+        if (c.ean !== undefined) extra.ean = c.ean
+        if (c.upc !== undefined) extra.upc = c.upc
+        if (c.inventory_quantity !== undefined) extra.inventory_quantity = c.inventory_quantity
+        if (c.metadata !== undefined) extra.metadata = c.metadata
+        await pool.query(
+          `UPDATE product_variant SET barcode = COALESCE($2, barcode), ean = COALESCE($3, ean), upc = COALESCE($4, upc),
+           inventory_quantity = COALESCE($5, inventory_quantity), metadata = COALESCE($6, metadata), updated_at = NOW() WHERE id = $1`,
+          [row.id, extra.barcode ?? null, extra.ean ?? null, extra.upc ?? null, extra.inventory_quantity ?? null, extra.metadata ? JSON.stringify(extra.metadata) : null]
+        )
+        created[created.length - 1] = await getVariantInProduct(req.params.productId, row.id)
+      }
+    }
+    const updated: any[] = []
+    for (const u of body.update ?? []) {
+      const existing = await getVariantInProduct(req.params.productId, u.id)
+      if (!existing) {
+        throw notFound(`Variant not found: ${u.id}`)
+      }
+      const patch: Record<string, unknown> = {}
+      for (const k of ["title", "sku", "barcode", "ean", "upc", "inventory_quantity", "metadata", "manage_inventory", "allow_backorder", "material", "origin_country", "hs_code", "mid_code", "weight", "length", "height", "width"]) {
+        const v = (u as Record<string, unknown>)[k]
+        if (v !== undefined) {
+          patch[k] = v
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        const sets: string[] = []
+        const params: any[] = []
+        for (const [k, v] of Object.entries(patch)) {
+          params.push(v)
+          sets.push(`${k} = $${params.length}`)
+        }
+        params.push(u.id)
+        await pool.query(`UPDATE product_variant SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length}`, params)
+      }
+      if (u.prices !== undefined) {
+        await applyVariantPrices(u.id, u.prices)
+      }
+      if (u.options !== undefined) {
+        await assignVariantOptions(pool, req.params.productId, u.id, u.options)
+      }
+      updated.push(await getVariantInProduct(req.params.productId, u.id))
+    }
+    const deletedIds: string[] = []
+    for (const id of body.delete ?? []) {
+      const existing = await getVariantInProduct(req.params.productId, id)
+      if (!existing) {
+        throw notFound(`Variant not found: ${id}`)
+      }
+      await productService.deleteVariant(id)
+      deletedIds.push(id)
+    }
+    res.json({ created, updated, deleted: { ids: deletedIds, object: "variant", deleted: true } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/:productId/variants/inventory-items/batch ----
+const compatInvLinkSchema = z.object({ variant_id: z.string(), inventory_item_id: z.string(), required_quantity: z.number().int().nonnegative() })
+
+catalogCompatRouter.post("/admin/products/:productId/variants/inventory-items/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z
+      .object({
+        create: z.array(compatInvLinkSchema).optional(),
+        update: z.array(compatInvLinkSchema).optional(),
+        delete: z.array(z.object({ variant_id: z.string(), inventory_item_id: z.string() })).optional(),
+      })
+      .parse(req.body)
+    const ensureLinkable = async (variantId: string, itemId: string) => {
+      const v = await pool.query(`SELECT id FROM product_variant WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL`, [variantId, req.params.productId])
+      if (!v.rows[0]) {
+        throw notFound(`Variant not found in product: ${variantId}`)
+      }
+      const item = await pool.query(`SELECT id FROM inventory_item WHERE id = $1 AND deleted_at IS NULL`, [itemId])
+      if (!item.rows[0]) {
+        throw notFound(`Inventory item not found: ${itemId}`)
+      }
+    }
+    const created: any[] = []
+    for (const c of body.create ?? []) {
+      await ensureLinkable(c.variant_id, c.inventory_item_id)
+      const { rows } = await pool.query(
+        `INSERT INTO variant_inventory_item (variant_id, inventory_item_id, required_quantity) VALUES ($1,$2,$3)
+         ON CONFLICT (variant_id, inventory_item_id) DO UPDATE SET required_quantity = $3 RETURNING variant_id, inventory_item_id, required_quantity`,
+        [c.variant_id, c.inventory_item_id, c.required_quantity]
+      )
+      created.push(rows[0])
+    }
+    const updated: any[] = []
+    for (const u of body.update ?? []) {
+      await ensureLinkable(u.variant_id, u.inventory_item_id)
+      const { rows } = await pool.query(
+        `UPDATE variant_inventory_item SET required_quantity = $3 WHERE variant_id = $1 AND inventory_item_id = $2 RETURNING variant_id, inventory_item_id, required_quantity`,
+        [u.variant_id, u.inventory_item_id, u.required_quantity]
+      )
+      if (!rows[0]) {
+        throw notFound(`Variant inventory link not found: ${u.variant_id} / ${u.inventory_item_id}`)
+      }
+      updated.push(rows[0])
+    }
+    const deleted: any[] = []
+    for (const d of body.delete ?? []) {
+      await ensureLinkable(d.variant_id, d.inventory_item_id)
+      const { rows } = await pool.query(
+        `DELETE FROM variant_inventory_item WHERE variant_id = $1 AND inventory_item_id = $2 RETURNING variant_id, inventory_item_id, required_quantity`,
+        [d.variant_id, d.inventory_item_id]
+      )
+      if (rows[0]) {
+        deleted.push(rows[0])
+      }
+    }
+    res.json({ created, updated, deleted })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/:productId/options/batch (admin.product.linkOptions -> { product }) ----
+const compatLinkOptionAddSchema = z.union([
+  z.string(),
+  z.object({ id: z.string(), value_ids: z.array(z.string()).optional() }).passthrough(),
+  z.object({ title: z.string().min(1), values: z.array(z.string()).optional() }).passthrough(),
+])
+
+catalogCompatRouter.post("/admin/products/:productId/options/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z
+      .object({
+        add: z.array(compatLinkOptionAddSchema).optional(),
+        remove: z.array(z.string()).optional(),
+        update: z
+          .array(
+            z.object({
+              product_option_id: z.string(),
+              add: z.array(z.union([z.string(), z.object({ value: z.string() }).passthrough()])).optional(),
+              remove: z.array(z.string()).optional(),
+            })
+          )
+          .optional(),
+      })
+      .parse(req.body)
+    const product = await pool.query(`SELECT id FROM product WHERE id = $1 AND deleted_at IS NULL`, [req.params.productId])
+    if (!product.rows[0]) {
+      throw notFound("Product not found")
+    }
+    for (const entry of body.add ?? []) {
+      if (typeof entry === "string") {
+        const o = await pool.query(`SELECT id FROM product_option WHERE id = $1 AND deleted_at IS NULL`, [entry])
+        if (!o.rows[0]) {
+          throw notFound(`Product option not found: ${entry}`)
+        }
+        await pool.query(`UPDATE product_option SET product_id = $2, deleted_at = NULL, updated_at = NOW() WHERE id = $1`, [entry, req.params.productId])
+      } else if ("id" in entry) {
+        const o = await pool.query(`SELECT id FROM product_option WHERE id = $1 AND deleted_at IS NULL`, [(entry as { id: string }).id])
+        if (!o.rows[0]) {
+          throw notFound(`Product option not found: ${(entry as { id: string }).id}`)
+        }
+        await pool.query(`UPDATE product_option SET product_id = $2, deleted_at = NULL, updated_at = NOW() WHERE id = $1`, [(entry as { id: string }).id, req.params.productId])
+      } else {
+        const created = await productService.createOption(req.params.productId, (entry as { title: string }).title, (entry as { values?: string[] }).values ?? [])
+        void created
+      }
+    }
+    for (const id of body.remove ?? []) {
+      const o = await pool.query(`SELECT id FROM product_option WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL`, [id, req.params.productId])
+      if (!o.rows[0]) {
+        throw notFound(`Product option not found in product: ${id}`)
+      }
+      await productService.deleteOption(id)
+    }
+    for (const u of body.update ?? []) {
+      const o = await pool.query(`SELECT id FROM product_option WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL`, [u.product_option_id, req.params.productId])
+      if (!o.rows[0]) {
+        throw notFound(`Product option not found in product: ${u.product_option_id}`)
+      }
+      for (const v of u.add ?? []) {
+        const value = typeof v === "string" ? v : v.value
+        await pool.query(
+          `INSERT INTO product_option_value (option_id, value) VALUES ($1,$2)
+           ON CONFLICT DO NOTHING`,
+          [u.product_option_id, value]
+        )
+        const dup = await pool.query(
+          `SELECT id FROM product_option_value WHERE option_id = $1 AND value = $2 AND deleted_at IS NULL ORDER BY created_at LIMIT 1`,
+          [u.product_option_id, value]
+        )
+        if (dup.rows[1]) {
+          for (const extra of dup.rows.slice(1)) {
+            await pool.query(`UPDATE product_option_value SET deleted_at = NOW() WHERE id = $1`, [extra.id])
+          }
+        }
+      }
+      for (const valueId of u.remove ?? []) {
+        const ov = await pool.query(`SELECT id FROM product_option_value WHERE id = $1 AND option_id = $2 AND deleted_at IS NULL`, [valueId, u.product_option_id])
+        if (!ov.rows[0]) {
+          throw notFound(`Product option value not found: ${valueId}`)
+        }
