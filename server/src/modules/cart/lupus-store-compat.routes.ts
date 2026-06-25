@@ -874,3 +874,221 @@ storeCompatRouter.get("/store/product-variants", async (req, res, next) => {
 })
 
 storeCompatRouter.get("/store/product-variants/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_variant WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product variant not found")
+    }
+    const enriched = await enrichStoreVariants(rows)
+    res.json({ variant: enriched[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-categories/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM product_category WHERE id=$1 AND deleted_at IS NULL AND is_active=TRUE AND is_internal=FALSE`,
+      [req.params.id]
+    )
+    if (!rows[0]) {
+      throw notFound("Product category not found")
+    }
+    const products = await pool.query(
+      `SELECT p.id, p.title, p.handle, p.status FROM product_category_product pcp
+       JOIN product p ON p.id=pcp.product_id AND p.deleted_at IS NULL
+       WHERE pcp.category_id=$1`,
+      [req.params.id]
+    )
+    res.json({ product_category: { ...rows[0], products: products.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+function returnReasonShape(row: any): any {
+  return { id: row.id, value: row.value, label: row.label, description: row.description ?? null, parent_return_reason_id: row.parent_return_reason_id ?? null, metadata: row.metadata ?? null, created_at: row.created_at, updated_at: row.updated_at, deleted_at: row.deleted_at ?? null }
+}
+
+storeCompatRouter.get("/store/return-reasons", async (req, res, next) => {
+  try {
+    const { limit, offset } = pageOf(pagingSchema.parse(req.query))
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM return_reason WHERE deleted_at IS NULL`)
+    const { rows } = await pool.query(`SELECT * FROM return_reason WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset])
+    res.json({ return_reasons: rows.map(returnReasonShape), count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/return-reasons/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM return_reason WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Return reason not found")
+    }
+    res.json({ return_reason: returnReasonShape(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/currencies/:code", async (req, res, next) => {
+  try {
+    await currencyService.ensureSeeded()
+    const { rows } = await pool.query(`SELECT * FROM currency WHERE code=$1`, [req.params.code.toLowerCase()])
+    if (!rows[0]) {
+      throw notFound("Currency not found")
+    }
+    res.json({ currency: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/regions/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM region WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Region not found")
+    }
+    res.json({ region: (await regionAdminService.hydrateMany(rows))[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// Providers enabled on the region (admin region payment providers); a region with none configured
+// still offers the built-in system provider so checkout is never dead-ended.
+storeCompatRouter.get("/store/payment-providers", async (req, res, next) => {
+  try {
+    const { limit, offset } = pageOf(pagingSchema.parse(req.query))
+    const regionId = z.string().optional().parse(req.query.region_id)
+    let ids: string[] = []
+    if (regionId) {
+      const rows = await pool.query(`SELECT provider_id FROM region_payment_provider WHERE region_id=$1 ORDER BY provider_id`, [regionId])
+      ids = rows.rows.map((r: any) => r.provider_id)
+    }
+    if (ids.length === 0) {
+      ids = [SYSTEM_PROVIDER_ID]
+    }
+    const all = ids.map((id) => ({ id, is_enabled: true }))
+    res.json({ payment_providers: all.slice(offset, offset + limit), count: all.length, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+function paymentCollectionShape(row: any, sessions: any[]): any {
+  return { ...row, payment_sessions: sessions }
+}
+
+// Lupus: one payment collection per cart, reused while it is not completed
+storeCompatRouter.post("/store/payment-collections", async (req, res, next) => {
+  try {
+    const { cart_id } = z.object({ cart_id: z.string() }).parse(req.body ?? {})
+    const cart = await cartService.retrieve(cart_id)
+    if (!cart) {
+      throw notFound("Cart not found")
+    }
+    const existing = await pool.query(`SELECT * FROM payment_collection WHERE cart_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`, [cart_id])
+    if (existing.rows[0]) {
+      const refreshed = await pool.query(`UPDATE payment_collection SET amount=$2, currency_code=$3, updated_at=NOW() WHERE id=$1 RETURNING *`, [existing.rows[0].id, cart.totals.total, cart.currency_code])
+      const sessions = await pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`, [existing.rows[0].id])
+      res.json({ payment_collection: paymentCollectionShape(refreshed.rows[0], sessions.rows) })
+      return
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO payment_collection (currency_code, amount, status, cart_id) VALUES ($1,$2,'not_paid',$3) RETURNING *`,
+      [cart.currency_code, cart.totals.total, cart_id]
+    )
+    res.status(201).json({ payment_collection: paymentCollectionShape(rows[0], []) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// Lupus createPaymentSession: replaces the pending sessions of the collection with one for the chosen provider
+storeCompatRouter.post("/store/payment-collections/:id/payment-sessions", async (req, res, next) => {
+  try {
+    const { provider_id } = z.object({ provider_id: z.string().optional(), data: z.record(z.any()).optional() }).passthrough().parse(req.body ?? {})
+    const existing = await pool.query(`SELECT * FROM payment_collection WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!existing.rows[0]) {
+      throw notFound("Payment collection not found")
+    }
+    await pool.query(`UPDATE payment_session SET deleted_at=NOW() WHERE payment_collection_id=$1 AND status='pending' AND deleted_at IS NULL`, [req.params.id])
+    const session = await paymentSessionService.createSession(req.params.id, provider_id ?? SYSTEM_PROVIDER_ID)
+    const sessions = await pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+    res.status(201).json({ payment_collection: paymentCollectionShape(existing.rows[0], sessions.rows), payment_session: session })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// shipping option calculate (public) + store search (public)
+// ---------------------------------------------------------------------------
+
+storeCompatRouter.post("/store/shipping-options/:id/calculate", async (req, res, next) => {
+  try {
+    const { cart_id, data } = z
+      .object({ cart_id: z.string().optional(), data: z.record(z.any()).optional() })
+      .parse(req.body ?? {})
+    void data
+    const { rows } = await pool.query(`SELECT * FROM shipping_option WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Shipping option not found")
+    }
+    if (cart_id !== undefined) {
+      await requireCartRow(cart_id)
+      const offered = (await fulfillmentService.optionsForCart(cart_id)).find((o: any) => o.id === req.params.id)
+      if (offered) {
+        res.json({ shipping_option: { ...offered, calculated_amount: Number(offered.amount) } })
+        return
+      }
+    }
+    res.json({ shipping_option: { ...rows[0], calculated_amount: Number(rows[0].amount) } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.post("/store/search", async (req, res, next) => {
+  try {
+    const { q, limit, offset } = z
+      .object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), offset: z.coerce.number().int().min(0).optional() })
+      .parse(req.body ?? {})
+    const take = Math.min(limit ?? 20, 100)
+    const skip = offset ?? 0
+    const { rows } = await pool.query(
+      `SELECT * FROM product WHERE deleted_at IS NULL AND status='published'
+       AND (title ILIKE $1 OR COALESCE(description,'') ILIKE $1 OR handle ILIKE $1)
+       ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [`%${q}%`, take, skip]
+    )
+    res.json({ hits: rows })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/shipping-options", async (req, res, next) => {
+  try {
+    const { limit, offset, cart_id } = z
+      .object({ limit: z.coerce.number().int().min(1).max(100).default(50), offset: z.coerce.number().int().min(0).default(0), cart_id: z.string().optional() })
+      .parse(req.query)
+    if (cart_id) {
+      // Lupus list-shipping-options-for-cart: only the options this cart can actually use, priced for it
+      await requireCartRow(cart_id)
+      const options = await fulfillmentService.optionsForCart(cart_id)
+      res.json({ shipping_options: options, count: options.length, offset: 0, limit: options.length })
+      return
+    }
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM shipping_option WHERE deleted_at IS NULL`)
+    const { rows } = await pool.query(`SELECT * FROM shipping_option WHERE deleted_at IS NULL ORDER BY created_at LIMIT $1 OFFSET $2`, [limit, offset])
+    res.json({ shipping_options: rows, count: total.rows[0].c, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
