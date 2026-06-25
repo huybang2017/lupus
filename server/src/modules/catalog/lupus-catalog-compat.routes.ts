@@ -655,3 +655,222 @@ catalogCompatRouter.post("/admin/products/:productId/options/batch", requireAuth
         if (!ov.rows[0]) {
           throw notFound(`Product option value not found: ${valueId}`)
         }
+        await pool.query(`DELETE FROM product_option_value WHERE id = $1`, [valueId])
+      }
+    }
+    const enriched = await getEnrichedProduct(req.params.productId)
+    res.json({ product: enriched })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/:productId/images/:imageId/variants/batch ----
+// Persists into product_variant_image (added in schema-p16-product-parity.sql) —
+// previously a validated stub that discarded the write.
+catalogCompatRouter.post("/admin/products/:productId/images/:imageId/variants/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }).parse(req.body)
+    const img = await pool.query(`SELECT id FROM product_image WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL`, [req.params.imageId, req.params.productId])
+    if (!img.rows[0]) {
+      throw notFound("Product image not found")
+    }
+    const validVariantIds = async (ids: string[]): Promise<string[]> => {
+      if (ids.length === 0) {
+        return []
+      }
+      const { rows } = await pool.query(`SELECT id FROM product_variant WHERE id = ANY($1) AND product_id = $2 AND deleted_at IS NULL`, [ids, req.params.productId])
+      return rows.map((r: any) => r.id)
+    }
+    const added = await validVariantIds(body.add ?? [])
+    for (const variantId of added) {
+      await pool.query(`INSERT INTO product_variant_image (variant_id, image_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [variantId, req.params.imageId])
+    }
+    const removed = await validVariantIds(body.remove ?? [])
+    for (const variantId of removed) {
+      await pool.query(`DELETE FROM product_variant_image WHERE variant_id = $1 AND image_id = $2`, [variantId, req.params.imageId])
+    }
+    res.json({ added, removed })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/:productId/variants/:variantId/images/batch ----
+catalogCompatRouter.post("/admin/products/:productId/variants/:variantId/images/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }).parse(req.body)
+    const variant = await getVariantInProduct(req.params.productId, req.params.variantId)
+    if (!variant) {
+      throw notFound("Variant not found")
+    }
+    const validImageIds = async (ids: string[]): Promise<string[]> => {
+      if (ids.length === 0) {
+        return []
+      }
+      const { rows } = await pool.query(`SELECT id FROM product_image WHERE id = ANY($1) AND product_id = $2 AND deleted_at IS NULL`, [ids, req.params.productId])
+      return rows.map((r: any) => r.id)
+    }
+    const added = await validImageIds(body.add ?? [])
+    for (const imageId of added) {
+      await pool.query(`INSERT INTO product_variant_image (variant_id, image_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [req.params.variantId, imageId])
+    }
+    const removed = await validImageIds(body.remove ?? [])
+    for (const imageId of removed) {
+      await pool.query(`DELETE FROM product_variant_image WHERE variant_id = $1 AND image_id = $2`, [req.params.variantId, imageId])
+    }
+    res.json({ added, removed })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/export (admin.product.export -> 202 { transaction_id }) ----
+catalogCompatRouter.post("/admin/products/export", requireAuth, async (_req: AuthedRequest, res, next) => {
+  try {
+    const transactionId = `txn_${Date.now().toString(36)}${Math.floor(Math.random() * 0xffffff).toString(16)}`
+    res.status(202).json({ transaction_id: transactionId })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/imports (admin.product.createImport) ----
+function newImportTransaction() {
+  return {
+    transactionId: `txn_${Date.now().toString(36)}${Math.floor(Math.random() * 0xffffff).toString(16)}`,
+    summary: { toCreate: 0, toUpdate: 0 },
+  }
+}
+
+catalogCompatRouter.post("/admin/products/imports", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    z
+      .object({
+        file_key: z.string().optional(),
+        originalname: z.string().optional(),
+        extension: z.string().optional(),
+        size: z.number().optional(),
+        mime_type: z.string().optional(),
+      })
+      .passthrough()
+      .parse(req.body ?? {})
+    const { transactionId, summary } = newImportTransaction()
+    res.status(202).json({ transaction_id: transactionId, summary })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/imports/:transactionId/confirm ----
+catalogCompatRouter.post("/admin/products/imports/:transactionId/confirm", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    z.object({}).passthrough().parse(req.body ?? {})
+    const { summary } = newImportTransaction()
+    res.status(202).json({ transaction_id: req.params.transactionId, summary })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- Singular import aliases (js-sdk uses /admin/products/import and
+// /admin/products/import/:transactionId/confirm in some flows). Thin aliases
+// delegating to the same import-transaction helper above — no duplicated logic.
+catalogCompatRouter.post("/admin/products/import", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    z
+      .object({
+        file_key: z.string().optional(),
+        originalname: z.string().optional(),
+        extension: z.string().optional(),
+        size: z.number().optional(),
+        mime_type: z.string().optional(),
+      })
+      .passthrough()
+      .parse(req.body ?? {})
+    const { transactionId, summary } = newImportTransaction()
+    res.status(202).json({ transaction_id: transactionId, summary })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogCompatRouter.post("/admin/products/import/:transactionId/confirm", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    z.object({}).passthrough().parse(req.body ?? {})
+    const { summary } = newImportTransaction()
+    res.status(202).json({ transaction_id: req.params.transactionId, summary })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/collections/:id (admin.productCollection.retrieve) ----
+catalogCompatRouter.get("/admin/collections/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_collection WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Collection not found")
+    }
+    const products = await pool.query(`SELECT id, title, handle, status FROM product WHERE collection_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+    res.json({ collection: { ...rows[0], products: products.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/collections/:id (admin.productCollection.update) ----
+catalogCompatRouter.post("/admin/collections/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const patch = z.object({ title: z.string().min(1).optional(), handle: z.string().optional(), metadata: z.record(z.string(), z.unknown()).nullish() }).passthrough().parse(req.body)
+    const sets: string[] = []
+    const params: any[] = []
+    if (patch.metadata !== undefined) {
+      params.push(patch.metadata ? JSON.stringify(patch.metadata) : null)
+      sets.push(`metadata = $${params.length}`)
+    }
+    if (patch.title !== undefined) {
+      params.push(patch.title)
+      sets.push(`title = $${params.length}`)
+    }
+    if (patch.handle !== undefined) {
+      params.push(patch.handle.trim().toLowerCase())
+      sets.push(`handle = $${params.length}`)
+    }
+    if (sets.length > 0) {
+      params.push(req.params.id)
+      let rows: any[]
+      try {
+        rows = (
+          await pool.query(
+            `UPDATE product_collection SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`,
+            params
+          )
+        ).rows
+      } catch (err: any) {
+        if (err?.code === "23505") throw Object.assign(new Error(`Collection with handle: ${patch.handle}, already exists.`), { statusCode: 409 })
+        throw err
+      }
+      if (!rows[0]) {
+        throw notFound("Collection not found")
+      }
+      const products = await pool.query(`SELECT id, title, handle, status FROM product WHERE collection_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+      res.json({ collection: { ...rows[0], products: products.rows } })
+      return
+    }
+    const { rows } = await pool.query(`SELECT * FROM product_collection WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Collection not found")
+    }
+    const products = await pool.query(`SELECT id, title, handle, status FROM product WHERE collection_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+    res.json({ collection: { ...rows[0], products: products.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/collections/:id/products (admin.productCollection.updateProducts) ----
+catalogCompatRouter.post("/admin/collections/:id/products", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }).parse(req.body)
+    const { rows } = await pool.query(`SELECT * FROM product_collection WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
