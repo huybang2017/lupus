@@ -655,3 +655,222 @@ storeCompatRouter.get("/store/collections", async (req, res, next) => {
     }
     if (parsed.handle) {
       params.push(parsed.handle)
+      conds.push(`handle = ANY($${params.length})`)
+    }
+    if (parsed.id) {
+      params.push(parsed.id)
+      conds.push(`id = ANY($${params.length})`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM product_collection ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM product_collection ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )
+    res.json({ collections: await translateRows(rows, "product_collection", ["title"], requestLocale(req)), count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/collections/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_collection WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Collection not found")
+    }
+    const products = await pool.query(
+      `SELECT id, title, handle, status FROM product WHERE collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`,
+      [req.params.id]
+    )
+    res.json({ collection: { ...rows[0], products: products.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-options", async (req, res, next) => {
+  try {
+    const parsed = pagingSchema.extend({ q: z.string().optional(), is_exclusive: z.enum(["true", "false"]).optional() }).parse(req.query)
+    const { limit, offset } = pageOf(parsed)
+    const conds = [`o.deleted_at IS NULL`]
+    const params: unknown[] = []
+    if (parsed.q) {
+      params.push(`%${parsed.q}%`)
+      conds.push(`o.title ILIKE $${params.length}`)
+    }
+    // Lupus: is_exclusive=false lists the shared (global) options, true the product-owned ones
+    if (parsed.is_exclusive) {
+      conds.push(parsed.is_exclusive === "true" ? `o.is_exclusive = TRUE` : `o.is_exclusive = FALSE`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM product_option o ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT o.*, COALESCE((SELECT json_agg(json_build_object('id', ov.id, 'value', ov.value) ORDER BY ov.rank, ov.created_at) FROM product_option_value ov WHERE ov.option_id=o.id AND ov.deleted_at IS NULL), '[]') AS values
+       FROM product_option o ${where} ORDER BY o.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )
+    res.json({ product_options: rows, count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-options/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_option WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product option not found")
+    }
+    const values = await pool.query(`SELECT * FROM product_option_value WHERE option_id=$1 AND deleted_at IS NULL ORDER BY rank, created_at`, [req.params.id])
+    res.json({ product_option: { ...rows[0], values: values.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-tags", async (req, res, next) => {
+  try {
+    const parsed = pagingSchema.extend({ q: z.string().optional(), value: z.string().optional() }).parse(req.query)
+    const { limit, offset } = pageOf(parsed)
+    const conds = [`deleted_at IS NULL`]
+    const params: unknown[] = []
+    if (parsed.q) {
+      params.push(`%${parsed.q}%`)
+      conds.push(`value ILIKE $${params.length}`)
+    }
+    if (parsed.value) {
+      params.push(parsed.value)
+      conds.push(`value=$${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM product_tag ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM product_tag ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )
+    res.json({ product_tags: rows, count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-tags/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_tag WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product tag not found")
+    }
+    res.json({ product_tag: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-types", async (req, res, next) => {
+  try {
+    const parsed = pagingSchema.extend({ q: z.string().optional(), value: z.string().optional() }).parse(req.query)
+    const { limit, offset } = pageOf(parsed)
+    const conds = [`deleted_at IS NULL`]
+    const params: unknown[] = []
+    if (parsed.q) {
+      params.push(`%${parsed.q}%`)
+      conds.push(`value ILIKE $${params.length}`)
+    }
+    if (parsed.value) {
+      params.push(parsed.value)
+      conds.push(`value=$${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM product_type ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM product_type ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )
+    res.json({ product_types: rows, count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-types/:id", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_type WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product type not found")
+    }
+    res.json({ product_type: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+async function enrichStoreVariants(variantRows: any[]): Promise<any[]> {
+  if (variantRows.length === 0) {
+    return []
+  }
+  const ids = variantRows.map((v) => v.id)
+  const [priceRes, optRes] = await Promise.all([
+    pool.query(
+      `SELECT v.id AS variant_id, p.currency_code, p.amount
+       FROM product_variant v
+       JOIN price p ON p.price_set_id = v.price_set_id AND p.price_list_id IS NULL AND p.deleted_at IS NULL
+       WHERE v.id = ANY($1)`,
+      [ids]
+    ),
+    pool.query(
+      `SELECT pvov.variant_id, o.title AS option_title, ov.value
+       FROM product_variant_option_value pvov
+       JOIN product_option_value ov ON ov.id=pvov.option_value_id
+       JOIN product_option o ON o.id=ov.option_id
+       WHERE pvov.variant_id = ANY($1)`,
+      [ids]
+    ),
+  ])
+  const pricesBy: Record<string, any[]> = {}
+  for (const r of priceRes.rows) {
+    pricesBy[r.variant_id] = pricesBy[r.variant_id] ?? []
+    pricesBy[r.variant_id].push({ currency_code: r.currency_code, amount: Number(r.amount) })
+  }
+  const optionsBy: Record<string, Record<string, string>> = {}
+  for (const r of optRes.rows) {
+    optionsBy[r.variant_id] = optionsBy[r.variant_id] ?? {}
+    optionsBy[r.variant_id][r.option_title] = r.value
+  }
+  return variantRows.map((v) => ({ ...v, prices: pricesBy[v.id] ?? [], options: optionsBy[v.id] ?? {} }))
+}
+
+storeCompatRouter.get("/store/product-variants", async (req, res, next) => {
+  try {
+    const parsed = pagingSchema
+      .extend({ q: z.string().optional(), product_id: z.union([z.string(), z.array(z.string())]).optional(), sku: z.string().optional() })
+      .parse(req.query)
+    const { limit, offset } = pageOf(parsed)
+    const conds = [`v.deleted_at IS NULL`]
+    const params: unknown[] = []
+    if (parsed.q) {
+      params.push(`%${parsed.q}%`)
+      conds.push(`(v.title ILIKE $${params.length} OR COALESCE(v.sku,'') ILIKE $${params.length})`)
+    }
+    if (parsed.product_id !== undefined) {
+      const pids = Array.isArray(parsed.product_id) ? parsed.product_id : [parsed.product_id]
+      params.push(pids)
+      conds.push(`v.product_id = ANY($${params.length})`)
+    }
+    if (parsed.sku) {
+      params.push(parsed.sku)
+      conds.push(`v.sku=$${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM product_variant v ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT v.* FROM product_variant v ${where} ORDER BY v.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )
+    res.json({ variants: await enrichStoreVariants(rows), count: total.rows[0].count, offset, limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+storeCompatRouter.get("/store/product-variants/:id", async (req, res, next) => {
