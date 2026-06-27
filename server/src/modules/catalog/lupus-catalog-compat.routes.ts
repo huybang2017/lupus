@@ -874,3 +874,222 @@ catalogCompatRouter.post("/admin/collections/:id/products", requireAuth, async (
   try {
     const body = z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }).parse(req.body)
     const { rows } = await pool.query(`SELECT * FROM product_collection WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Collection not found")
+    }
+    for (const pid of body.add ?? []) {
+      const p = await pool.query(`SELECT id FROM product WHERE id = $1 AND deleted_at IS NULL`, [pid])
+      if (!p.rows[0]) {
+        throw notFound(`Product not found: ${pid}`)
+      }
+      await pool.query(`UPDATE product SET collection_id = $2, updated_at = NOW() WHERE id = $1`, [pid, req.params.id])
+    }
+    for (const pid of body.remove ?? []) {
+      await pool.query(`UPDATE product SET collection_id = NULL, updated_at = NOW() WHERE id = $1 AND collection_id = $2`, [pid, req.params.id])
+    }
+    const products = await pool.query(`SELECT id, title, handle, status FROM product WHERE collection_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+    res.json({ collection: { ...rows[0], products: products.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/product-categories/:id (admin.productCategory.retrieve) ----
+catalogCompatRouter.get("/admin/product-categories/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM product_category WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product category not found")
+    }
+    res.json({ product_category: { ...rows[0], products: await categoryProducts(req.params.id) } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/product-categories/:id/products (admin.productCategory.updateProducts) ----
+catalogCompatRouter.post("/admin/product-categories/:id/products", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }).parse(req.body)
+    const { rows } = await pool.query(`SELECT * FROM product_category WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product category not found")
+    }
+    for (const pid of body.add ?? []) {
+      const p = await pool.query(`SELECT id FROM product WHERE id = $1 AND deleted_at IS NULL`, [pid])
+      if (!p.rows[0]) {
+        throw notFound(`Product not found: ${pid}`)
+      }
+      await pool.query(`INSERT INTO product_category_product (product_id, category_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [pid, req.params.id])
+    }
+    for (const pid of body.remove ?? []) {
+      await pool.query(`DELETE FROM product_category_product WHERE product_id = $1 AND category_id = $2`, [pid, req.params.id])
+    }
+    res.json({ product_category: { ...rows[0], products: await categoryProducts(req.params.id) } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/product-options (admin.productOption.list) ----
+const PRODUCT_OPTION_SELECT = `o.*, COALESCE((SELECT json_agg(json_build_object('id', ov.id, 'value', ov.value) ORDER BY ov.rank, ov.created_at) FROM product_option_value ov WHERE ov.option_id = o.id AND ov.deleted_at IS NULL), '[]') AS values`
+
+catalogCompatRouter.get("/admin/product-options", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { body } = await runList({
+      req,
+      table: "product_option",
+      alias: "o",
+      select: PRODUCT_OPTION_SELECT,
+      base: "o.deleted_at IS NULL",
+      specs: PRODUCT_OPTION_FILTERS,
+      q: { columns: PRODUCT_OPTION_Q_COLUMNS },
+      order: PRODUCT_OPTION_SORT,
+      defaultOrder: "o.created_at DESC",
+      key: "product_options",
+    })
+    sendList(res, body)
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/product-options (admin.productOption.create -> 201 { product_option }) ----
+catalogCompatRouter.post("/admin/product-options", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z
+      .object({
+        title: z.string().min(1),
+        values: z.array(z.string()).optional().default([]),
+        product_id: z.string().optional(),
+      })
+      .passthrough()
+      .parse(req.body)
+    // No product_id -> a global option (is_exclusive = false), as in Lupus's Options page.
+    const option = body.product_id
+      ? await productService.createOption(body.product_id, body.title, body.values)
+      : await productService.createGlobalOption(body.title, body.values)
+    res.status(201).json({ product_option: await getOptionWithValues(option.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/product-options/:id (admin.productOption.retrieve) ----
+catalogCompatRouter.get("/admin/product-options/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const option = await getOptionWithValues(req.params.id)
+    if (!option) {
+      throw notFound("Product option not found")
+    }
+    res.json({ product_option: option })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/product-options/:id (admin.productOption.update) ----
+catalogCompatRouter.post("/admin/product-options/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({ title: z.string().min(1).optional(), values: z.array(z.string()).optional() }).passthrough().parse(req.body)
+    const { rows } = await pool.query(`SELECT * FROM product_option WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Product option not found")
+    }
+    if (body.title !== undefined) {
+      await pool.query(`UPDATE product_option SET title = $2, updated_at = NOW() WHERE id = $1`, [req.params.id, body.title])
+    }
+    if (body.values !== undefined) {
+      // `values` is the full, ordered list: its position is each value's rank.
+      const wanted = [...new Set(body.values.map((v) => v.trim()).filter(Boolean))]
+      const current = await pool.query(`SELECT id, value FROM product_option_value WHERE option_id = $1 AND deleted_at IS NULL`, [req.params.id])
+      const wantedSet = new Set(wanted)
+      for (const row of current.rows) {
+        if (!wantedSet.has(row.value)) {
+          await pool.query(`DELETE FROM product_option_value WHERE id = $1`, [row.id])
+        }
+      }
+      const currentByValue = new Map<string, string>(current.rows.filter((r: any) => wantedSet.has(r.value)).map((r: any) => [r.value, r.id]))
+      for (let i = 0; i < wanted.length; i++) {
+        const existingId = currentByValue.get(wanted[i])
+        if (existingId) {
+          await pool.query(`UPDATE product_option_value SET rank = $2 WHERE id = $1`, [existingId, i])
+        } else {
+          await pool.query(`INSERT INTO product_option_value (option_id, value, rank) VALUES ($1,$2,$3)`, [req.params.id, wanted[i], i])
+        }
+      }
+    }
+    res.json({ product_option: await getOptionWithValues(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/product-options/:optionId/values (admin.productOption.listValues) ----
+catalogCompatRouter.get("/admin/product-options/:optionId/values", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const o = await pool.query(`SELECT id FROM product_option WHERE id = $1 AND deleted_at IS NULL`, [req.params.optionId])
+    if (!o.rows[0]) {
+      throw notFound("Product option not found")
+    }
+    const lq = buildListQuery({
+      base: "ov.deleted_at IS NULL",
+      query: req.query,
+      specs: PRODUCT_OPTION_VALUE_FILTERS,
+      q: { columns: PRODUCT_OPTION_VALUE_Q_COLUMNS },
+      order: PRODUCT_OPTION_VALUE_SORT,
+      defaultOrder: "ov.rank ASC, ov.created_at ASC",
+    })
+    // the parent option is pinned by the path, so it is appended as a bound param
+    const params = [...lq.params, req.params.optionId]
+    const conditions = [lq.where.replace(/^WHERE\s+/i, ""), `ov.option_id = $${params.length}`].filter((c) => c.length > 0)
+    const where = `WHERE ${conditions.join(" AND ")}`
+    const from = "FROM product_option_value ov"
+    const order = lq.order ? `ORDER BY ${lq.order}` : ""
+    const total = await pool.query(`SELECT COUNT(*)::int AS c ${from} ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT ov.* ${from} ${where} ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lq.limit, lq.offset]
+    )
+    sendList(res, { product_option_values: rows, count: Number(total.rows[0].c), offset: lq.offset, limit: lq.limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/product-options/:optionId/values/:valueId ----
+catalogCompatRouter.get("/admin/product-options/:optionId/values/:valueId", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM product_option_value WHERE id = $1 AND option_id = $2 AND deleted_at IS NULL`,
+      [req.params.valueId, req.params.optionId]
+    )
+    if (!rows[0]) {
+      throw notFound("Product option value not found")
+    }
+    res.json({ product_option_value: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/product-options/:optionId/values/:valueId ----
+catalogCompatRouter.post("/admin/product-options/:optionId/values/:valueId", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({ value: z.string().min(1).optional() }).passthrough().parse(req.body)
+    const { rows } = await pool.query(
+      `SELECT * FROM product_option_value WHERE id = $1 AND option_id = $2 AND deleted_at IS NULL`,
+      [req.params.valueId, req.params.optionId]
+    )
+    if (!rows[0]) {
+      throw notFound("Product option value not found")
+    }
+    if (body.value !== undefined) {
+      await pool.query(`UPDATE product_option_value SET value = $3 WHERE id = $1 AND option_id = $2`, [req.params.valueId, req.params.optionId, body.value])
+    }
+    const updated = await pool.query(`SELECT * FROM product_option_value WHERE id = $1`, [req.params.valueId])
+    res.json({ product_option_value: updated.rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
