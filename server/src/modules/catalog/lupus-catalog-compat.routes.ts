@@ -1093,3 +1093,222 @@ catalogCompatRouter.post("/admin/product-options/:optionId/values/:valueId", req
     next(e)
   }
 })
+
+// ---- DELETE /admin/product-options/:optionId/values/:valueId ----
+catalogCompatRouter.delete("/admin/product-options/:optionId/values/:valueId", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM product_option_value WHERE id = $1 AND option_id = $2 AND deleted_at IS NULL`,
+      [req.params.valueId, req.params.optionId]
+    )
+    if (!rows[0]) {
+      throw notFound("Product option value not found")
+    }
+    await pool.query(`DELETE FROM product_option_value WHERE id = $1`, [req.params.valueId])
+    res.json({ id: req.params.valueId, object: "product_option_value", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- GET /admin/product-variants (admin.productVariant.list) ----
+catalogCompatRouter.get("/admin/product-variants", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    // the page is hydrated in one batch (enrichVariants) rather than per row,
+    // so the enrichment runs after runList instead of through its `enrich` hook
+    const { body, rows } = await runList({
+      req,
+      table: "product_variant",
+      alias: "v",
+      select: "v.*",
+      base: "v.deleted_at IS NULL",
+      specs: PRODUCT_VARIANT_FILTERS,
+      q: { columns: PRODUCT_VARIANT_Q_COLUMNS },
+      order: PRODUCT_VARIANT_SORT,
+      defaultOrder: "v.created_at DESC",
+      key: "variants",
+    })
+    sendList(res, { ...body, variants: await enrichVariants(rows) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- POST /admin/products/batch (admin.product.batch -> { created, updated, deleted }) ----
+// Lupus route (products/batch/route.ts POST via batchProductsWorkflow) returns
+// { created, updated, deleted }. "batch" is already in product.routes.ts
+// reserved fall-through list, so this handler is reached.
+const batchPriceSchema = z.object({
+  currency_code: z.string(),
+  amount: z.number().int().nonnegative(),
+  min_quantity: z.number().int().nonnegative().nullable().optional(),
+  max_quantity: z.number().int().nonnegative().nullable().optional(),
+})
+
+const batchVariantSchema = z.object({
+  title: z.string().min(1),
+  sku: z.string().nullable().optional(),
+  manage_inventory: z.boolean().optional(),
+  allow_backorder: z.boolean().optional(),
+  prices: z.array(batchPriceSchema),
+  options: z.record(z.string()).optional(),
+})
+
+const compatBatchProductCreateSchema = z
+  .object({
+    title: z.string().min(1),
+    handle: z.string().optional(),
+    subtitle: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    status: z.enum(["draft", "proposed", "published", "rejected"]).optional(),
+    thumbnail: z.string().nullable().optional(),
+    weight: z.number().nullable().optional(),
+    discountable: z.boolean().optional(),
+    collection_id: z.string().nullable().optional(),
+    type_id: z.string().nullable().optional(),
+    metadata: z.record(z.any()).nullable().optional(),
+    images: z.array(z.object({ url: z.string() })).optional(),
+    options: z.array(z.object({ title: z.string().min(1), values: z.array(z.string()) })).optional(),
+    variants: z.array(batchVariantSchema).optional(),
+    categories: z.array(z.object({ id: z.string() })).optional(),
+    tags: z.array(z.object({ id: z.string().optional(), value: z.string().optional() })).optional(),
+  })
+  .passthrough()
+
+const batchProductUpdatableKeys = ["title", "handle", "subtitle", "description", "status", "thumbnail", "weight", "discountable", "collection_id", "type_id", "metadata"] as const
+
+catalogCompatRouter.post("/admin/products/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z
+      .object({
+        create: z.array(compatBatchProductCreateSchema).optional(),
+        update: z.array(z.object({ id: z.string() }).passthrough()).optional(),
+        delete: z.array(z.string()).optional(),
+      })
+      .parse(req.body ?? {})
+    const created: any[] = []
+    for (const c of body.create ?? []) {
+      const row = await productService.createFull({
+        title: c.title,
+        handle: c.handle,
+        subtitle: c.subtitle,
+        description: c.description,
+        status: c.status,
+        thumbnail: c.thumbnail,
+        weight: c.weight,
+        discountable: c.discountable,
+        collection_id: c.collection_id,
+        type_id: c.type_id,
+        metadata: c.metadata,
+        images: c.images,
+        options: c.options,
+        variants: c.variants,
+        categories: c.categories,
+        tags: c.tags,
+      })
+      created.push(await getEnrichedProduct(row.id))
+    }
+    const updated: any[] = []
+    for (const u of body.update ?? []) {
+      const existing = await productService.retrieve(u.id)
+      if (!existing) {
+        throw notFound(`Product not found: ${u.id}`)
+      }
+      const patch: Record<string, unknown> = {}
+      for (const k of batchProductUpdatableKeys) {
+        if ((u as Record<string, unknown>)[k] !== undefined) {
+          patch[k] = (u as Record<string, unknown>)[k]
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        await productService.update(u.id, patch as { title: string })
+      }
+      updated.push(await getEnrichedProduct(u.id))
+    }
+    const deletedIds: string[] = []
+    for (const id of body.delete ?? []) {
+      const existing = await productService.retrieve(id)
+      if (!existing) {
+        throw notFound(`Product not found: ${id}`)
+      }
+      await productService.softDelete(id)
+      deletedIds.push(id)
+    }
+    res.json({ created, updated, deleted: { ids: deletedIds, object: "product", deleted: true } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---- Variant inventory links (single-item attach/update/detach) ----
+// Lupus routes (products/[id]/variants/[variant_id]/inventory-items[/[inventory_item_id]]/route.ts):
+// POST attach { inventory_item_id, required_quantity? } -> { variant },
+// POST :inventoryItemId { required_quantity } -> { variant },
+// DELETE :inventoryItemId -> { id, object: "variant-inventory-item-link", deleted, parent }.
+
+async function requireVariantInProduct(productId: string, variantId: string) {
+  const variant = await getVariantInProduct(productId, variantId)
+  if (!variant) {
+    throw notFound("Variant not found")
+  }
+  return variant
+}
+
+catalogCompatRouter.post("/admin/products/:productId/variants/:variantId/inventory-items", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { inventory_item_id, required_quantity } = z
+      .object({ inventory_item_id: z.string(), required_quantity: z.number().int().nonnegative().optional() })
+      .parse(req.body ?? {})
+    await requireVariantInProduct(req.params.productId, req.params.variantId)
+    const item = await pool.query(`SELECT id FROM inventory_item WHERE id=$1 AND deleted_at IS NULL`, [inventory_item_id])
+    if (!item.rows[0]) {
+      throw notFound(`Inventory item not found: ${inventory_item_id}`)
+    }
+    await pool.query(
+      `INSERT INTO variant_inventory_item (variant_id, inventory_item_id, required_quantity) VALUES ($1,$2,$3)
+       ON CONFLICT (variant_id, inventory_item_id) DO UPDATE SET required_quantity=$3`,
+      [req.params.variantId, inventory_item_id, required_quantity ?? 1]
+    )
+    res.json({ variant: await getVariantInProduct(req.params.productId, req.params.variantId) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogCompatRouter.post("/admin/products/:productId/variants/:variantId/inventory-items/:inventoryItemId", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { required_quantity } = z.object({ required_quantity: z.number().int().nonnegative() }).parse(req.body ?? {})
+    await requireVariantInProduct(req.params.productId, req.params.variantId)
+    const { rows } = await pool.query(
+      `UPDATE variant_inventory_item SET required_quantity=$3 WHERE variant_id=$1 AND inventory_item_id=$2 RETURNING variant_id, inventory_item_id, required_quantity`,
+      [req.params.variantId, req.params.inventoryItemId, required_quantity]
+    )
+    if (!rows[0]) {
+      throw notFound(`Variant inventory link not found: ${req.params.variantId} / ${req.params.inventoryItemId}`)
+    }
+    res.json({ variant: await getVariantInProduct(req.params.productId, req.params.variantId) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+catalogCompatRouter.delete("/admin/products/:productId/variants/:variantId/inventory-items/:inventoryItemId", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requireVariantInProduct(req.params.productId, req.params.variantId)
+    const { rows } = await pool.query(`DELETE FROM variant_inventory_item WHERE variant_id=$1 AND inventory_item_id=$2 RETURNING variant_id, inventory_item_id`, [
+      req.params.variantId,
+      req.params.inventoryItemId,
+    ])
+    if (!rows[0]) {
+      throw notFound(`Variant inventory link not found: ${req.params.variantId} / ${req.params.inventoryItemId}`)
+    }
+    res.json({
+      id: `${req.params.variantId}:${req.params.inventoryItemId}`,
+      object: "variant-inventory-item-link",
+      deleted: true,
+      parent: await getVariantInProduct(req.params.productId, req.params.variantId),
+    })
+  } catch (e) {
+    next(e)
+  }
+})
