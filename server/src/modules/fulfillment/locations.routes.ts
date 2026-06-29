@@ -215,3 +215,220 @@ locationsRouter.get(
     const fulfillment_options = svc.providerOptions(req.params.id)
     res.json({ fulfillment_options, count: fulfillment_options.length, offset: 0, limit: fulfillment_options.length })
   })
+)
+
+// ------------------------------------------------------------------ shipping options
+
+const priceBody = z.object({
+  currency_code: z.string().length(3).nullish(),
+  region_id: z.string().nullish(),
+  amount: z.number(),
+  rules: z.array(z.object({ attribute: z.string(), operator: z.string(), value: z.union([z.string(), z.number()]) })).optional(),
+})
+const ruleBody = z.object({ attribute: z.string(), operator: z.string().optional(), value: z.union([z.string(), z.boolean(), z.number()]).transform(String) })
+const optionBody = z.object({
+  name: z.string().optional(),
+  price_type: z.enum(["flat", "calculated"]).optional(),
+  provider_id: z.string().optional(),
+  service_zone_id: z.string().nullish(),
+  shipping_profile_id: z.string().nullish(),
+  type_id: z.string().nullish(),
+  type: z.object({ label: z.string(), code: z.string(), description: z.string().nullish() }).nullish(),
+  data: z.record(z.string(), z.any()).nullish(),
+  prices: z.array(priceBody).optional(),
+  rules: z.array(ruleBody).optional(),
+  amount: z.number().int().nonnegative().optional(),
+  currency_code: z.string().length(3).optional(),
+  country_code: z.string().length(2).nullish(),
+  fulfillment_set_id: z.string().nullish(),
+  is_return: z.boolean().optional(),
+  service_zone_name: z.string().nullish(),
+})
+
+locationsRouter.get(
+  "/admin/shipping-options",
+  requireAuth,
+  wrap(async (req, res) => {
+    const q = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
+        service_zone_id: z.string().optional(),
+        stock_location_id: z.string().optional(),
+        shipping_profile_id: z.string().optional(),
+        is_return: z.enum(["true", "false"]).optional(),
+        q: z.string().optional(),
+      })
+      .passthrough()
+      .parse(req.query)
+    const where = ["so.deleted_at IS NULL"]
+    const params: any[] = []
+    const add = (sql: string, v: unknown) => {
+      params.push(v)
+      where.push(sql.replace("?", `$${params.length}`))
+    }
+    if (q.service_zone_id) add("so.service_zone_id = ?", q.service_zone_id)
+    if (q.shipping_profile_id) add("so.shipping_profile_id = ?", q.shipping_profile_id)
+    if (q.is_return) add("so.is_return = ?", q.is_return === "true")
+    if (q.q) add("so.name ILIKE ?", `%${q.q.replace(/[\\%_]/g, "\\$&")}%`)
+    if (q.stock_location_id) {
+      add("so.service_zone_id IN (SELECT sz.id FROM service_zone sz JOIN fulfillment_set fs ON fs.id = sz.fulfillment_set_id WHERE fs.stock_location_id = ?)", q.stock_location_id)
+    }
+    const count = await pool.query(`SELECT COUNT(*)::int AS c FROM shipping_option so WHERE ${where.join(" AND ")}`, params)
+    const rows = await pool.query(`SELECT so.id FROM shipping_option so WHERE ${where.join(" AND ")} ORDER BY so.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, q.limit, q.offset])
+    const shipping_options = []
+    for (const r of rows.rows) shipping_options.push(await svc.retrieveShippingOption(r.id))
+    res.json({ shipping_options, count: count.rows[0].c, offset: q.offset, limit: q.limit })
+  })
+)
+
+locationsRouter.post(
+  "/admin/shipping-options",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = optionBody.parse(req.body)
+    res.status(201).json({ shipping_option: await svc.createShippingOption(body as any) })
+  })
+)
+
+locationsRouter.get(
+  "/admin/shipping-options/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    res.json({ shipping_option: await svc.retrieveShippingOption(req.params.id) })
+  })
+)
+
+locationsRouter.post(
+  "/admin/shipping-options/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = optionBody.parse(req.body)
+    res.json({ shipping_option: await svc.updateShippingOption(req.params.id, body as any) })
+  })
+)
+
+locationsRouter.delete(
+  "/admin/shipping-options/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    await svc.deleteShippingOption(req.params.id)
+    res.json({ id: req.params.id, object: "shipping_option", deleted: true })
+  })
+)
+
+// ------------------------------------------------------------------ shipping option types
+
+locationsRouter.get(
+  "/admin/shipping-option-types",
+  requireAuth,
+  wrap(async (req, res) => {
+    const { body } = await runList({
+      req,
+      table: "shipping_option_type",
+      alias: "t",
+      select: "t.*",
+      base: "t.deleted_at IS NULL",
+      specs: SHIPPING_OPTION_TYPE_FILTERS,
+      q: { columns: SHIPPING_OPTION_TYPE_Q_COLUMNS },
+      order: SHIPPING_OPTION_TYPE_SORT,
+      defaultOrder: "t.created_at DESC",
+      key: "shipping_option_types",
+    })
+    sendList(res, body)
+  })
+)
+
+locationsRouter.post(
+  "/admin/shipping-option-types",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = z.object({ label: z.string(), code: z.string(), description: z.string().nullish() }).parse(req.body)
+    res.status(201).json({ shipping_option_type: await svc.createType(body) })
+  })
+)
+
+locationsRouter.get(
+  "/admin/shipping-option-types/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    res.json({ shipping_option_type: await svc.retrieveType(req.params.id) })
+  })
+)
+
+locationsRouter.post(
+  "/admin/shipping-option-types/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = z.object({ label: z.string().optional(), code: z.string().optional(), description: z.string().nullish() }).parse(req.body)
+    res.json({ shipping_option_type: await svc.updateType(req.params.id, body) })
+  })
+)
+
+locationsRouter.delete(
+  "/admin/shipping-option-types/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    await svc.deleteType(req.params.id)
+    res.json({ id: req.params.id, object: "shipping_option_type", deleted: true })
+  })
+)
+
+// ------------------------------------------------------------------ shipping profiles
+
+locationsRouter.get(
+  "/admin/shipping-profiles",
+  requireAuth,
+  wrap(async (req, res) => {
+    const { body } = await runList({
+      req,
+      table: "shipping_profile",
+      alias: "sp",
+      select: "sp.*",
+      base: "sp.deleted_at IS NULL",
+      specs: SHIPPING_PROFILE_FILTERS,
+      q: { columns: SHIPPING_PROFILE_Q_COLUMNS },
+      order: SHIPPING_PROFILE_SORT,
+      defaultOrder: "sp.created_at DESC",
+      key: "shipping_profiles",
+    })
+    sendList(res, body)
+  })
+)
+
+locationsRouter.post(
+  "/admin/shipping-profiles",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = z.object({ name: z.string(), type: z.string().default("default"), metadata }).parse(req.body)
+    res.status(201).json({ shipping_profile: await svc.createProfile(body) })
+  })
+)
+
+locationsRouter.get(
+  "/admin/shipping-profiles/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const { rows } = await pool.query(`SELECT * FROM shipping_profile WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) throw Object.assign(new Error(`Shipping profile with id ${req.params.id} was not found`), { statusCode: 404 })
+    res.json({ shipping_profile: rows[0] })
+  })
+)
+
+locationsRouter.post(
+  "/admin/shipping-profiles/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = z.object({ name: z.string().optional(), type: z.string().optional(), metadata }).parse(req.body)
+    res.json({ shipping_profile: await svc.updateProfile(req.params.id, body) })
+  })
+)
+
+locationsRouter.delete(
+  "/admin/shipping-profiles/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    await svc.deleteProfile(req.params.id)
+    res.json({ id: req.params.id, object: "shipping_profile", deleted: true })
+  })
+)
