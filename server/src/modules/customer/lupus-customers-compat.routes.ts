@@ -476,3 +476,242 @@ customersCompatRouter.post("/admin/users/:id/reset-password", requireAuth, async
   } catch (e) {
     next(e)
   }
+})
+
+// ---------------------------------------------------------------------------
+// invites: list/retrieve/delete/resend
+// (create POST /admin/invites lives in admin-platform.routes.ts,
+// accept POST /admin/invites/accept lives in lupus-auth.routes.ts)
+// ---------------------------------------------------------------------------
+
+customersCompatRouter.get("/admin/invites", requireAuth, async (req, res, next) => {
+  try {
+    const { body } = await runList({
+      req,
+      table: "invite",
+      alias: "i",
+      select: "i.*",
+      base: "i.deleted_at IS NULL",
+      specs: INVITE_FILTERS,
+      q: { columns: INVITE_Q_COLUMNS },
+      order: INVITE_SORT,
+      defaultOrder: "i.created_at DESC",
+      key: "invites",
+    })
+    sendList(res, body)
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/invites/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM invite WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Invite", req.params.id)
+    }
+    res.json({ invite: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.delete("/admin/invites/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const gone = await pool.query(`UPDATE invite SET deleted_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [req.params.id])
+    if (!gone.rows[0]) {
+      throw notFound("Invite", req.params.id)
+    }
+    res.json({ id: req.params.id, object: "invite", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// sdk.admin.invite.resend -> refreshes token/expiry and queues a notification.
+customersCompatRouter.post("/admin/invites/:id/resend", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const prev = await pool.query(`SELECT * FROM invite WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!prev.rows[0]) {
+      throw notFound("Invite", req.params.id)
+    }
+    if (prev.rows[0].accepted) {
+      throw Object.assign(new Error("Invite has already been accepted"), { statusCode: 400 })
+    }
+    const { rows } = await pool.query(
+      `UPDATE invite SET token=encode(gen_random_bytes(24), 'hex'), expires_at=NOW() + INTERVAL '7 days', updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id]
+    )
+    await pool
+      .query(`INSERT INTO notification (to_address, channel, template, data, status) VALUES ($1,'email','invite',$2,'sent')`, [
+        rows[0].email,
+        JSON.stringify({ token: rows[0].token }),
+      ])
+      .catch(() => undefined)
+    res.json({ invite: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// RBAC: roles + policies over the existing rbac_* tables.
+// Lupus policies are plain strings (e.g. "orders:read"); the Lupus shape
+// (key/resource/operation) is derived by splitting on the first ":".
+// ---------------------------------------------------------------------------
+
+function policyShape(row: any): any {
+  const name = row.name as string
+  const sep = name.indexOf(":")
+  return {
+    id: row.id,
+    key: name,
+    resource: sep >= 0 ? name.slice(0, sep) : name,
+    operation: sep >= 0 ? name.slice(sep + 1) : "*",
+    name,
+    description: null,
+    metadata: null,
+    created_at: row.created_at,
+    updated_at: row.created_at,
+    deleted_at: row.deleted_at ?? null,
+  }
+}
+
+async function roleParentId(roleId: string): Promise<string | null> {
+  const r = await pool.query(`SELECT parent_id FROM rbac_role_parent WHERE role_id=$1 LIMIT 1`, [roleId])
+  return r.rows[0]?.parent_id ?? null
+}
+
+async function roleShape(id: string, withPolicies = false): Promise<any> {
+  const r = await pool.query(`SELECT * FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [id])
+  if (!r.rows[0]) {
+    throw notFound("Role", id)
+  }
+  const row = r.rows[0]
+  const shape: any = {
+    id: row.id,
+    name: row.name,
+    description: null,
+    parent_id: await roleParentId(id),
+    metadata: null,
+    created_at: row.created_at,
+    updated_at: row.created_at,
+    deleted_at: row.deleted_at ?? null,
+  }
+  if (withPolicies) {
+    const p = await pool.query(
+      `SELECT pol.* FROM rbac_policy pol JOIN rbac_role_policy link ON link.policy_id=pol.id WHERE link.role_id=$1 AND pol.deleted_at IS NULL ORDER BY pol.name`,
+      [id]
+    )
+    shape.policies = p.rows.map(policyShape)
+  }
+  return shape
+}
+
+async function permissionsForUser(userId: string): Promise<string[]> {
+  const r = await pool.query(
+    `WITH RECURSIVE inherited(role_id) AS (
+       SELECT role_id FROM admin_user_role WHERE admin_user_id=$1
+       UNION
+       SELECT rp.parent_id FROM rbac_role_parent rp JOIN inherited i ON i.role_id=rp.role_id
+     )
+     SELECT DISTINCT pol.name FROM rbac_role_policy rpol
+     JOIN rbac_policy pol ON pol.id=rpol.policy_id AND pol.deleted_at IS NULL
+     JOIN inherited i ON i.role_id=rpol.role_id
+     JOIN rbac_role r ON r.id=rpol.role_id AND r.deleted_at IS NULL`,
+    [userId]
+  )
+  return r.rows.map((row: any) => row.name as string)
+}
+
+async function currentAdminUserId(req: AuthedRequest): Promise<string | null> {
+  if (!req.auth) {
+    return null
+  }
+  const linked = await pool.query(
+    `SELECT u.id FROM admin_user u JOIN admin_user_auth a ON a.admin_user_id=u.id WHERE a.auth_identity_id=$1 AND u.deleted_at IS NULL LIMIT 1`,
+    [req.auth.actor_id]
+  )
+  if (linked.rows[0]) {
+    return linked.rows[0].id as string
+  }
+  const byEmail = await pool.query(`SELECT id FROM admin_user WHERE email=$1 AND deleted_at IS NULL LIMIT 1`, [req.auth.email])
+  return byEmail.rows[0]?.id ?? null
+}
+
+// sdk.admin.rbacRole.mePermissions -> { permissions }.
+customersCompatRouter.get("/admin/rbac/me/permissions", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const userId = await currentAdminUserId(req)
+    res.json({ permissions: userId ? await permissionsForUser(userId) : [] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- policies (static /assignable registered before /:id) ---
+
+customersCompatRouter.get("/admin/rbac/policies/assignable", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset, q } = paginationSchema.extend({ q: z.string().optional() }).parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const conds = [`deleted_at IS NULL`]
+    const params: any[] = []
+    if (q) {
+      params.push(`%${q}%`)
+      conds.push(`name ILIKE $${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM rbac_policy ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM rbac_policy ${where} ORDER BY name LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lim, off]
+    )
+    res.json({ policies: rows.map(policyShape), count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/policies", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset, q } = paginationSchema.extend({ q: z.string().optional() }).parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const conds = [`deleted_at IS NULL`]
+    const params: any[] = []
+    if (q) {
+      params.push(`%${q}%`)
+      conds.push(`name ILIKE $${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM rbac_policy ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM rbac_policy ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lim, off]
+    )
+    res.json({ policies: rows.map(policyShape), count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.post("/admin/rbac/policies", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const { name, key, resource, operation } = z
+      .object({
+        name: z.string().min(1).optional(),
+        key: z.string().min(1).optional(),
+        resource: z.string().min(1).optional(),
+        operation: z.string().min(1).optional(),
+        description: z.string().nullish(),
+        metadata: z.record(z.any()).nullish(),
+      })
+      .parse(req.body)
+    const policyName = name ?? key ?? (resource && operation ? `${resource}:${operation}` : undefined)
+    if (!policyName) {
+      throw Object.assign(new Error("Policy name, key, or resource+operation is required"), { statusCode: 400 })
+    }
+    try {
