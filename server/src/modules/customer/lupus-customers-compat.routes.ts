@@ -954,3 +954,240 @@ customersCompatRouter.post("/admin/rbac/roles/:id", requireAuth, async (req: Aut
     }
     try {
       if (name !== undefined) {
+        await pool.query(`UPDATE rbac_role SET name=$2 WHERE id=$1`, [req.params.id, name])
+      }
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        throw Object.assign(new Error(`Role ${name} already exists`), { statusCode: 409 })
+      }
+      throw err
+    }
+    res.json({ role: await roleShape(req.params.id, true) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.delete("/admin/rbac/roles/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const gone = await pool.query(`UPDATE rbac_role SET deleted_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [req.params.id])
+    if (!gone.rows[0]) {
+      throw notFound("Role", req.params.id)
+    }
+    res.json({ id: req.params.id, object: "rbac_role", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/roles/:roleId/policies", requireAuth, async (req, res, next) => {
+  try {
+    const role = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.roleId])
+    if (!role.rows[0]) {
+      throw notFound("Role", req.params.roleId)
+    }
+    const { limit, offset } = paginationSchema.parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const total = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM rbac_policy pol JOIN rbac_role_policy link ON link.policy_id=pol.id WHERE link.role_id=$1 AND pol.deleted_at IS NULL`,
+      [req.params.roleId]
+    )
+    const { rows } = await pool.query(
+      `SELECT pol.* FROM rbac_policy pol JOIN rbac_role_policy link ON link.policy_id=pol.id WHERE link.role_id=$1 AND pol.deleted_at IS NULL ORDER BY pol.name LIMIT $2 OFFSET $3`,
+      [req.params.roleId, lim, off]
+    )
+    res.json({ policies: rows.map(policyShape), count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// sdk.admin.rbacRole.addPolicies({ policies }) -> { policies, count, offset, limit }.
+customersCompatRouter.post("/admin/rbac/roles/:roleId/policies", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const body = z
+      .object({ policies: z.array(z.string()).optional(), policy_ids: z.array(z.string()).optional() })
+      .parse(req.body)
+    const ids = [...(body.policies ?? []), ...(body.policy_ids ?? [])]
+    const role = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.roleId])
+    if (!role.rows[0]) {
+      throw notFound("Role", req.params.roleId)
+    }
+    for (const pid of ids) {
+      const p = await pool.query(`SELECT id FROM rbac_policy WHERE id=$1 AND deleted_at IS NULL`, [pid])
+      if (!p.rows[0]) {
+        throw notFound("Policy", pid)
+      }
+      await pool.query(`INSERT INTO rbac_role_policy (role_id, policy_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [req.params.roleId, pid])
+    }
+    const { rows } = await pool.query(
+      `SELECT pol.* FROM rbac_policy pol JOIN rbac_role_policy link ON link.policy_id=pol.id WHERE link.role_id=$1 AND pol.deleted_at IS NULL ORDER BY pol.name`,
+      [req.params.roleId]
+    )
+    const policies = rows.map(policyShape)
+    res.json({ policies, count: policies.length, offset: 0, limit: policies.length })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.delete("/admin/rbac/roles/:roleId/policies/:policyId", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const role = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.roleId])
+    if (!role.rows[0]) {
+      throw notFound("Role", req.params.roleId)
+    }
+    await pool.query(`DELETE FROM rbac_role_policy WHERE role_id=$1 AND policy_id=$2`, [req.params.roleId, req.params.policyId])
+    res.json({ id: req.params.policyId, object: "rbac_policy", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/roles/:roleId/users", requireAuth, async (req, res, next) => {
+  try {
+    const role = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.roleId])
+    if (!role.rows[0]) {
+      throw notFound("Role", req.params.roleId)
+    }
+    const { limit, offset } = paginationSchema.parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const total = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM admin_user u JOIN admin_user_role link ON link.admin_user_id=u.id WHERE link.role_id=$1 AND u.deleted_at IS NULL`,
+      [req.params.roleId]
+    )
+    const { rows } = await pool.query(
+      `SELECT u.* FROM admin_user u JOIN admin_user_role link ON link.admin_user_id=u.id WHERE link.role_id=$1 AND u.deleted_at IS NULL ORDER BY u.created_at DESC LIMIT $2 OFFSET $3`,
+      [req.params.roleId, lim, off]
+    )
+    res.json({ users: rows, count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// sdk.admin.rbacRole.addUsers({ users }) -> { users }.
+customersCompatRouter.post("/admin/rbac/roles/:roleId/users", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const body = z
+      .object({ users: z.array(z.string()).optional(), user_ids: z.array(z.string()).optional() })
+      .parse(req.body)
+    const ids = [...(body.users ?? []), ...(body.user_ids ?? [])]
+    const role = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.roleId])
+    if (!role.rows[0]) {
+      throw notFound("Role", req.params.roleId)
+    }
+    for (const uid of ids) {
+      const u = await pool.query(`SELECT id FROM admin_user WHERE id=$1 AND deleted_at IS NULL`, [uid])
+      if (!u.rows[0]) {
+        throw notFound("User", uid)
+      }
+      await pool.query(`INSERT INTO admin_user_role (admin_user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [uid, req.params.roleId])
+    }
+    const { rows } = await pool.query(
+      `SELECT u.* FROM admin_user u JOIN admin_user_role link ON link.admin_user_id=u.id WHERE link.role_id=$1 AND u.deleted_at IS NULL ORDER BY u.created_at DESC`,
+      [req.params.roleId]
+    )
+    res.json({ users: rows })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// sdk.admin.rbacRole.removeUsers({ users }) -> { ids, object: "role_user", deleted }.
+customersCompatRouter.delete("/admin/rbac/roles/:roleId/users", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const body = z
+      .object({ users: z.array(z.string()).optional(), user_ids: z.array(z.string()).optional() })
+      .parse(req.body ?? {})
+    const ids = [...(body.users ?? []), ...(body.user_ids ?? [])]
+    const role = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.roleId])
+    if (!role.rows[0]) {
+      throw notFound("Role", req.params.roleId)
+    }
+    for (const uid of ids) {
+      await pool.query(`DELETE FROM admin_user_role WHERE admin_user_id=$1 AND role_id=$2`, [uid, req.params.roleId])
+    }
+    res.json({ ids, object: "role_user", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// User <-> role assignment over admin_user_role (the rbac_role users surface
+// above is role-centric; Lupus also exposes these user-centric routes).
+// Refs:
+//   js-sdk admin/user.ts listRoles/addRoles/removeRole/removeRoles ->
+//     GET|POST|DELETE /admin/users/:id/roles, DELETE /admin/users/:id/roles/:role_id
+//   upstream/src/api/admin/users/[id]/roles[/[role_id]]/route.ts:
+//     GET -> { roles, count, offset, limit }, POST { roles: [...] } -> { roles },
+//     DELETE { roles: [...] } -> { ids, object: "user_role", deleted: true },
+//     DELETE :role_id -> { id, object: "user_role", deleted: true }.
+// ---------------------------------------------------------------------------
+
+async function requireAdminUser(id: string) {
+  const u = await pool.query(`SELECT * FROM admin_user WHERE id=$1 AND deleted_at IS NULL`, [id])
+  if (!u.rows[0]) {
+    throw notFound("User", id)
+  }
+  return u.rows[0]
+}
+
+async function rolesForUser(userId: string): Promise<any[]> {
+  const { rows } = await pool.query(
+    `SELECT r.* FROM rbac_role r JOIN admin_user_role link ON link.role_id=r.id WHERE link.admin_user_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at`,
+    [userId]
+  )
+  const roles: any[] = []
+  for (const row of rows) {
+    roles.push(await roleShape(row.id, true))
+  }
+  return roles
+}
+
+customersCompatRouter.get("/admin/users/:id/roles", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdminUser(req.params.id)
+    const { limit, offset } = paginationSchema.parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const roles = await rolesForUser(req.params.id)
+    res.json({ roles: roles.slice(off, off + lim), count: roles.length, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// NOTE: POST /admin/users/:id/roles lives in admin-platform.routes.ts (registered
+// earlier, so it wins): it accepts both Lupus { roles } and lupus { role_ids }
+// and returns { roles }. Only the non-conflicting verbs are defined here.
+
+customersCompatRouter.delete("/admin/users/:id/roles", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const { roles } = z.object({ roles: z.array(z.string()).min(1) }).parse(req.body ?? {})
+    await requireAdminUser(req.params.id)
+    for (const roleId of [...new Set(roles)]) {
+      await pool.query(`DELETE FROM admin_user_role WHERE admin_user_id=$1 AND role_id=$2`, [req.params.id, roleId])
+    }
+    res.json({ ids: roles, object: "user_role", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.delete("/admin/users/:id/roles/:role_id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    await requireAdminUser(req.params.id)
+    await pool.query(`DELETE FROM admin_user_role WHERE admin_user_id=$1 AND role_id=$2`, [req.params.id, req.params.role_id])
+    res.json({ id: req.params.role_id, object: "user_role", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
