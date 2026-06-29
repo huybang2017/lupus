@@ -715,3 +715,242 @@ customersCompatRouter.post("/admin/rbac/policies", requireAuth, async (req: Auth
       throw Object.assign(new Error("Policy name, key, or resource+operation is required"), { statusCode: 400 })
     }
     try {
+      const { rows } = await pool.query(`INSERT INTO rbac_policy (name) VALUES ($1) RETURNING *`, [policyName])
+      res.status(201).json({ policy: policyShape(rows[0]) })
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        throw Object.assign(new Error(`Policy ${policyName} already exists`), { statusCode: 409 })
+      }
+      throw err
+    }
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/policies/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM rbac_policy WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("Policy", req.params.id)
+    }
+    res.json({ policy: policyShape(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.post("/admin/rbac/policies/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const { name, key, resource, operation } = z
+      .object({
+        name: z.string().min(1).optional(),
+        key: z.string().min(1).optional(),
+        resource: z.string().min(1).optional(),
+        operation: z.string().min(1).optional(),
+        description: z.string().nullish(),
+        metadata: z.record(z.any()).nullish(),
+      })
+      .parse(req.body)
+    const prev = await pool.query(`SELECT * FROM rbac_policy WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!prev.rows[0]) {
+      throw notFound("Policy", req.params.id)
+    }
+    const nextName = name ?? key ?? (resource && operation ? `${resource}:${operation}` : prev.rows[0].name)
+    try {
+      const { rows } = await pool.query(`UPDATE rbac_policy SET name=$2 WHERE id=$1 RETURNING *`, [req.params.id, nextName])
+      res.json({ policy: policyShape(rows[0]) })
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        throw Object.assign(new Error(`Policy ${nextName} already exists`), { statusCode: 409 })
+      }
+      throw err
+    }
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.delete("/admin/rbac/policies/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const gone = await pool.query(`UPDATE rbac_policy SET deleted_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [req.params.id])
+    if (!gone.rows[0]) {
+      throw notFound("Policy", req.params.id)
+    }
+    res.json({ id: req.params.id, object: "rbac_policy", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/policies/:id/roles", requireAuth, async (req, res, next) => {
+  try {
+    const policy = await pool.query(`SELECT id FROM rbac_policy WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!policy.rows[0]) {
+      throw notFound("Policy", req.params.id)
+    }
+    const { limit, offset } = paginationSchema.parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const total = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM rbac_role r JOIN rbac_role_policy link ON link.role_id=r.id WHERE link.policy_id=$1 AND r.deleted_at IS NULL`,
+      [req.params.id]
+    )
+    const { rows } = await pool.query(
+      `SELECT r.* FROM rbac_role r JOIN rbac_role_policy link ON link.role_id=r.id WHERE link.policy_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`,
+      [req.params.id, lim, off]
+    )
+    const roles: any[] = []
+    for (const row of rows) {
+      roles.push(await roleShape(row.id))
+    }
+    res.json({ roles, count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- roles (static /assignable registered before /:id) ---
+
+customersCompatRouter.get("/admin/rbac/roles/assignable", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset, q } = paginationSchema.extend({ q: z.string().optional() }).parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const conds = [`deleted_at IS NULL`]
+    const params: any[] = []
+    if (q) {
+      params.push(`%${q}%`)
+      conds.push(`name ILIKE $${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM rbac_role ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM rbac_role ${where} ORDER BY name LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lim, off]
+    )
+    res.json({ roles: rows.map((r: any) => ({ id: r.id, name: r.name, description: null })), count: total.rows[0].c })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/roles", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset, q } = paginationSchema.extend({ q: z.string().optional() }).parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const conds = [`deleted_at IS NULL`]
+    const params: any[] = []
+    if (q) {
+      params.push(`%${q}%`)
+      conds.push(`name ILIKE $${params.length}`)
+    }
+    const where = `WHERE ${conds.join(" AND ")}`
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM rbac_role ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT * FROM rbac_role ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lim, off]
+    )
+    const roles: any[] = []
+    for (const row of rows) {
+      roles.push(await roleShape(row.id))
+    }
+    res.json({ roles, count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.post("/admin/rbac/roles", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const { name, parent_id, policy_ids, policies } = z
+      .object({
+        name: z.string().min(1),
+        parent_id: z.string().nullish(),
+        description: z.string().nullish(),
+        metadata: z.record(z.any()).nullish(),
+        policy_ids: z.array(z.string()).optional(),
+        policies: z.array(z.string()).optional(),
+      })
+      .parse(req.body)
+    if (parent_id) {
+      const parent = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [parent_id])
+      if (!parent.rows[0]) {
+        throw notFound("Role", parent_id)
+      }
+    }
+    const policyIds = [...(policy_ids ?? []), ...(policies ?? [])]
+    const resolvedPolicyIds: string[] = []
+    for (const pid of policyIds) {
+      const byId = await pool.query(`SELECT id FROM rbac_policy WHERE id=$1 AND deleted_at IS NULL`, [pid])
+      if (byId.rows[0]) {
+        resolvedPolicyIds.push(byId.rows[0].id)
+        continue
+      }
+      // Accept policy names too (same as POST /admin/roles): resolve or create.
+      const byName = await pool.query(`SELECT id FROM rbac_policy WHERE name=$1 AND deleted_at IS NULL`, [pid])
+      if (byName.rows[0]) {
+        resolvedPolicyIds.push(byName.rows[0].id)
+        continue
+      }
+      throw notFound("Policy", pid)
+    }
+    try {
+      const { rows } = await pool.query(`INSERT INTO rbac_role (name) VALUES ($1) RETURNING *`, [name])
+      const roleId = rows[0].id as string
+      if (parent_id) {
+        await pool.query(`INSERT INTO rbac_role_parent (role_id, parent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [roleId, parent_id])
+      }
+      for (const pid of [...new Set(resolvedPolicyIds)]) {
+        await pool.query(`INSERT INTO rbac_role_policy (role_id, policy_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [roleId, pid])
+      }
+      res.status(201).json({ role: await roleShape(roleId, true) })
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        throw Object.assign(new Error(`Role ${name} already exists`), { statusCode: 409 })
+      }
+      throw err
+    }
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.get("/admin/rbac/roles/:id", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ role: await roleShape(req.params.id, true) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+customersCompatRouter.post("/admin/rbac/roles/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "users:write")
+    const { name, parent_id } = z
+      .object({
+        name: z.string().min(1).optional(),
+        parent_id: z.string().nullish(),
+        description: z.string().nullish(),
+        metadata: z.record(z.any()).nullish(),
+      })
+      .parse(req.body)
+    const prev = await pool.query(`SELECT * FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!prev.rows[0]) {
+      throw notFound("Role", req.params.id)
+    }
+    if (parent_id !== undefined) {
+      if (parent_id) {
+        const parent = await pool.query(`SELECT id FROM rbac_role WHERE id=$1 AND deleted_at IS NULL`, [parent_id])
+        if (!parent.rows[0]) {
+          throw notFound("Role", parent_id)
+        }
+      }
+      await pool.query(`DELETE FROM rbac_role_parent WHERE role_id=$1`, [req.params.id])
+      if (parent_id) {
+        await pool.query(`INSERT INTO rbac_role_parent (role_id, parent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [req.params.id, parent_id])
+      }
+    }
+    try {
+      if (name !== undefined) {
