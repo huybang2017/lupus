@@ -241,3 +241,246 @@ export class LocationsService {
       await client.query("COMMIT")
     } catch (e) {
       await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async retrieveFulfillmentSet(id: string) {
+    const set = await pool.query(`SELECT * FROM fulfillment_set WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!set.rows[0]) notFound(`Fulfillment set with id ${id} was not found`)
+    const zones = await pool.query(`SELECT id FROM service_zone WHERE fulfillment_set_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [id])
+    const service_zones = []
+    for (const z of zones.rows) service_zones.push(await this.retrieveServiceZone(z.id))
+    return { ...set.rows[0], service_zones }
+  }
+
+  // ------------------------------------------------------------------ service zones
+  async retrieveServiceZone(id: string) {
+    const zone = await pool.query(`SELECT * FROM service_zone WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!zone.rows[0]) notFound(`Service zone with id ${id} was not found`)
+    const [geo, opts] = await Promise.all([
+      pool.query(`SELECT * FROM geo_zone WHERE service_zone_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [id]),
+      pool.query(`SELECT id FROM shipping_option WHERE service_zone_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [id]),
+    ])
+    const shipping_options = []
+    for (const o of opts.rows) shipping_options.push(await this.retrieveShippingOption(o.id))
+    return { ...zone.rows[0], geo_zones: geo.rows, shipping_options }
+  }
+
+  private async assertSetOpen(setId: string) {
+    const set = await pool.query(`SELECT * FROM fulfillment_set WHERE id = $1 AND deleted_at IS NULL`, [setId])
+    if (!set.rows[0]) notFound(`Fulfillment set with id ${setId} was not found`)
+    return set.rows[0]
+  }
+
+  private checkGeoZones(zones: GeoZoneInput[]) {
+    for (const g of zones) {
+      if (!g.country_code || g.country_code.length !== 2) bad("Each area needs a two-letter country_code")
+      if (g.type === "province" && !g.province_code) bad("A province area needs a province_code")
+      if (g.type === "city" && !g.city) bad("A city area needs a city")
+      if (g.type === "postal" && !(g.postal_expression ?? []).length) bad("A postal area needs a postal_expression")
+    }
+  }
+
+  private async assertZoneNameFree(setId: string, name: string, exceptId?: string) {
+    const dup = await pool.query(
+      `SELECT 1 FROM service_zone WHERE fulfillment_set_id = $1 AND LOWER(name) = LOWER($2) AND deleted_at IS NULL AND ($3::text IS NULL OR id <> $3)`,
+      [setId, name, exceptId ?? null]
+    )
+    if (dup.rows[0]) bad(`A service zone named "${name}" already exists in this fulfillment set`)
+  }
+
+  async createServiceZone(setId: string, input: { name: string; geo_zones?: GeoZoneInput[] }) {
+    await this.assertSetOpen(setId)
+    const name = input.name?.trim()
+    if (!name) bad("name is required")
+    this.checkGeoZones(input.geo_zones ?? [])
+    await this.assertZoneNameFree(setId, name)
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const z = await client.query(`INSERT INTO service_zone (fulfillment_set_id, name) VALUES ($1,$2) RETURNING id`, [setId, name])
+      for (const g of input.geo_zones ?? []) await this.insertGeoZone(client, z.rows[0].id, g)
+      await client.query("COMMIT")
+      return z.rows[0].id as string
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  private async insertGeoZone(client: { query: (t: string, p?: any[]) => Promise<any> }, zoneId: string, g: GeoZoneInput) {
+    await client.query(
+      `INSERT INTO geo_zone (service_zone_id, type, country_code, province_code, city, postal_expression) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [zoneId, g.type, g.country_code.toLowerCase(), g.province_code?.toLowerCase() ?? null, g.city ?? null, g.postal_expression ? JSON.stringify(g.postal_expression) : null]
+    )
+  }
+
+  /** Renaming and/or replacing the areas: `geo_zones`, when given, is the complete new list. */
+  async updateServiceZone(setId: string, zoneId: string, input: { name?: string | null; geo_zones?: GeoZoneInput[] }) {
+    await this.assertSetOpen(setId)
+    const zone = await pool.query(`SELECT * FROM service_zone WHERE id = $1 AND fulfillment_set_id = $2 AND deleted_at IS NULL`, [zoneId, setId])
+    if (!zone.rows[0]) notFound(`Service zone with id ${zoneId} was not found on fulfillment set ${setId}`)
+    if (input.name != null) {
+      const name = input.name.trim()
+      if (!name) bad("name cannot be empty")
+      await this.assertZoneNameFree(setId, name, zoneId)
+      await pool.query(`UPDATE service_zone SET name = $2 WHERE id = $1`, [zoneId, name])
+    }
+    if (input.geo_zones) {
+      this.checkGeoZones(input.geo_zones)
+      const key = (g: any) => [g.type, String(g.country_code).toLowerCase(), String(g.province_code ?? "").toLowerCase(), String(g.city ?? "").toLowerCase(), JSON.stringify(g.postal_expression ?? null)].join("|")
+      const existing = (await pool.query(`SELECT * FROM geo_zone WHERE service_zone_id = $1 AND deleted_at IS NULL`, [zoneId])).rows
+      const wanted = new Map(input.geo_zones.map((g) => [key({ ...g, postal_expression: g.postal_expression ? g.postal_expression : null }), g]))
+      const keep = new Set<string>()
+      for (const e of existing) {
+        const k = key({ ...e, postal_expression: e.postal_expression ? JSON.parse(e.postal_expression) : null })
+        if (wanted.has(k) && !keep.has(k)) keep.add(k)
+        else await pool.query(`UPDATE geo_zone SET deleted_at = NOW() WHERE id = $1`, [e.id])
+      }
+      for (const [k, g] of wanted) if (!keep.has(k)) await this.insertGeoZone(pool, zoneId, g)
+    }
+  }
+
+  async deleteServiceZone(setId: string, zoneId: string) {
+    await this.assertSetOpen(setId)
+    const zone = await pool.query(`SELECT * FROM service_zone WHERE id = $1 AND fulfillment_set_id = $2 AND deleted_at IS NULL`, [zoneId, setId])
+    if (!zone.rows[0]) notFound(`Service zone with id ${zoneId} was not found on fulfillment set ${setId}`)
+    await pool.query(`UPDATE shipping_option SET deleted_at = NOW() WHERE service_zone_id = $1 AND deleted_at IS NULL`, [zoneId])
+    await pool.query(`UPDATE geo_zone SET deleted_at = NOW() WHERE service_zone_id = $1 AND deleted_at IS NULL`, [zoneId])
+    await pool.query(`UPDATE service_zone SET deleted_at = NOW() WHERE id = $1`, [zoneId])
+  }
+
+  // ------------------------------------------------------------------ shipping option types
+  async createType(input: { label: string; code: string; description?: string | null }) {
+    const label = input.label?.trim()
+    const code = input.code?.trim()
+    if (!label) bad("label is required")
+    if (!code) bad("code is required")
+    const { rows } = await pool.query(`INSERT INTO shipping_option_type (label, code, description) VALUES ($1,$2,$3) RETURNING *`, [label, code, input.description?.trim() || null])
+    return rows[0]
+  }
+
+  async retrieveType(id: string) {
+    const { rows } = await pool.query(`SELECT * FROM shipping_option_type WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!rows[0]) notFound(`Shipping option type with id ${id} was not found`)
+    return rows[0]
+  }
+
+  async updateType(id: string, input: { label?: string; code?: string; description?: string | null }) {
+    await this.retrieveType(id)
+    const sets: string[] = []
+    const params: any[] = []
+    const set = (c: string, v: unknown) => {
+      params.push(v)
+      sets.push(`${c} = $${params.length}`)
+    }
+    if (input.label !== undefined) {
+      if (!input.label.trim()) bad("label cannot be empty")
+      set("label", input.label.trim())
+    }
+    if (input.code !== undefined) {
+      if (!input.code.trim()) bad("code cannot be empty")
+      set("code", input.code.trim())
+    }
+    if (input.description !== undefined) set("description", input.description?.trim() || null)
+    if (sets.length === 0) return this.retrieveType(id)
+    sets.push("updated_at = NOW()")
+    params.push(id)
+    await pool.query(`UPDATE shipping_option_type SET ${sets.join(", ")} WHERE id = $${params.length}`, params)
+    return this.retrieveType(id)
+  }
+
+  async deleteType(id: string) {
+    await this.retrieveType(id)
+    await pool.query(`UPDATE shipping_option SET shipping_option_type_id = NULL WHERE shipping_option_type_id = $1`, [id])
+    await pool.query(`UPDATE shipping_option_type SET deleted_at = NOW() WHERE id = $1`, [id])
+  }
+
+  // ------------------------------------------------------------------ shipping profiles
+  async createProfile(input: { name: string; type: string; metadata?: Record<string, unknown> | null }) {
+    const name = input.name?.trim()
+    const type = input.type?.trim()
+    if (!name) bad("name is required")
+    if (!type) bad("type is required")
+    const dup = await pool.query(`SELECT 1 FROM shipping_profile WHERE LOWER(name) = LOWER($1) AND deleted_at IS NULL`, [name])
+    if (dup.rows[0]) bad(`A shipping profile named "${name}" already exists`)
+    const { rows } = await pool.query(`INSERT INTO shipping_profile (name, type, metadata) VALUES ($1,$2,$3) RETURNING *`, [name, type, input.metadata ?? null])
+    return rows[0]
+  }
+
+  async updateProfile(id: string, input: { name?: string; type?: string; metadata?: Record<string, unknown> | null }) {
+    const cur = await pool.query(`SELECT * FROM shipping_profile WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!cur.rows[0]) notFound(`Shipping profile with id ${id} was not found`)
+    const sets: string[] = []
+    const params: any[] = []
+    const set = (c: string, v: unknown) => {
+      params.push(v)
+      sets.push(`${c} = $${params.length}`)
+    }
+    if (input.name !== undefined) {
+      const name = input.name.trim()
+      if (!name) bad("name cannot be empty")
+      const dup = await pool.query(`SELECT 1 FROM shipping_profile WHERE LOWER(name) = LOWER($1) AND deleted_at IS NULL AND id <> $2`, [name, id])
+      if (dup.rows[0]) bad(`A shipping profile named "${name}" already exists`)
+      set("name", name)
+    }
+    if (input.type !== undefined) {
+      if (!input.type.trim()) bad("type cannot be empty")
+      set("type", input.type.trim())
+    }
+    if (input.metadata !== undefined) set("metadata", input.metadata)
+    if (sets.length === 0) return cur.rows[0]
+    sets.push("updated_at = NOW()")
+    params.push(id)
+    const { rows } = await pool.query(`UPDATE shipping_profile SET ${sets.join(", ")} WHERE id = $${params.length} RETURNING *`, params)
+    return rows[0]
+  }
+
+  async deleteProfile(id: string) {
+    const cur = await pool.query(`SELECT 1 FROM shipping_profile WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!cur.rows[0]) notFound(`Shipping profile with id ${id} was not found`)
+    await pool.query(`UPDATE shipping_profile SET deleted_at = NOW() WHERE id = $1`, [id])
+  }
+
+  // ------------------------------------------------------------------ shipping options
+  async retrieveShippingOption(id: string) {
+    const opt = await pool.query(`SELECT * FROM shipping_option WHERE id = $1 AND deleted_at IS NULL`, [id])
+    const o = opt.rows[0]
+    if (!o) notFound(`Shipping option with id ${id} was not found`)
+    const [profile, type, prices, rules] = await Promise.all([
+      o.shipping_profile_id ? pool.query(`SELECT * FROM shipping_profile WHERE id = $1`, [o.shipping_profile_id]) : Promise.resolve({ rows: [] as any[] }),
+      o.shipping_option_type_id ? pool.query(`SELECT * FROM shipping_option_type WHERE id = $1`, [o.shipping_option_type_id]) : Promise.resolve({ rows: [] as any[] }),
+      pool.query(`SELECT * FROM shipping_option_price WHERE shipping_option_id = $1 AND deleted_at IS NULL ORDER BY created_at, id`, [id]),
+      pool.query(`SELECT * FROM shipping_option_rule WHERE shipping_option_id = $1 ORDER BY created_at`, [id]),
+    ])
+    const set = o.service_zone_id
+      ? (await pool.query(`SELECT fs.id, fs.type, fs.stock_location_id FROM service_zone sz JOIN fulfillment_set fs ON fs.id = sz.fulfillment_set_id WHERE sz.id = $1`, [o.service_zone_id])).rows[0]
+      : null
+    return {
+      ...o,
+      amount: Number(o.amount),
+      shipping_profile: profile.rows[0] ?? null,
+      type: type.rows[0] ?? null,
+      fulfillment_set_type: set?.type ?? null,
+      stock_location_id: set?.stock_location_id ?? null,
+      prices: prices.rows.map((p: any) => ({ ...p, amount: Number(p.amount) })),
+      // Lupus reports is_return / enabled_in_store as rules; both are real columns here
+      rules: [
+        { attribute: "is_return", operator: "eq", value: o.is_return ? "true" : "false" },
+        { attribute: "enabled_in_store", operator: "eq", value: o.enabled_in_store ? "true" : "false" },
+        ...rules.rows,
+      ],
+    }
+  }
+
+  private async normalizePrices(prices: PriceInput[]) {
+    const seen = new Set<string>()
+    const out: { currency_code: string | null; region_id: string | null; amount: number; rules: any[] }[] = []
+    for (const p of prices) {
+      const currency = p.currency_code?.toLowerCase() ?? null
+      if (!!currency === !!p.region_id) bad("Each price needs either a currency_code or a region_id")
