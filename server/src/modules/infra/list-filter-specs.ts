@@ -223,3 +223,228 @@ export const REGION_SORT: Record<string, string> = {
 }
 
 // ---------- payment collections ----------
+
+export const PAYMENT_COLLECTION_FILTERS: FilterSpec[] = [
+  { key: "id", column: "p.id", op: "in" },
+  { key: "status", column: "p.status", op: "eq", values: PAYMENT_STATUSES },
+  { key: "currency_code", column: "p.currency_code", op: "eq", coerce: (v) => v.toLowerCase() },
+  { key: "created_at", column: "p.created_at", op: "gte" },
+  { key: "created_at", column: "p.created_at", op: "lte" },
+]
+
+export const PAYMENT_COLLECTION_Q_COLUMNS = ["p.id", "COALESCE(p.currency_code,'')"]
+
+export const PAYMENT_COLLECTION_SORT: Record<string, string> = {
+  created_at: "p.created_at",
+  status: "p.status",
+  amount: "p.amount",
+}
+
+// ---------- RMA: returns / claims / exchanges ----------
+
+export const RETURN_FILTERS: FilterSpec[] = [
+  { key: "id", column: "r.id", op: "in" },
+  { key: "order_id", column: "r.order_id", op: "eq" },
+  { key: "status", column: "r.status", op: "eq", values: RETURN_STATUSES },
+  { key: "created_at", column: "r.created_at", op: "gte" },
+  { key: "created_at", column: "r.created_at", op: "lte" },
+]
+
+export const RETURN_SORT: Record<string, string> = { created_at: "r.created_at", status: "r.status" }
+
+export const CLAIM_FILTERS: FilterSpec[] = [
+  { key: "id", column: "c.id", op: "in" },
+  { key: "order_id", column: "c.order_id", op: "eq" },
+  { key: "type", column: "c.type", op: "eq", values: ["refund", "replace"] },
+  { key: "status", column: "c.status", op: "eq", values: CLAIM_STATUSES },
+  { key: "created_at", column: "c.created_at", op: "gte" },
+  { key: "created_at", column: "c.created_at", op: "lte" },
+]
+
+export const CLAIM_SORT: Record<string, string> = { created_at: "c.created_at", status: "c.status", type: "c.type" }
+
+export const EXCHANGE_FILTERS: FilterSpec[] = [
+  { key: "id", column: "e.id", op: "in" },
+  { key: "order_id", column: "e.order_id", op: "eq" },
+  { key: "status", column: "e.status", op: "eq", values: CLAIM_STATUSES },
+  { key: "created_at", column: "e.created_at", op: "gte" },
+  { key: "created_at", column: "e.created_at", op: "lte" },
+]
+
+export const EXCHANGE_SORT: Record<string, string> = { created_at: "e.created_at", status: "e.status" }
+
+// ---------- catalog ----------
+
+/** "product".status CHECK list. */
+export const PRODUCT_STATUSES = ["draft", "proposed", "published", "rejected"]
+
+/**
+ * GET /admin/products (product p, LEFT JOIN product_collection c + product_type t).
+ * `sales_channel_id` is NOT here: it resolves through the product_sales_channel
+ * pivot, so the route appends an EXISTS itself.
+ */
+export const PRODUCT_FILTERS: FilterSpec[] = [
+  { key: "id", column: "p.id", op: "in" },
+  { key: "status", column: "p.status", op: "eq", values: PRODUCT_STATUSES },
+  { key: "handle", column: "p.handle", op: "eq" },
+  { key: "collection_id", column: "p.collection_id", op: "eq" },
+  { key: "type_id", column: "p.type_id", op: "eq" },
+  { key: "title", column: "p.title", op: "ilike" },
+  { key: "created_at", column: "p.created_at", op: "gte" },
+  { key: "created_at", column: "p.created_at", op: "lte" },
+  { key: "updated_at", column: "p.updated_at", op: "gte" },
+  { key: "updated_at", column: "p.updated_at", op: "lte" },
+]
+
+export const PRODUCT_Q_COLUMNS = ["p.title", "p.handle", "COALESCE(p.description, '')"]
+
+export const PRODUCT_SORT: Record<string, string> = {
+  created_at: "p.created_at",
+  title: "p.title",
+  handle: "p.handle",
+  status: "p.status",
+  updated_at: "p.updated_at",
+  collection: "c.title",
+  id: "p.id",
+}
+
+/** GET /admin/product-variants (product_variant v). */
+export const PRODUCT_VARIANT_FILTERS: FilterSpec[] = [
+  { key: "id", column: "v.id", op: "in" },
+  { key: "product_id", column: "v.product_id", op: "in" },
+  { key: "sku", column: "v.sku", op: "eq" },
+  { key: "created_at", column: "v.created_at", op: "gte" },
+  { key: "created_at", column: "v.created_at", op: "lte" },
+]
+
+export const PRODUCT_VARIANT_Q_COLUMNS = ["v.title", "COALESCE(v.sku, '')"]
+
+export const PRODUCT_VARIANT_SORT: Record<string, string> = {
+  created_at: "v.created_at",
+  title: "v.title",
+  sku: "v.sku",
+}
+
+/** GET /admin/product-options (product_option o). */
+export const PRODUCT_OPTION_FILTERS: FilterSpec[] = [
+  { key: "id", column: "o.id", op: "in" },
+  { key: "product_id", column: "o.product_id", op: "eq" },
+  { key: "title", column: "o.title", op: "eq" },
+  { key: "is_exclusive", column: "o.is_exclusive", op: "bool" },
+  { key: "created_at", column: "o.created_at", op: "gte" },
+  { key: "created_at", column: "o.created_at", op: "lte" },
+]
+
+export const PRODUCT_OPTION_Q_COLUMNS = ["o.title"]
+
+export const PRODUCT_OPTION_SORT: Record<string, string> = {
+  created_at: "o.created_at",
+  title: "o.title",
+}
+
+/** GET /admin/product-options/:optionId/values (product_option_value ov). */
+export const PRODUCT_OPTION_VALUE_FILTERS: FilterSpec[] = [
+  { key: "id", column: "ov.id", op: "in" },
+  { key: "option_id", column: "ov.option_id", op: "eq" },
+  { key: "value", column: "ov.value", op: "eq" },
+  { key: "created_at", column: "ov.created_at", op: "gte" },
+  { key: "created_at", column: "ov.created_at", op: "lte" },
+]
+
+export const PRODUCT_OPTION_VALUE_Q_COLUMNS = ["ov.value"]
+
+export const PRODUCT_OPTION_VALUE_SORT: Record<string, string> = {
+  created_at: "ov.created_at",
+  value: "ov.value",
+  rank: "ov.rank",
+}
+
+/** GET /admin/product-types (product_type t). */
+export const PRODUCT_TYPE_FILTERS: FilterSpec[] = [
+  { key: "id", column: "t.id", op: "in" },
+  { key: "value", column: "t.value", op: "in" },
+  { key: "created_at", column: "t.created_at", op: "gte" },
+  { key: "created_at", column: "t.created_at", op: "lte" },
+  { key: "updated_at", column: "t.updated_at", op: "gte" },
+  { key: "updated_at", column: "t.updated_at", op: "lte" },
+]
+
+export const PRODUCT_TYPE_Q_COLUMNS = ["t.value"]
+
+export const PRODUCT_TYPE_SORT: Record<string, string> = {
+  created_at: "t.created_at",
+  updated_at: "t.updated_at",
+  value: "t.value",
+}
+
+/** GET /admin/product-tags (product_tag tg). */
+export const PRODUCT_TAG_FILTERS: FilterSpec[] = [
+  { key: "id", column: "tg.id", op: "in" },
+  { key: "value", column: "tg.value", op: "in" },
+  { key: "created_at", column: "tg.created_at", op: "gte" },
+  { key: "created_at", column: "tg.created_at", op: "lte" },
+  { key: "updated_at", column: "tg.updated_at", op: "gte" },
+  { key: "updated_at", column: "tg.updated_at", op: "lte" },
+]
+
+export const PRODUCT_TAG_Q_COLUMNS = ["tg.value"]
+
+export const PRODUCT_TAG_SORT: Record<string, string> = {
+  created_at: "tg.created_at",
+  updated_at: "tg.updated_at",
+  value: "tg.value",
+}
+
+/** GET /admin/collections (product_collection col). */
+export const COLLECTION_FILTERS: FilterSpec[] = [
+  { key: "id", column: "col.id", op: "in" },
+  { key: "title", column: "col.title", op: "eq" },
+  { key: "handle", column: "col.handle", op: "eq" },
+  { key: "created_at", column: "col.created_at", op: "gte" },
+  { key: "created_at", column: "col.created_at", op: "lte" },
+]
+
+export const COLLECTION_Q_COLUMNS = ["col.title", "col.handle"]
+
+export const COLLECTION_SORT: Record<string, string> = {
+  created_at: "col.created_at",
+  title: "col.title",
+  handle: "col.handle",
+}
+
+/**
+ * GET /admin/product-categories (product_category c). The taxonomy calls the
+ * title column `name`, so the public `title` sort key maps onto `c.name`.
+ * The admin Organize page depends on the `rank ASC, created_at DESC` default.
+ */
+export const PRODUCT_CATEGORY_FILTERS: FilterSpec[] = [
+  { key: "id", column: "c.id", op: "in" },
+  { key: "handle", column: "c.handle", op: "eq" },
+  { key: "parent_id", column: "c.parent_category_id", op: "in" },
+  { key: "created_at", column: "c.created_at", op: "gte" },
+  { key: "created_at", column: "c.created_at", op: "lte" },
+]
+
+export const PRODUCT_CATEGORY_Q_COLUMNS = ["c.name", "c.handle", "COALESCE(c.description, '')"]
+
+export const PRODUCT_CATEGORY_SORT: Record<string, string> = {
+  rank: "c.rank",
+  title: "c.name",
+  name: "c.name",
+  created_at: "c.created_at",
+  handle: "c.handle",
+}
+
+// ---------- promotions / pricing ----------
+
+/**
+ * promotion.status / price_list.status whitelists. Lupus's PromotionStatus is
+ * draft|active|inactive; this schema's CHECK constraint only admits
+ * active|draft, so `inactive` is accepted (and simply matches nothing) instead
+ * of being treated as an unknown value.
+ */
+export const PROMOTION_STATUSES = ["draft", "active", "inactive"]
+
+/** promotion.application_type CHECK list - the dashboard calls it `type`. */
+export const PROMOTION_TYPES = ["percentage", "fixed", "buyget"]
+
