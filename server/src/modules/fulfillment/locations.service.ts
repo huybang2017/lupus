@@ -484,3 +484,246 @@ export class LocationsService {
     for (const p of prices) {
       const currency = p.currency_code?.toLowerCase() ?? null
       if (!!currency === !!p.region_id) bad("Each price needs either a currency_code or a region_id")
+      if (!Number.isInteger(p.amount) || p.amount < 0) bad("A price amount must be a whole number of 0 or more")
+      if (p.region_id) {
+        const r = await pool.query(`SELECT id FROM region WHERE id = $1 AND deleted_at IS NULL`, [p.region_id])
+        if (!r.rows[0]) bad(`Region ${p.region_id} was not found`, 404)
+      }
+      const rules = (p.rules ?? []).filter((r) => r.attribute === "item_total")
+      let gte: number | null = null
+      let lte: number | null = null
+      for (const r of rules) {
+        if (!["eq", "gt", "gte", "lt", "lte"].includes(r.operator)) bad(`Unsupported price rule operator ${r.operator}`)
+        if (Number.isNaN(Number(r.value))) bad("A price rule value must be a number")
+        if (r.operator === "gte") gte = Number(r.value)
+        if (r.operator === "lte") lte = Number(r.value)
+      }
+      if (gte != null && lte != null && gte > lte) bad("The minimum cart item total cannot be greater than the maximum")
+      const key = [currency ?? "", p.region_id ?? "", JSON.stringify(rules.map((r) => [r.operator, String(r.value)]).sort())].join("|")
+      if (seen.has(key)) bad("Two prices cover the same currency/region and conditions")
+      seen.add(key)
+      out.push({ currency_code: currency, region_id: p.region_id ?? null, amount: p.amount, rules: rules.map((r) => ({ attribute: "item_total", operator: r.operator, value: String(r.value) })) })
+    }
+    return out
+  }
+
+  private async checkOptionRefs(input: { service_zone_id?: string | null; provider_id: string; price_type: string; shipping_profile_id?: string | null; type_id?: string | null; data?: any }) {
+    let locationId: string | null = null
+    if (input.service_zone_id) {
+      const z = await pool.query(
+        `SELECT fs.stock_location_id FROM service_zone sz JOIN fulfillment_set fs ON fs.id = sz.fulfillment_set_id AND fs.deleted_at IS NULL WHERE sz.id = $1 AND sz.deleted_at IS NULL`,
+        [input.service_zone_id]
+      )
+      if (!z.rows[0]) notFound(`Service zone with id ${input.service_zone_id} was not found`)
+      locationId = z.rows[0].stock_location_id
+    }
+    if (!PROVIDERS.some((p) => p.id === input.provider_id)) bad(`Fulfillment provider ${input.provider_id} was not found`, 404)
+    if (locationId) {
+      const linked = await pool.query(`SELECT 1 FROM stock_location_fulfillment_provider WHERE stock_location_id = $1 AND provider_id = $2`, [locationId, input.provider_id])
+      if (!linked.rows[0]) bad(`Fulfillment provider ${input.provider_id} is not connected to this stock location`)
+    }
+    if (input.price_type === "calculated" && !CALCULATING_PROVIDERS.has(input.provider_id)) {
+      bad(`The fulfillment provider ${input.provider_id} cannot calculate prices; use a fixed price`)
+    }
+    if (input.shipping_profile_id) {
+      const p = await pool.query(`SELECT 1 FROM shipping_profile WHERE id = $1 AND deleted_at IS NULL`, [input.shipping_profile_id])
+      if (!p.rows[0]) bad(`Shipping profile ${input.shipping_profile_id} was not found`, 404)
+    }
+    if (input.type_id) {
+      const t = await pool.query(`SELECT 1 FROM shipping_option_type WHERE id = $1 AND deleted_at IS NULL`, [input.type_id])
+      if (!t.rows[0]) bad(`Shipping option type ${input.type_id} was not found`, 404)
+    }
+    if (input.data?.id) {
+      const known = (PROVIDER_OPTIONS[input.provider_id] ?? []).some((o) => o.id === input.data.id)
+      if (!known) bad(`The fulfillment option ${input.data.id} is not offered by provider ${input.provider_id}`)
+    }
+  }
+
+  private flags(rules: { attribute: string; operator?: string; value: string }[] | undefined) {
+    let is_return: boolean | undefined
+    let enabled_in_store: boolean | undefined
+    const rest: { attribute: string; operator: string; value: string }[] = []
+    for (const r of rules ?? []) {
+      if (r.attribute === "is_return") is_return = String(r.value) === "true"
+      else if (r.attribute === "enabled_in_store") enabled_in_store = String(r.value) === "true"
+      else rest.push({ attribute: r.attribute, operator: r.operator ?? "eq", value: String(r.value) })
+    }
+    return { is_return, enabled_in_store, rest }
+  }
+
+  private async resolveType(input: { type_id?: string | null; type?: { label: string; code: string; description?: string | null } | null }) {
+    if (input.type_id) return input.type_id
+    if (input.type) return (await this.createType(input.type)).id as string
+    return null
+  }
+
+  async createShippingOption(input: ShippingOptionInput) {
+    const name = input.name?.trim()
+    if (!name) bad("name is required")
+    const price_type = input.price_type ?? "flat"
+    const provider_id = input.provider_id ?? "manual"
+    await this.checkOptionRefs({ service_zone_id: input.service_zone_id, provider_id, price_type, shipping_profile_id: input.shipping_profile_id, type_id: input.type_id, data: input.data })
+    const f = this.flags(input.rules)
+    const priceInput: PriceInput[] =
+      input.prices ?? (input.amount != null && input.currency_code ? [{ currency_code: input.currency_code, amount: input.amount }] : [])
+    if (price_type === "calculated" && priceInput.length > 0) bad("A calculated shipping option cannot have prices")
+    const prices = await this.normalizePrices(priceInput)
+    const zone = input.service_zone_id
+      ? (await pool.query(`SELECT sz.name, sz.fulfillment_set_id FROM service_zone sz WHERE sz.id = $1`, [input.service_zone_id])).rows[0]
+      : null
+    const typeId = await this.resolveType(input)
+    const first = prices.find((p) => p.currency_code && p.rules.length === 0) ?? prices.find((p) => p.currency_code) ?? null
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const { rows } = await client.query(
+        `INSERT INTO shipping_option (name, price_type, provider_id, service_zone_id, service_zone_name, fulfillment_set_id, shipping_profile_id, shipping_option_type_id,
+                                      country_code, amount, currency_code, is_return, enabled_in_store, data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        [
+          name,
+          price_type,
+          provider_id,
+          input.service_zone_id ?? null,
+          zone?.name ?? null,
+          zone?.fulfillment_set_id ?? input.fulfillment_set_id ?? null,
+          input.shipping_profile_id ?? null,
+          typeId,
+          input.country_code?.toLowerCase() ?? null,
+          first?.amount ?? 0,
+          first?.currency_code ?? "usd",
+          f.is_return ?? input.is_return ?? false,
+          f.enabled_in_store ?? true,
+          input.data ?? null,
+        ]
+      )
+      const id = rows[0].id as string
+      for (const p of prices) {
+        await client.query(`INSERT INTO shipping_option_price (shipping_option_id, currency_code, region_id, amount, rules) VALUES ($1,$2,$3,$4,$5)`, [id, p.currency_code, p.region_id, p.amount, JSON.stringify(p.rules)])
+      }
+      for (const r of f.rest) {
+        await client.query(`INSERT INTO shipping_option_rule (shipping_option_id, attribute, operator, value) VALUES ($1,$2,$3,$4)`, [id, r.attribute, r.operator, r.value])
+      }
+      await client.query("COMMIT")
+      return this.retrieveShippingOption(id)
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async updateShippingOption(id: string, input: ShippingOptionInput) {
+    const cur = (await pool.query(`SELECT * FROM shipping_option WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0]
+    if (!cur) notFound(`Shipping option with id ${id} was not found`)
+    const price_type = input.price_type ?? cur.price_type
+    const provider_id = input.provider_id ?? cur.provider_id
+    const shipping_profile_id = input.shipping_profile_id === undefined ? cur.shipping_profile_id : input.shipping_profile_id
+    await this.checkOptionRefs({ service_zone_id: cur.service_zone_id, provider_id, price_type, shipping_profile_id, type_id: input.type_id, data: input.data })
+    const f = this.flags(input.rules)
+    let prices: Awaited<ReturnType<LocationsService["normalizePrices"]>> | null = null
+    if (input.prices) {
+      if (price_type === "calculated" && input.prices.length > 0) bad("A calculated shipping option cannot have prices")
+      prices = await this.normalizePrices(input.prices)
+    } else if (input.amount != null && input.currency_code) {
+      prices = await this.normalizePrices([{ currency_code: input.currency_code, amount: input.amount }])
+    }
+    const sets: string[] = []
+    const params: any[] = []
+    const set = (c: string, v: unknown) => {
+      params.push(v)
+      sets.push(`${c} = $${params.length}`)
+    }
+    if (input.name !== undefined) {
+      if (!input.name.trim()) bad("name cannot be empty")
+      set("name", input.name.trim())
+    }
+    set("price_type", price_type)
+    set("provider_id", provider_id)
+    set("shipping_profile_id", shipping_profile_id ?? null)
+    if (input.type_id !== undefined || input.type) set("shipping_option_type_id", await this.resolveType(input))
+    if (input.data !== undefined) set("data", input.data)
+    if (f.is_return !== undefined) set("is_return", f.is_return)
+    else if (input.is_return !== undefined) set("is_return", input.is_return)
+    if (f.enabled_in_store !== undefined) set("enabled_in_store", f.enabled_in_store)
+    if (input.country_code !== undefined) set("country_code", input.country_code?.toLowerCase() ?? null)
+    if (input.fulfillment_set_id !== undefined) set("fulfillment_set_id", input.fulfillment_set_id)
+    if (input.service_zone_name !== undefined) set("service_zone_name", input.service_zone_name)
+    if (prices) {
+      const first = prices.find((p) => p.currency_code && p.rules.length === 0) ?? prices.find((p) => p.currency_code)
+      if (first) {
+        set("amount", first.amount)
+        set("currency_code", first.currency_code)
+      }
+    }
+    sets.push("updated_at = NOW()")
+    params.push(id)
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      await client.query(`UPDATE shipping_option SET ${sets.join(", ")} WHERE id = $${params.length}`, params)
+      if (prices) {
+        await client.query(`UPDATE shipping_option_price SET deleted_at = NOW() WHERE shipping_option_id = $1 AND deleted_at IS NULL`, [id])
+        for (const p of prices) {
+          await client.query(`INSERT INTO shipping_option_price (shipping_option_id, currency_code, region_id, amount, rules) VALUES ($1,$2,$3,$4,$5)`, [id, p.currency_code, p.region_id, p.amount, JSON.stringify(p.rules)])
+        }
+      }
+      if (input.rules) {
+        await client.query(`DELETE FROM shipping_option_rule WHERE shipping_option_id = $1`, [id])
+        for (const r of f.rest) {
+          await client.query(`INSERT INTO shipping_option_rule (shipping_option_id, attribute, operator, value) VALUES ($1,$2,$3,$4)`, [id, r.attribute, r.operator, r.value])
+        }
+      }
+      await client.query("COMMIT")
+      return this.retrieveShippingOption(id)
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async deleteShippingOption(id: string) {
+    const r = await pool.query(`UPDATE shipping_option SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (r.rowCount === 0) notFound(`Shipping option with id ${id} was not found`)
+  }
+}
+
+export interface GeoZoneInput {
+  type: "country" | "province" | "city" | "postal"
+  country_code: string
+  province_code?: string | null
+  city?: string | null
+  postal_expression?: string[] | null
+}
+
+export interface PriceInput {
+  currency_code?: string | null
+  region_id?: string | null
+  amount: number
+  rules?: { attribute: string; operator: string; value: string | number }[]
+}
+
+export interface ShippingOptionInput {
+  name?: string
+  price_type?: "flat" | "calculated"
+  provider_id?: string
+  service_zone_id?: string | null
+  shipping_profile_id?: string | null
+  type_id?: string | null
+  type?: { label: string; code: string; description?: string | null } | null
+  data?: Record<string, any> | null
+  prices?: PriceInput[]
+  rules?: { attribute: string; operator?: string; value: string }[]
+  // legacy single-price form
+  amount?: number
+  currency_code?: string
+  country_code?: string | null
+  fulfillment_set_id?: string | null
+  is_return?: boolean
+  service_zone_name?: string | null
+}
+
+export const locationsService = new LocationsService()
