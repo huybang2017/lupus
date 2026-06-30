@@ -227,3 +227,232 @@ fulfillmentCompatRouter.post("/admin/inventory-items/export", requireAuth, async
   try {
     const items = await pool.query(`SELECT * FROM inventory_item WHERE deleted_at IS NULL ORDER BY created_at`)
     const levels = await pool.query(
+      `SELECT l.*, s.name AS location_name FROM inventory_level_location l LEFT JOIN stock_location s ON s.id=l.location_id ORDER BY l.inventory_item_id, l.location_id`
+    )
+    const byItem = new Map<string, any[]>()
+    for (const l of levels.rows) {
+      const arr = byItem.get(l.inventory_item_id) ?? []
+      arr.push(l)
+      byItem.set(l.inventory_item_id, arr)
+    }
+    const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`
+    const lines = ["inventory_item_id,sku,location_id,location_name,stocked_quantity,reserved_quantity,incoming_quantity"]
+    for (const item of items.rows) {
+      const itemLevels = byItem.get(item.id) ?? []
+      if (itemLevels.length === 0) {
+        lines.push([item.id, item.sku ?? "", "", "", 0, 0, 0].map(escape).join(","))
+      }
+      for (const l of itemLevels) {
+        lines.push([item.id, item.sku ?? "", l.location_id, l.location_name ?? "", l.stocked_quantity, l.reserved_quantity, l.incoming_quantity].map(escape).join(","))
+      }
+    }
+    const file = await fileService.upload({
+      filename: `inventory-export-${Date.now()}.csv`,
+      content_base64: Buffer.from(lines.join("\n"), "utf8").toString("base64"),
+      mime_type: "text/csv",
+    })
+    res.status(202).json({ transaction_id: file.id })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.post("/admin/inventory-items/location-levels/batch", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        create: z.array(levelInput.merge(z.object({ inventory_item_id: z.string() }))).optional(),
+        update: z.array(levelInput.merge(z.object({ inventory_item_id: z.string() }))).optional(),
+        delete: z.array(z.string()).optional(),
+        force: z.boolean().optional(),
+      })
+      .parse(req.body)
+    res.json(await runLevelBatch(body))
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.get("/admin/inventory-items", requireAuth, async (req, res, next) => {
+  try {
+    const lq = buildListQuery({
+      base: "i.deleted_at IS NULL",
+      query: req.query,
+      specs: INVENTORY_ITEM_FILTERS,
+      q: { columns: INVENTORY_ITEM_Q_COLUMNS },
+      order: INVENTORY_ITEM_SORT,
+      defaultOrder: "i.created_at DESC",
+    })
+    // location_id is not an inventory_item column: resolve it through the
+    // inventory_level_location pivot with a bound param.
+    const locations = queryList(req.query.location_id)
+    const extra =
+      locations.length > 0
+        ? {
+            sql: `EXISTS (SELECT 1 FROM inventory_level_location ill WHERE ill.inventory_item_id = i.id AND ill.location_id = ANY($${lq.params.length + 1}))`,
+            params: [locations],
+          }
+        : null
+    const params = extra ? [...lq.params, ...extra.params] : lq.params
+    const conditions = [lq.where.replace(/^WHERE\s+/i, ""), extra?.sql ?? ""].filter((c) => c.length > 0)
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+    const from = "FROM inventory_item i"
+    const order = lq.order ? `ORDER BY ${lq.order}` : ""
+    const total = await pool.query(`SELECT COUNT(*)::int AS c ${from} ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT i.* ${from} ${where} ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lq.limit, lq.offset]
+    )
+    const inventory_items = []
+    for (const r of rows) {
+      inventory_items.push(await hydrateInventoryItem(r.id))
+    }
+    sendList(res, { inventory_items, count: Number(total.rows[0].c), offset: lq.offset, limit: lq.limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.get("/admin/inventory-items/:id", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ inventory_item: await hydrateInventoryItem(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.post("/admin/inventory-items/:id", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        sku: z.string().nullish(),
+        title: z.string().nullish(),
+        description: z.string().nullish(),
+        weight: z.number().nonnegative().nullish(),
+        length: z.number().nonnegative().nullish(),
+        height: z.number().nonnegative().nullish(),
+        width: z.number().nonnegative().nullish(),
+        mid_code: z.string().nullish(),
+        material: z.string().nullish(),
+        origin_country: z.string().nullish(),
+        hs_code: z.string().nullish(),
+        requires_shipping: z.boolean().optional(),
+        metadata: z.record(z.string(), z.unknown()).nullish(),
+      })
+      .parse(req.body)
+    const existing = await pool.query(`SELECT * FROM inventory_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!existing.rows[0]) {
+      throw notFound(`Inventory item with id ${req.params.id} was not found`)
+    }
+    // Only the keys present in the body are written, so an explicit null clears a field
+    // (COALESCE would silently keep the old value).
+    const sets: string[] = []
+    const values: unknown[] = []
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue
+      if ((key === "requires_shipping") && value === null) continue
+      values.push(key === "metadata" && value !== null ? JSON.stringify(value) : value)
+      sets.push(`${key} = $${values.length}`)
+    }
+    if (sets.length > 0) {
+      values.push(req.params.id)
+      await pool.query(`UPDATE inventory_item SET ${sets.join(", ")} WHERE id = $${values.length}`, values)
+    }
+    res.json({ inventory_item: await hydrateInventoryItem(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.delete("/admin/inventory-items/:id", requireAuth, async (req, res, next) => {
+  try {
+    const r = await pool.query(`UPDATE inventory_item SET deleted_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (r.rowCount === 0) {
+      throw notFound(`Inventory item with id ${req.params.id} was not found`)
+    }
+    res.json({ id: req.params.id, object: "inventory_item", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.get("/admin/inventory-items/:id/location-levels", requireAuth, async (req, res, next) => {
+  try {
+    const item = await pool.query(`SELECT id FROM inventory_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!item.rows[0]) {
+      throw notFound(`Inventory item with id ${req.params.id} was not found`)
+    }
+    const lq = buildListQuery({
+      base: "TRUE",
+      query: req.query,
+      specs: INVENTORY_LEVEL_FILTERS,
+      q: { columns: INVENTORY_LEVEL_Q_COLUMNS },
+      order: INVENTORY_LEVEL_SORT,
+      defaultOrder: "l.location_id ASC",
+    })
+    // the owning item is pinned by the path, so it is appended as a bound param
+    const params = [...lq.params, req.params.id]
+    const where = `WHERE l.inventory_item_id = $${params.length}${lq.where ? ` AND ${lq.where.replace(/^WHERE\s+/i, "")}` : ""}`
+    const from = "FROM inventory_level_location l"
+    const order = lq.order ? `ORDER BY ${lq.order}` : ""
+    const total = await pool.query(`SELECT COUNT(*)::int AS c ${from} ${where}`, params)
+    const { rows } = await pool.query(
+      `SELECT l.* ${from} ${where} ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lq.limit, lq.offset]
+    )
+    sendList(res, { inventory_levels: rows.map(toLevelDto), count: Number(total.rows[0].c), offset: lq.offset, limit: lq.limit })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.post("/admin/inventory-items/:id/location-levels/batch", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        create: z.array(levelInput).optional(),
+        update: z.array(levelInput).optional(),
+        delete: z.array(z.string()).optional(),
+        force: z.boolean().optional(),
+      })
+      .parse(req.body)
+    const item = await pool.query(`SELECT id FROM inventory_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!item.rows[0]) {
+      throw notFound(`Inventory item with id ${req.params.id} was not found`)
+    }
+    res.json(await runLevelBatch({ ...body, defaultItemId: req.params.id }))
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.post("/admin/inventory-items/:id/location-levels/:locationId", requireAuth, async (req, res, next) => {
+  try {
+    const body = z.object({ stocked_quantity: z.number().int().nonnegative().optional(), incoming_quantity: z.number().int().nonnegative().optional() }).parse(req.body)
+    const item = await pool.query(`SELECT id FROM inventory_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!item.rows[0]) {
+      throw notFound(`Inventory item with id ${req.params.id} was not found`)
+    }
+    await applyLevelUpsert(req.params.id, { location_id: req.params.locationId, ...body })
+    res.json({ inventory_item: await hydrateInventoryItem(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.delete("/admin/inventory-items/:id/location-levels/:locationId", requireAuth, async (req, res, next) => {
+  try {
+    const lvl = await pool.query(`SELECT * FROM inventory_level_location WHERE inventory_item_id=$1 AND location_id=$2`, [req.params.id, req.params.locationId])
+    if (!lvl.rows[0]) {
+      throw notFound(`Inventory level for item ${req.params.id} at location ${req.params.locationId} was not found`)
+    }
+    if (Number(lvl.rows[0].reserved_quantity) > 0) {
+      throw Object.assign(new Error(`Cannot remove inventory level for item ${req.params.id} at location ${req.params.locationId} because there are reservations at location`), { statusCode: 400 })
+    }
+    await pool.query(`DELETE FROM inventory_level_location WHERE inventory_item_id=$1 AND location_id=$2`, [req.params.id, req.params.locationId])
+    res.json({
+      id: levelRefId(req.params.id, req.params.locationId),
+      object: "inventory-level",
+      deleted: true,
+      parent: await hydrateInventoryItem(req.params.id),
+    })
