@@ -456,3 +456,232 @@ fulfillmentCompatRouter.delete("/admin/inventory-items/:id/location-levels/:loca
       deleted: true,
       parent: await hydrateInventoryItem(req.params.id),
     })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Reservations
+// ---------------------------------------------------------------------------
+
+fulfillmentCompatRouter.get("/admin/reservations", requireAuth, async (req, res, next) => {
+  try {
+    const { body } = await runList({
+      req,
+      table: "reservation_item",
+      alias: "r",
+      select: "r.*, ii.sku AS inventory_item_sku, ii.title AS inventory_item_title",
+      joins: "LEFT JOIN inventory_item ii ON ii.id = r.inventory_item_id",
+      base: "r.deleted_at IS NULL",
+      specs: RESERVATION_FILTERS,
+      order: RESERVATION_SORT,
+      defaultOrder: "r.created_at DESC",
+      key: "reservations",
+    })
+    sendList(res, body)
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.get("/admin/reservations/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM reservation_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound(`Reservation with id ${req.params.id} was not found`)
+    }
+    res.json({ reservation: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.post("/admin/reservations/:id", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        quantity: z.number().int().positive().optional(),
+        description: z.string().nullish(),
+        metadata: z.record(z.string(), z.unknown()).nullish(),
+        location_id: z.string().optional(),
+        line_item_id: z.string().nullish(),
+      })
+      .parse(req.body)
+    const cur = await pool.query(`SELECT * FROM reservation_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!cur.rows[0]) {
+      throw notFound(`Reservation with id ${req.params.id} was not found`)
+    }
+    const prev = cur.rows[0]
+    if (body.quantity != null && body.quantity !== prev.quantity && !prev.allow_backorder) {
+      const delta = body.quantity - prev.quantity
+      if (delta > 0) {
+        const lvl = await pool.query(`SELECT stocked_quantity, reserved_quantity FROM inventory_level_location WHERE inventory_item_id=$1 AND location_id=$2`, [prev.inventory_item_id, prev.location_id])
+        const avail = lvl.rows[0] ? Number(lvl.rows[0].stocked_quantity) - Number(lvl.rows[0].reserved_quantity) : 0
+        if (avail < delta) {
+          throw Object.assign(new Error(`Insufficient stock at location (available ${avail})`), { statusCode: 400 })
+        }
+      }
+      await pool.query(`UPDATE inventory_level_location SET reserved_quantity = GREATEST(0, reserved_quantity + $3) WHERE inventory_item_id=$1 AND location_id=$2`, [
+        prev.inventory_item_id,
+        prev.location_id,
+        delta,
+      ])
+    }
+    const upd = await pool.query(
+      `UPDATE reservation_item SET quantity=COALESCE($2, quantity), description=COALESCE($3, description), metadata=COALESCE($4, metadata), location_id=COALESCE($5, location_id), line_item_id=COALESCE($6, line_item_id) WHERE id=$1 RETURNING *`,
+      [req.params.id, body.quantity ?? null, body.description ?? null, body.metadata ? JSON.stringify(body.metadata) : null, body.location_id ?? null, body.line_item_id ?? null]
+    )
+    res.json({ reservation: upd.rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+fulfillmentCompatRouter.delete("/admin/reservations/:id", requireAuth, async (req, res, next) => {
+  try {
+    const cur = await pool.query(`SELECT * FROM reservation_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!cur.rows[0]) {
+      throw notFound(`Reservation with id ${req.params.id} was not found`)
+    }
+    if (!cur.rows[0].allow_backorder) {
+      await pool.query(`UPDATE inventory_level_location SET reserved_quantity = GREATEST(0, reserved_quantity - $3) WHERE inventory_item_id=$1 AND location_id=$2`, [
+        cur.rows[0].inventory_item_id,
+        cur.rows[0].location_id,
+        cur.rows[0].quantity,
+      ])
+    }
+    await pool.query(`UPDATE reservation_item SET deleted_at=NOW() WHERE id=$1`, [req.params.id])
+    res.json({ id: req.params.id, object: "reservation", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Stock locations
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Fulfillment sets + service zones
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Fulfillment providers
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Shipping options
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Shipping profiles
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Shipping option types, shipping profiles, stock locations, fulfillment sets, service zones and
+// shipping options live in locations.routes.ts
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Inventory levels: create single level
+// (sdk.admin.inventoryItem docs POST /admin/inventory-items/:id/location-levels
+// with { location_id, stocked_quantity?, ... } -> { inventory_item } per
+// upstream/src/api/admin/inventory-items/[id]/location-levels/route.ts)
+// ---------------------------------------------------------------------------
+
+fulfillmentCompatRouter.post("/admin/inventory-items/:id/location-levels", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        location_id: z.string(),
+        stocked_quantity: z.number().int().nonnegative().optional(),
+        incoming_quantity: z.number().int().nonnegative().optional(),
+      })
+      .passthrough()
+      .parse(req.body ?? {})
+    const item = await pool.query(`SELECT id FROM inventory_item WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!item.rows[0]) {
+      throw notFound(`Inventory item with id ${req.params.id} was not found`)
+    }
+    await applyLevelUpsert(req.params.id, body)
+    res.json({ inventory_item: await hydrateInventoryItem(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Shipping option rules batch
+// (sdk.admin.shippingOption.updateRules -> POST
+// /admin/shipping-options/:id/rules/batch with { create, update, delete }.
+// Lupus route returns { created, updated, deleted: { ids, object, deleted } }
+// per shipping-options/helpers.ts refetchBatchRules.)
+// ---------------------------------------------------------------------------
+
+fulfillmentCompatRouter.post("/admin/shipping-options/:id/rules/batch", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        create: z
+          .array(
+            z.object({
+              attribute: z.enum(["weight", "subtotal", "quantity", "product_id"]),
+              operator: z.enum(["eq", "ne", "gt", "gte", "lt", "lte", "in"]),
+              value: z.string(),
+            })
+          )
+          .optional(),
+        update: z
+          .array(
+            z.object({
+              id: z.string(),
+              attribute: z.enum(["weight", "subtotal", "quantity", "product_id"]).optional(),
+              operator: z.enum(["eq", "ne", "gt", "gte", "lt", "lte", "in"]).optional(),
+              value: z.string().optional(),
+            })
+          )
+          .optional(),
+        delete: z.array(z.string()).optional(),
+      })
+      .parse(req.body ?? {})
+    const opt = await pool.query(`SELECT id FROM shipping_option WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!opt.rows[0]) {
+      throw notFound(`Shipping option with id ${req.params.id} was not found`)
+    }
+    const created: any[] = []
+    for (const c of body.create ?? []) {
+      const { rows } = await pool.query(
+        `INSERT INTO shipping_option_rule (shipping_option_id, attribute, operator, value) VALUES ($1,$2,$3,$4) RETURNING *`,
+        [req.params.id, c.attribute, c.operator, c.value]
+      )
+      created.push(rows[0])
+    }
+    const updated: any[] = []
+    for (const u of body.update ?? []) {
+      const prev = await pool.query(`SELECT * FROM shipping_option_rule WHERE id=$1 AND shipping_option_id=$2`, [u.id, req.params.id])
+      if (!prev.rows[0]) {
+        throw notFound(`Shipping option rule with id ${u.id} was not found`)
+      }
+      const cur = prev.rows[0]
+      const { rows } = await pool.query(`UPDATE shipping_option_rule SET attribute=$3, operator=$4, value=$5 WHERE id=$1 AND shipping_option_id=$2 RETURNING *`, [
+        u.id,
+        req.params.id,
+        u.attribute ?? cur.attribute,
+        u.operator ?? cur.operator,
+        u.value ?? cur.value,
+      ])
+      updated.push(rows[0])
+    }
+    const deletedIds: string[] = []
+    for (const id of body.delete ?? []) {
+      const gone = await pool.query(`DELETE FROM shipping_option_rule WHERE id=$1 AND shipping_option_id=$2 RETURNING id`, [id, req.params.id])
+      if (gone.rows[0]) {
+        deletedIds.push(id)
+      }
+    }
+    res.json({ created, updated, deleted: { ids: deletedIds, object: "shipping_option_rule", deleted: true } })
+  } catch (e) {
+    next(e)
+  }
+})
