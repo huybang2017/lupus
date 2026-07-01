@@ -214,3 +214,219 @@ async function assembleOrder(orderId: string) {
     region: regionR.rows[0] ?? null,
     items,
     shipping_methods: shippingMethods,
+    shipping_address: shipping,
+    billing_address: billing,
+    payment_collection: pcR.rows[0] ?? null,
+    promo_codes: promoCodes,
+    summary: {
+      subtotal,
+      discount_total: Number(base.discount_total ?? 0),
+      shipping_total: Number(base.shipping_total ?? 0),
+      tax_total: Number(base.tax_total ?? 0),
+      total: Number(base.total ?? 0),
+    },
+  }
+}
+
+async function orderPromoDiscount(codes: string[], subtotal: number): Promise<number> {
+  let delta = 0
+  for (const raw of codes) {
+    const code = String(raw).toUpperCase()
+    const p = await pool.query(`SELECT * FROM promotion WHERE code=$1 AND deleted_at IS NULL`, [code])
+    if (!p.rows[0]) {
+      throw Object.assign(new Error(`Promotion ${code} not found`), { statusCode: 404 })
+    }
+    if (p.rows[0].status === "active") {
+      delta += promoDiscount(p.rows[0], subtotal)
+    }
+  }
+  return delta
+}
+
+async function readDraftPromoCodes(orderId: string): Promise<string[]> {
+  try {
+    const cur = await pool.query(`SELECT metadata FROM "order" WHERE id=$1`, [orderId])
+    const meta = ((cur.rows[0]?.metadata ?? {}) as { promo_codes?: unknown })
+    return Array.isArray(meta.promo_codes) ? (meta.promo_codes as unknown[]).map((c) => String(c)) : []
+  } catch (e: any) {
+    if (e?.code === "42703") {
+      return []
+    }
+    throw e
+  }
+}
+
+async function replaceDraftItemsAndPromos(
+  orderId: string,
+  currency: string,
+  items: { variant_id?: string; title: string; quantity: number; unit_price?: number | null }[] | undefined,
+  promoCodes: string[] | undefined
+) {
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+    if (items !== undefined) {
+      await client.query(`DELETE FROM order_line_item WHERE order_id=$1`, [orderId])
+      for (const i of items) {
+        let price: number
+        if (i.variant_id) {
+          price = await resolveUnitPrice(i.variant_id, currency, i.unit_price)
+        } else {
+          price = Number(i.unit_price ?? 0)
+        }
+        await client.query(
+          `INSERT INTO order_line_item (order_id, variant_id, product_id, title, quantity, unit_price, discount_total) VALUES ($1,$2,$3,$4,$5,$6,0)`,
+          [orderId, i.variant_id ?? null, null, i.title, i.quantity, price]
+        )
+      }
+    }
+    const lines = await client.query(`SELECT id, quantity, unit_price, discount_total FROM order_line_item WHERE order_id=$1`, [orderId])
+    const subtotal = lines.rows.reduce((s: number, l: any) => s + Number(l.quantity) * Number(l.unit_price), 0)
+    const codes = promoCodes !== undefined ? promoCodes.map((c) => String(c).toUpperCase()) : await readDraftPromoCodes(orderId)
+    const discount = await orderPromoDiscount(codes, subtotal)
+    if (promoCodes !== undefined) {
+      try {
+        const cur = await client.query(`SELECT metadata FROM "order" WHERE id=$1`, [orderId])
+        const meta = ((cur.rows[0]?.metadata ?? {}) as Record<string, unknown>)
+        await client.query(`UPDATE "order" SET metadata=$2 WHERE id=$1`, [orderId, JSON.stringify({ ...meta, promo_codes: codes })])
+      } catch (e: any) {
+        if (e?.code !== "42703") {
+          throw e
+        }
+      }
+    }
+    if (discount !== 0 && lines.rows.length > 0) {
+      const perItemDiscount = Math.round(-discount / lines.rows.length)
+      for (const line of lines.rows) {
+        await client.query(`UPDATE order_line_item SET discount_total=$1 WHERE id=$2`, [perItemDiscount, line.id])
+      }
+    }
+    const kept = await client.query(`SELECT shipping_total FROM "order" WHERE id=$1`, [orderId])
+    await writeOrderTotals(client, orderId, { shippingTotal: Number(kept.rows[0]?.shipping_total ?? 0) })
+    await client.query("COMMIT")
+  } catch (e) {
+    await client.query("ROLLBACK")
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+export async function buildDraftOrder(orderId: string) {
+  const order = await assembleOrder(orderId)
+  if (!order || !order.is_draft_order) {
+    return null
+  }
+  return { ...order, status: "open" }
+}
+
+async function requireDraft(orderId: string, res: any) {
+  const draft = await buildDraftOrder(orderId)
+  if (!draft) {
+    res.status(404).json({ message: "Draft order not found" })
+    return null
+  }
+  return draft
+}
+
+async function activeDraftEdit(orderId: string) {
+  const { rows } = await pool.query(
+    `SELECT * FROM order_change WHERE order_id=$1 AND change_type='edit' AND status IN ('pending','requested') AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+    [orderId]
+  )
+  return rows[0] ?? null
+}
+
+async function ensureDraftEdit(orderId: string) {
+  const existing = await activeDraftEdit(orderId)
+  if (existing) {
+    return existing
+  }
+  const o = await pool.query(`SELECT version FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [orderId])
+  if (!o.rows[0]) {
+    throw Object.assign(new Error("Draft order not found"), { statusCode: 404 })
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO order_change (order_id, change_type, status, version, requested_at) VALUES ($1,'edit','pending',$2,NOW()) RETURNING *`,
+    [orderId, Number(o.rows[0].version ?? 1) + 1]
+  )
+  return rows[0]
+}
+
+async function editActions(changeId: string) {
+  const { rows } = await pool.query(`SELECT * FROM order_change_action WHERE order_change_id=$1 ORDER BY created_at`, [changeId])
+  return rows
+}
+
+function promoDiscount(promo: any, subtotal: number): number {
+  if (promo.application_target !== "order") {
+    return 0
+  }
+  if (promo.application_type === "fixed") {
+    return -Math.min(Number(promo.application_value ?? 0), subtotal)
+  }
+  if (promo.application_type === "percentage") {
+    return -Math.round((subtotal * Number(promo.application_value ?? 0)) / 100)
+  }
+  return 0
+}
+
+async function buildDraftPreview(orderId: string) {
+  const draft = await buildDraftOrder(orderId)
+  if (!draft) {
+    return null
+  }
+  const edit = await activeDraftEdit(orderId)
+  if (!edit) {
+    return draft
+  }
+  const actions = await editActions(edit.id)
+  const items = draft.items.map((i: any) => ({ ...i }))
+  const added: any[] = []
+  let shippingDelta = 0
+  let promoDelta = 0
+  const subtotalOf = (list: any[]) => list.reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.unit_price), 0)
+  for (const a of actions) {
+    if (a.action === "add_item") {
+      const t = a.variant_id ? await variantTitle(a.variant_id) : { title: a.title ?? "Draft item", productId: null }
+      added.push({
+        id: a.id,
+        order_id: orderId,
+        variant_id: a.variant_id,
+        product_id: null,
+        title: a.title ?? t.title,
+        quantity: a.quantity ?? 1,
+        unit_price: Number(a.unit_price ?? 0),
+        subtotal: Number(a.quantity ?? 1) * Number(a.unit_price ?? 0),
+        total: Number(a.quantity ?? 1) * Number(a.unit_price ?? 0),
+        staged_action_id: a.id,
+      })
+    } else if (a.action === "remove_item" && a.line_item_id) {
+      const idx = items.findIndex((i: any) => i.id === a.line_item_id)
+      if (idx >= 0) {
+        items.splice(idx, 1)
+      }
+    } else if (a.action === "update_qty" && a.line_item_id) {
+      const line = items.find((i: any) => i.id === a.line_item_id)
+      if (line) {
+        if (a.quantity != null) {
+          line.quantity = a.quantity
+        }
+        if (a.unit_price != null) {
+          line.unit_price = Number(a.unit_price)
+        }
+        line.subtotal = Number(line.quantity) * Number(line.unit_price)
+        line.total = line.subtotal - Number(line.discount_total ?? 0)
+      }
+    } else if (a.action === "add_shipping") {
+      shippingDelta += Number(a.unit_price ?? 0)
+    } else if (a.action === "remove_shipping") {
+      shippingDelta -= Number(a.unit_price ?? 0)
+    } else if (a.action === "add_promo" && a.title) {
+      const p = await pool.query(`SELECT * FROM promotion WHERE code=$1 AND deleted_at IS NULL`, [String(a.title).toUpperCase()])
+      if (p.rows[0] && p.rows[0].status === "active") {
+        promoDelta += promoDiscount(p.rows[0], subtotalOf(items) + subtotalOf(added))
+      }
+    } else if (a.action === "remove_promo") {
+      promoDelta = 0
+    }
