@@ -430,3 +430,219 @@ async function buildDraftPreview(orderId: string) {
     } else if (a.action === "remove_promo") {
       promoDelta = 0
     }
+  }
+  const allItems = [...items, ...added]
+  const subtotal = subtotalOf(allItems)
+  const shippingTotal = Math.max(Number(draft.shipping_total ?? 0) + shippingDelta, 0)
+  return {
+    ...draft,
+    items: allItems,
+    shipping_total: shippingTotal,
+    summary: {
+      ...draft.summary,
+      subtotal,
+      discount_total: Number(draft.discount_total ?? 0) + promoDelta,
+      shipping_total: shippingTotal,
+      total: subtotal + Number(draft.discount_total ?? 0) + promoDelta + shippingTotal + Number(draft.tax_total ?? 0),
+    },
+    staged_actions: actions,
+  }
+}
+
+async function confirmDraftEdit(orderId: string) {
+  const edit = await activeDraftEdit(orderId)
+  if (!edit) {
+    throw Object.assign(new Error("No active draft edit"), { statusCode: 404 })
+  }
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+    const { rows: actions } = await client.query(`SELECT * FROM order_change_action WHERE order_change_id=$1 ORDER BY created_at`, [edit.id])
+    let shippingDelta = 0
+    let promoDelta = 0
+    for (const a of actions) {
+      if (a.action === "remove_item" && a.line_item_id) {
+        await client.query(`DELETE FROM order_line_item WHERE id=$1 AND order_id=$2`, [a.line_item_id, orderId])
+      } else if (a.action === "update_qty" && a.line_item_id) {
+        if (a.quantity != null && Number(a.quantity) <= 0) {
+          await client.query(`DELETE FROM order_line_item WHERE id=$1 AND order_id=$2`, [a.line_item_id, orderId])
+        } else {
+          await client.query(
+            `UPDATE order_line_item SET quantity=COALESCE($3,quantity), unit_price=COALESCE($4,unit_price) WHERE id=$1 AND order_id=$2`,
+            [a.line_item_id, orderId, a.quantity, a.unit_price]
+          )
+        }
+      } else if (a.action === "add_item") {
+        const t = a.variant_id ? await variantTitle(a.variant_id) : { title: a.title ?? "Draft item", productId: null }
+        await client.query(
+          `INSERT INTO order_line_item (order_id, variant_id, product_id, title, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [orderId, a.variant_id, t.productId, a.title ?? t.title, a.quantity ?? 1, a.unit_price ?? 0]
+        )
+      } else if (a.action === "add_shipping") {
+        shippingDelta += Number(a.unit_price ?? 0)
+      } else if (a.action === "remove_shipping") {
+        shippingDelta -= Number(a.unit_price ?? 0)
+      } else if (a.action === "add_promo" && a.title) {
+        const p = await client.query(`SELECT * FROM promotion WHERE code=$1 AND deleted_at IS NULL`, [String(a.title).toUpperCase()])
+        if (p.rows[0] && p.rows[0].status === "active") {
+          const lines = await client.query(`SELECT quantity, unit_price FROM order_line_item WHERE order_id=$1`, [orderId])
+          const subtotal = lines.rows.reduce((s: number, l: any) => s + Number(l.quantity) * Number(l.unit_price), 0)
+          promoDelta += promoDiscount(p.rows[0], subtotal)
+          await client.query(`UPDATE promotion SET usage_count = usage_count + 1 WHERE id=$1`, [p.rows[0].id])
+        }
+      } else if (a.action === "remove_promo") {
+        promoDelta = 0
+      }
+    }
+    const lines = await client.query(`SELECT quantity, unit_price, discount_total FROM order_line_item WHERE order_id=$1`, [orderId])
+    const subtotal = lines.rows.reduce((s: number, l: any) => s + Number(l.quantity) * Number(l.unit_price), 0)
+    const discount = -lines.rows.reduce((s: number, l: any) => s + Number(l.discount_total ?? 0), 0) + promoDelta
+    await client.query(
+      `UPDATE "order" SET subtotal=$2, discount_total=$3, shipping_total=GREATEST(shipping_total+$4,0),
+        total=$2+$3+GREATEST(shipping_total+$4,0)+tax_total, version=$5, updated_at=NOW() WHERE id=$1`,
+      [orderId, subtotal, discount, shippingDelta, edit.version]
+    )
+    const o = await client.query(`SELECT total, payment_collection_id FROM "order" WHERE id=$1`, [orderId])
+    if (o.rows[0]?.payment_collection_id) {
+      await client.query(`UPDATE payment_collection SET amount=$2, updated_at=NOW() WHERE id=$1`, [
+        o.rows[0].payment_collection_id,
+        Number(o.rows[0].total ?? 0),
+      ])
+    }
+    await client.query(`UPDATE order_change SET status='confirmed', confirmed_at=NOW() WHERE id=$1`, [edit.id])
+    await client.query("COMMIT")
+  } catch (e) {
+    await client.query("ROLLBACK")
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+// --- Draft orders: list / create / retrieve / update / delete / convert ---
+
+// List is filtered/paged/sorted through the shared helper (list-query.ts), so
+// unknown query params are ignored instead of 400-ing and COUNT matches the page.
+draftCompatRouter.get("/admin/draft-orders", requireAuth, async (req, res, next) => {
+  try {
+    const { body } = await runList({
+      req,
+      table: "\"order\"",
+      alias: "o",
+      select: "o.*",
+      base: ["o.is_draft_order=TRUE", "o.deleted_at IS NULL"],
+      specs: DRAFT_ORDER_FILTERS,
+      q: { columns: DRAFT_ORDER_Q_COLUMNS },
+      order: DRAFT_ORDER_SORT,
+      defaultOrder: "o.created_at DESC",
+      key: "draft_orders",
+      enrich: (row: any) => buildDraftOrder(row.id),
+    })
+    sendList(res, body)
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.post("/admin/draft-orders", requireAuth, async (req, res, next) => {
+  try {
+    const { email, customer_id, region_id, currency_code, sales_channel_id, shipping_address, billing_address, items } = z
+      .object({
+        email: z.string().email().optional(),
+        customer_id: z.string().optional(),
+        region_id: z.string().optional(),
+        currency_code: z.string().length(3).optional(),
+        sales_channel_id: z.string().optional(),
+        shipping_address: addressSchema.optional(),
+        billing_address: addressSchema.optional(),
+        items: z.array(draftItemSchema).optional().default([]),
+      })
+      .parse(req.body ?? {})
+    let resolvedEmail = email ?? null
+    if (!resolvedEmail && customer_id) {
+      const c = await pool.query(`SELECT email FROM customer WHERE id=$1 AND deleted_at IS NULL`, [customer_id])
+      if (!c.rows[0]) {
+        throw Object.assign(new Error("Customer not found"), { statusCode: 404 })
+      }
+      resolvedEmail = c.rows[0].email
+    }
+    if (!resolvedEmail) {
+      throw Object.assign(new Error("email or customer_id is required"), { statusCode: 400 })
+    }
+    let currency = currency_code?.toLowerCase() ?? null
+    if (!currency && region_id) {
+      const r = await pool.query(`SELECT currency_code FROM region WHERE id=$1 AND deleted_at IS NULL`, [region_id])
+      if (!r.rows[0]) {
+        throw Object.assign(new Error("Region not found"), { statusCode: 404 })
+      }
+      currency = String(r.rows[0].currency_code).toLowerCase()
+    }
+    if (!currency) {
+      throw Object.assign(new Error("currency_code or region_id is required"), { statusCode: 400 })
+    }
+    const priced: { variant_id?: string; title: string; quantity: number; unit_price: number }[] = []
+    for (const i of items) {
+      if (i.variant_id) {
+        const price = await resolveUnitPrice(i.variant_id, currency, i.unit_price)
+        priced.push({ variant_id: i.variant_id, title: "", quantity: i.quantity, unit_price: price })
+      } else {
+        priced.push({ variant_id: undefined, title: i.title ?? "Custom Item", quantity: i.quantity, unit_price: Number(i.unit_price ?? 0) })
+      }
+    }
+    const subtotal = priced.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+    const client = await pool.connect()
+    let orderId: string
+    try {
+      await client.query("BEGIN")
+      const pc = await client.query(`INSERT INTO payment_collection (currency_code, amount, status) VALUES ($1,$2,'not_paid') RETURNING id`, [
+        currency,
+        subtotal,
+      ])
+      const o = await client.query(
+        `INSERT INTO "order" (email, customer_id, region_id, currency_code, subtotal, total, is_draft_order, status, sales_channel_id, payment_collection_id)
+         VALUES ($1,$2,$3,$4,$5,$5,TRUE,'pending',$6,$7) RETURNING id`,
+        [resolvedEmail, customer_id ?? null, region_id ?? null, currency, subtotal, sales_channel_id ?? null, pc.rows[0].id]
+      )
+      orderId = o.rows[0].id
+      for (const i of priced) {
+        if (i.variant_id) {
+          const t = await variantTitle(i.variant_id)
+          await client.query(
+            `INSERT INTO order_line_item (order_id, variant_id, product_id, title, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)`,
+            [orderId, i.variant_id, t.productId, t.title, i.quantity, i.unit_price]
+          )
+        } else {
+          await client.query(
+            `INSERT INTO order_line_item (order_id, title, quantity, unit_price) VALUES ($1,$2,$3,$4)`,
+            [orderId, i.title, i.quantity, i.unit_price]
+          )
+        }
+      }
+      await client.query("COMMIT")
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+    if (shipping_address) {
+      await upsertAddress(orderId!, "shipping", shipping_address)
+    }
+    if (billing_address) {
+      await upsertAddress(orderId!, "billing", billing_address)
+    }
+    res.status(201).json({ draft_order: await buildDraftOrder(orderId!) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.get("/admin/draft-orders/:id", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    res.json({ draft_order: draft })
+  } catch (e) {
+    next(e)
