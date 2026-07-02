@@ -430,3 +430,219 @@ ordersCompatRouter.post("/admin/orders/:id/payment-sessions/authorize", requireA
     }
     await paymentSessionService.authorizeSession(payment_session_id)
     res.json({ order: await buildAdminOrder(req.params.id), is_authorized: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Orders: fulfillment cancel / shipment / delivered (order-scoped) ---
+
+ordersCompatRouter.post("/admin/orders/:id/fulfillments/:fulfillmentId/cancel", requireAuth, async (req, res, next) => {
+  try {
+    const { no_notification } = z.object({ no_notification: z.boolean().optional() }).parse(req.body ?? {})
+    void no_notification
+    const f = await pool.query(`SELECT id FROM fulfillment WHERE id=$1 AND order_id=$2 AND deleted_at IS NULL`, [req.params.fulfillmentId, req.params.id])
+    if (!f.rows[0]) {
+      res.status(404).json({ message: "Fulfillment not found for this order" })
+      return
+    }
+    await fulfillmentService.cancel(req.params.fulfillmentId)
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id/fulfillments/:fulfillmentId/shipments", requireAuth, async (req, res, next) => {
+  try {
+    const { items, labels, no_notification } = z
+      .object({
+        items: z.array(z.object({ id: z.string(), quantity: z.number().int().positive() })).optional(),
+        labels: z.array(z.object({ tracking_number: z.string(), tracking_url: z.string(), label_url: z.string() })).optional(),
+        no_notification: z.boolean().optional(),
+      })
+      .parse(req.body ?? {})
+    void items
+    void no_notification
+    const f = await pool.query(`SELECT id FROM fulfillment WHERE id=$1 AND order_id=$2 AND deleted_at IS NULL`, [req.params.fulfillmentId, req.params.id])
+    if (!f.rows[0]) {
+      res.status(404).json({ message: "Fulfillment not found for this order" })
+      return
+    }
+    await pool.query(`UPDATE fulfillment SET shipped_at=COALESCE(shipped_at,NOW()), data=COALESCE(data,'{}'::jsonb) || $2::jsonb WHERE id=$1`, [
+      req.params.fulfillmentId,
+      JSON.stringify({ labels: labels ?? [] }),
+    ])
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id/fulfillments/:fulfillmentId/mark-as-delivered", requireAuth, async (req, res, next) => {
+  try {
+    const { no_notification } = z.object({ no_notification: z.boolean().optional() }).parse(req.body ?? {})
+    void no_notification
+    const r = await pool.query(
+      `UPDATE fulfillment SET shipped_at=COALESCE(shipped_at,NOW()), delivered_at=NOW()
+       WHERE id=$1 AND order_id=$2 AND canceled_at IS NULL AND delivered_at IS NULL AND deleted_at IS NULL`,
+      [req.params.fulfillmentId, req.params.id]
+    )
+    if (r.rowCount === 0) {
+      throw Object.assign(new Error("Fulfillment cannot be delivered"), { statusCode: 400 })
+    }
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Fulfillments (global): create + createShipment ---
+
+ordersCompatRouter.post("/admin/fulfillments", requireAuth, async (req, res, next) => {
+  try {
+    const { order_id, location_id, provider_id, items, labels, delivery_address } = z
+      .object({
+        order_id: z.string(),
+        location_id: z.string().optional(),
+        provider_id: z.string().optional(),
+        items: z.array(z.object({ id: z.string().optional(), line_item_id: z.string().optional(), quantity: z.number().int().positive(), title: z.string().optional(), sku: z.string().optional() })).optional(),
+        labels: z.array(z.object({ tracking_number: z.string(), tracking_url: z.string(), label_url: z.string() })).optional(),
+        delivery_address: addressSchema.optional(),
+      })
+      .parse(req.body ?? {})
+    void location_id
+    const lineItems = (items ?? [])
+      .map((it) => ({ line_item_id: it.line_item_id ?? it.id, quantity: it.quantity }))
+      .filter((it): it is { line_item_id: string; quantity: number } => !!it.line_item_id)
+    let fulfillment
+    if (lineItems.length > 0) {
+      fulfillment = await fulfillmentService.createFulfillment(order_id, lineItems)
+    } else {
+      const { rows } = await pool.query(
+        `INSERT INTO fulfillment (order_id, provider_id, data) VALUES ($1,$2,$3) RETURNING *`,
+        [order_id, provider_id ?? "manual", JSON.stringify({ labels: labels ?? [], delivery_address: delivery_address ?? null })]
+      )
+      fulfillment = rows[0]
+    }
+    const fi = await pool.query(
+      `SELECT fi.*, oli.title FROM fulfillment_item fi LEFT JOIN order_line_item oli ON oli.id=fi.line_item_id WHERE fi.fulfillment_id=$1`,
+      [fulfillment.id]
+    )
+    res.status(201).json({ fulfillment: { ...fulfillment, items: fi.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/fulfillments/:id/shipment", requireAuth, async (req, res, next) => {
+  try {
+    const { labels } = z
+      .object({ labels: z.array(z.object({ tracking_number: z.string(), tracking_url: z.string(), label_url: z.string() })).optional() })
+      .parse(req.body ?? {})
+    const r = await pool.query(
+      `UPDATE fulfillment SET shipped_at=COALESCE(shipped_at,NOW()), data=COALESCE(data,'{}'::jsonb) || $2::jsonb WHERE id=$1 AND deleted_at IS NULL RETURNING *`,
+      [req.params.id, JSON.stringify({ labels: labels ?? [] })]
+    )
+    if (!r.rows[0]) {
+      res.status(404).json({ message: "Fulfillment not found" })
+      return
+    }
+    const fi = await pool.query(
+      `SELECT fi.*, oli.title FROM fulfillment_item fi LEFT JOIN order_line_item oli ON oli.id=fi.line_item_id WHERE fi.fulfillment_id=$1`,
+      [req.params.id]
+    )
+    res.json({ fulfillment: { ...r.rows[0], items: fi.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Order changes: update ---
+
+ordersCompatRouter.post("/admin/order-changes/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { carry_over_promotions, internal_note } = z
+      .object({ carry_over_promotions: z.boolean().optional(), internal_note: z.string().nullish() })
+      .parse(req.body ?? {})
+    void carry_over_promotions
+    const existing = await pool.query(`SELECT id FROM order_change WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!existing.rows[0]) {
+      res.status(404).json({ message: "Order change not found" })
+      return
+    }
+    if (internal_note !== undefined) {
+      await pool.query(`UPDATE order_change SET description=$2 WHERE id=$1`, [req.params.id, internal_note])
+    }
+    res.json({ order_change: await changeWithActions(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Order edits: full lifecycle (modeled as order_change rows, change_type='edit') ---
+
+ordersCompatRouter.post("/admin/order-edits", requireAuth, async (req, res, next) => {
+  try {
+    const { order_id, description, internal_note } = z
+      .object({ order_id: z.string(), description: z.string().optional(), internal_note: z.string().optional() })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [order_id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    const change = await orderChangeService.request(order_id, "edit", description ?? internal_note, [])
+    res.status(201).json({ order_change: await changeWithActions(change.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.delete("/admin/order-edits/:id", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Order edit not found" })
+      return
+    }
+    await orderChangeService.cancel(edit.id)
+    res.json({ id: req.params.id, object: "order-edit", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/order-edits/:id/confirm", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Order edit not found" })
+      return
+    }
+    await orderChangeService.confirm(edit.id)
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/order-edits/:id/request", requireAuth, async (req, res, next) => {
+  try {
+    const { no_notification } = z.object({ no_notification: z.boolean().optional() }).parse(req.body ?? {})
+    void no_notification
+    const o = await pool.query(`SELECT id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    let edit = await activeEdit(req.params.id)
+    if (!edit) {
+      edit = await orderChangeService.request(req.params.id, "edit", undefined, [])
+    } else {
+      await pool.query(`UPDATE order_change SET status='requested' WHERE id=$1`, [edit.id])
+    }
