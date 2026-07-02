@@ -1078,3 +1078,219 @@ draftCompatRouter.post("/admin/draft-orders/:id/edit/shipping-methods", requireA
     const optionId = shipping_option_id ?? option_id ?? null
     let methodName = name ?? null
     let methodAmount = amount ?? null
+    if (optionId) {
+      const opt = await pool.query(`SELECT * FROM shipping_option WHERE id=$1 AND deleted_at IS NULL`, [optionId])
+      if (!opt.rows[0]) {
+        res.status(404).json({ message: "Shipping option not found" })
+        return
+      }
+      methodName = opt.rows[0].name
+      methodAmount = Number(opt.rows[0].amount)
+    }
+    if (methodName == null || methodAmount == null) {
+      throw Object.assign(new Error("shipping_option_id or name+amount is required"), { statusCode: 400 })
+    }
+    const edit = await ensureDraftEdit(req.params.id)
+    if (optionId) {
+      await pool.query(`DELETE FROM order_change_action WHERE order_change_id=$1 AND action='add_shipping' AND variant_id=$2`, [edit.id, optionId])
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO order_change_action (order_change_id, action, variant_id, title, unit_price) VALUES ($1,'add_shipping',$2,$3,$4) RETURNING *`,
+      [edit.id, optionId, methodName, methodAmount]
+    )
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview, shipping_method: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.post("/admin/draft-orders/:id/edit/shipping-methods/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    const { amount, name } = z
+      .object({ amount: z.number().int().nonnegative().optional(), name: z.string().optional() })
+      .parse(req.body ?? {})
+    const edit = await activeDraftEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Draft edit not found" })
+      return
+    }
+    const existing = await pool.query(`SELECT * FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.actionId, edit.id])
+    if (!existing.rows[0]) {
+      res.status(404).json({ message: "Edit action not found" })
+      return
+    }
+    await pool.query(`UPDATE order_change_action SET unit_price=COALESCE($3,unit_price), title=COALESCE($4,title) WHERE id=$1 AND order_change_id=$2`, [
+      req.params.actionId,
+      edit.id,
+      amount ?? null,
+      name ?? null,
+    ])
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.delete("/admin/draft-orders/:id/edit/shipping-methods/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeDraftEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Draft edit not found" })
+      return
+    }
+    const r = await pool.query(`DELETE FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.actionId, edit.id])
+    if (r.rowCount === 0) {
+      res.status(404).json({ message: "Edit action not found" })
+      return
+    }
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.delete("/admin/draft-orders/:id/edit/shipping-methods/method/:methodId", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeDraftEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Draft edit not found" })
+      return
+    }
+    const byAction = await pool.query(`DELETE FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.methodId, edit.id])
+    if (byAction.rowCount === 0) {
+      await pool.query(`DELETE FROM order_change_action WHERE order_change_id=$1 AND action='add_shipping' AND variant_id=$2`, [
+        edit.id,
+        req.params.methodId,
+      ])
+    }
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// sdk.admin.draftOrder.updateShippingMethod ->
+// POST /admin/draft-orders/:id/edit/shipping-methods/method/:methodId.
+// Attaches the existing shipping method (shipping_option row) to the open edit:
+// when :methodId matches a staged add_shipping action id the action is updated
+// in place, otherwise a new staged action is added for that shipping option.
+// Returns { draft_order, order_preview } like the sibling edit handlers.
+draftCompatRouter.post("/admin/draft-orders/:id/edit/shipping-methods/method/:methodId", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    const { shipping_option_id, custom_amount, amount, name } = z
+      .object({
+        shipping_option_id: z.string().optional(),
+        custom_amount: z.number().int().nonnegative().optional(),
+        amount: z.number().int().nonnegative().optional(),
+        name: z.string().optional(),
+      })
+      .parse(req.body ?? {})
+    const optionId = shipping_option_id ?? req.params.methodId
+    const opt = await pool.query(`SELECT * FROM shipping_option WHERE id=$1 AND deleted_at IS NULL`, [optionId])
+    if (!opt.rows[0]) {
+      res.status(404).json({ message: "Shipping option not found" })
+      return
+    }
+    const methodName = name ?? opt.rows[0].name
+    const methodAmount = custom_amount ?? amount ?? Number(opt.rows[0].amount)
+    const edit = await ensureDraftEdit(req.params.id)
+    const existing = await pool.query(`SELECT id FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.methodId, edit.id])
+    if (existing.rows[0]) {
+      await pool.query(`UPDATE order_change_action SET variant_id=$3, title=$4, unit_price=$5 WHERE id=$1 AND order_change_id=$2`, [
+        req.params.methodId,
+        edit.id,
+        optionId,
+        methodName,
+        methodAmount,
+      ])
+    } else {
+      await pool.query(`DELETE FROM order_change_action WHERE order_change_id=$1 AND action='add_shipping' AND variant_id=$2`, [edit.id, optionId])
+      await pool.query(`INSERT INTO order_change_action (order_change_id, action, variant_id, title, unit_price) VALUES ($1,'add_shipping',$2,$3,$4)`, [
+        edit.id,
+        optionId,
+        methodName,
+        methodAmount,
+      ])
+    }
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Edit: promotions ---
+
+draftCompatRouter.post("/admin/draft-orders/:id/edit/promotions", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    const { promo_codes, codes, code } = z
+      .object({ promo_codes: z.array(z.string()).optional(), codes: z.array(z.string()).optional(), code: z.string().optional() })
+      .parse(req.body ?? {})
+    const list = [...(promo_codes ?? []), ...(codes ?? []), ...(code ? [code] : [])].map((c) => c.toUpperCase())
+    if (list.length === 0) {
+      throw Object.assign(new Error("promo_codes is required"), { statusCode: 400 })
+    }
+    const edit = await ensureDraftEdit(req.params.id)
+    for (const c of list) {
+      const p = await pool.query(`SELECT id FROM promotion WHERE code=$1 AND deleted_at IS NULL`, [c])
+      if (!p.rows[0]) {
+        throw Object.assign(new Error(`Promotion ${c} not found`), { statusCode: 404 })
+      }
+      await pool.query(
+        `DELETE FROM order_change_action WHERE order_change_id=$1 AND action IN ('add_promo','remove_promo') AND title=$2`,
+        [edit.id, c]
+      )
+      await pool.query(`INSERT INTO order_change_action (order_change_id, action, variant_id, title) VALUES ($1,'add_promo',$2,$3)`, [
+        edit.id,
+        p.rows[0].id,
+        c,
+      ])
+    }
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.delete("/admin/draft-orders/:id/edit/promotions", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeDraftEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Draft edit not found" })
+      return
+    }
+    const { promo_codes, codes, code } = z
+      .object({ promo_codes: z.array(z.string()).optional(), codes: z.array(z.string()).optional(), code: z.string().optional() })
+      .parse(req.body ?? {})
+    const list = [...(promo_codes ?? []), ...(codes ?? []), ...(code ? [code] : [])].map((c) => c.toUpperCase())
+    if (list.length === 0) {
+      await pool.query(`DELETE FROM order_change_action WHERE order_change_id=$1 AND action='add_promo'`, [edit.id])
+    } else {
+      for (const c of list) {
+        await pool.query(`DELETE FROM order_change_action WHERE order_change_id=$1 AND action='add_promo' AND title=$2`, [edit.id, c])
+        await pool.query(`INSERT INTO order_change_action (order_change_id, action, title) VALUES ($1,'remove_promo',$2)`, [edit.id, c])
+      }
+    }
+    const preview = await buildDraftPreview(req.params.id)
+    res.json({ draft_order: preview, order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
