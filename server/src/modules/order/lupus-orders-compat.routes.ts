@@ -214,3 +214,219 @@ async function orderPreview(orderId: string, res: any) {
 
 // --- Orders: retrieve / update / preview / line-items / shipping-options ---
 
+ordersCompatRouter.get("/admin/orders/:id", requireAuth, async (req, res, next) => {
+  try {
+    const order = await buildAdminOrder(req.params.id)
+    if (!order) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    res.json({ order })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id", requireAuth, async (req, res, next) => {
+  try {
+    if (req.params.id === "export") {
+      next("route")
+      return
+    }
+    const { email, shipping_address, billing_address } = z
+      .object({ email: z.string().email().optional(), shipping_address: addressSchema.optional(), billing_address: addressSchema.optional() })
+      .parse(req.body ?? {})
+    const exists = await pool.query(`SELECT id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!exists.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    if (email !== undefined) {
+      await pool.query(`UPDATE "order" SET email=$2, updated_at=NOW() WHERE id=$1`, [req.params.id, email])
+    }
+    for (const [kind, addr] of [["shipping", shipping_address], ["billing", billing_address]] as const) {
+      if (!addr) {
+        continue
+      }
+      await pool.query(
+        `INSERT INTO order_address (order_id, kind, first_name, last_name, company, address_1, address_2, city, country_code, province, postal_code, phone)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (order_id, kind) DO UPDATE
+         SET first_name=$3, last_name=$4, company=$5, address_1=$6, address_2=$7, city=$8, country_code=$9, province=$10, postal_code=$11, phone=$12`,
+        [req.params.id, kind, addr.first_name ?? null, addr.last_name ?? null, addr.company ?? null, addr.address_1 ?? null, addr.address_2 ?? null, addr.city ?? null, addr.country_code?.toLowerCase() ?? null, addr.province ?? null, addr.postal_code ?? null, addr.phone ?? null]
+      )
+    }
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.get("/admin/orders/:id/preview", requireAuth, async (req, res, next) => {
+  try {
+    const order = await orderPreview(req.params.id, res)
+    if (!order) {
+      return
+    }
+    res.json({ order })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.get("/admin/orders/:id/line-items", requireAuth, async (req, res, next) => {
+  try {
+    const order = await buildAdminOrder(req.params.id)
+    if (!order) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    res.json({ order_items: order.items })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.get("/admin/orders/:id/shipping-options", requireAuth, async (req, res, next) => {
+  try {
+    const o = await pool.query(`SELECT id, currency_code FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    const { rows } = await pool.query(
+      `SELECT * FROM shipping_option WHERE deleted_at IS NULL AND is_return=FALSE AND LOWER(currency_code)=LOWER($1) ORDER BY created_at DESC`,
+      [o.rows[0].currency_code]
+    )
+    res.json({ shipping_options: rows })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Orders: transfer / credit-lines / export / authorize payment session ---
+
+ordersCompatRouter.post("/admin/orders/:id/transfer", requireAuth, async (req, res, next) => {
+  try {
+    const { customer_id, internal_note, description, update_order_email } = z
+      .object({ customer_id: z.string(), internal_note: z.string().optional(), description: z.string().optional(), update_order_email: z.boolean().optional() })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT id, email FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    const c = await pool.query(`SELECT id, email FROM customer WHERE id=$1 AND deleted_at IS NULL`, [customer_id])
+    if (!c.rows[0]) {
+      res.status(404).json({ message: "Customer not found" })
+      return
+    }
+    void update_order_email
+    await pool.query(`UPDATE "order" SET customer_id=$2, email=$3, updated_at=NOW() WHERE id=$1`, [
+      req.params.id,
+      customer_id,
+      c.rows[0].email ?? o.rows[0].email,
+    ])
+    await pool.query(
+      `INSERT INTO order_change (order_id, change_type, description, status, version, requested_at) VALUES ($1,'transfer',$2,'requested',(SELECT version FROM "order" WHERE id=$1)+1,NOW())`,
+      [req.params.id, JSON.stringify({ kind: "transfer", customer_id, internal_note: internal_note ?? null, description: description ?? null })]
+    )
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id/transfer/cancel", requireAuth, async (req, res, next) => {
+  try {
+    const o = await pool.query(`SELECT id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    await pool.query(
+      `UPDATE order_change SET status='canceled', canceled_at=NOW() WHERE id=(
+         SELECT id FROM order_change WHERE order_id=$1 AND change_type='transfer' AND status IN ('pending','requested') AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1
+       )`,
+      [req.params.id]
+    )
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id/transfer/guest", requireAuth, async (req, res, next) => {
+  try {
+    const { email } = z
+      .object({ email: z.string().email(), internal_note: z.string().optional(), description: z.string().optional() })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT * FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    let customer = await pool.query(`SELECT id FROM customer WHERE email=$1 AND deleted_at IS NULL ORDER BY created_at LIMIT 1`, [email])
+    if (!customer.rows[0]) {
+      customer = await pool.query(`INSERT INTO customer (email, has_account) VALUES ($1,FALSE) RETURNING id`, [email])
+    }
+    await pool.query(`UPDATE "order" SET customer_id=$2, email=$3, updated_at=NOW() WHERE id=$1`, [req.params.id, customer.rows[0].id, email])
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:orderId/credit-lines", requireAuth, async (req, res, next) => {
+  try {
+    const { amount, reference, reference_id } = z
+      .object({ amount: z.number().int().positive(), reference: z.string(), reference_id: z.string() })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT * FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.orderId])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const cl = await client.query(
+        `INSERT INTO credit_line (customer_id, currency_code, amount, remaining, reference) VALUES ($1,$2,$3,$3,$4) RETURNING *`,
+        [o.rows[0].customer_id, o.rows[0].currency_code, amount, `${reference}:${reference_id}`]
+      )
+      await client.query(`INSERT INTO order_credit_line (order_id, credit_line_id, amount) VALUES ($1,$2,$3)`, [req.params.orderId, cl.rows[0].id, amount])
+      await client.query("COMMIT")
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+    res.json({ order: await buildAdminOrder(req.params.orderId) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/export", requireAuth, async (_req, res, next) => {
+  try {
+    const transactionId = "txn_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+    res.status(202).json({ transaction_id: transactionId })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id/payment-sessions/authorize", requireAuth, async (req, res, next) => {
+  try {
+    const { payment_session_id } = z.object({ payment_session_id: z.string() }).parse(req.body ?? {})
+    const o = await pool.query(`SELECT id, payment_collection_id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    const s = await pool.query(`SELECT * FROM payment_session WHERE id=$1 AND deleted_at IS NULL`, [payment_session_id])
+    if (!s.rows[0] || s.rows[0].payment_collection_id !== o.rows[0].payment_collection_id) {
+      throw Object.assign(new Error("Payment session not found for this order"), { statusCode: 404 })
+    }
+    await paymentSessionService.authorizeSession(payment_session_id)
+    res.json({ order: await buildAdminOrder(req.params.id), is_authorized: true })
