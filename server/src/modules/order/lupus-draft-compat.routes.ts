@@ -646,3 +646,219 @@ draftCompatRouter.get("/admin/draft-orders/:id", requireAuth, async (req, res, n
     res.json({ draft_order: draft })
   } catch (e) {
     next(e)
+  }
+})
+
+draftCompatRouter.post("/admin/draft-orders/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { email, customer_id, region_id, sales_channel_id, shipping_address, billing_address, items, promo_codes, metadata } = z
+      .object({
+        email: z.string().email().optional(),
+        customer_id: z.string().nullish(),
+        region_id: z.string().nullish(),
+        sales_channel_id: z.string().nullish(),
+        shipping_address: addressSchema.optional(),
+        billing_address: addressSchema.optional(),
+        items: z.array(draftItemSchema).optional(),
+        promo_codes: z.array(z.string()).optional(),
+        metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+      })
+      .parse(req.body ?? {})
+    const existing = await pool.query(`SELECT id, currency_code FROM "order" WHERE id=$1 AND is_draft_order=TRUE AND deleted_at IS NULL`, [req.params.id])
+    if (!existing.rows[0]) {
+      res.status(404).json({ message: "Draft order not found" })
+      return
+    }
+    if (customer_id !== undefined) {
+      if (customer_id) {
+        const c = await pool.query(`SELECT id, email FROM customer WHERE id=$1 AND deleted_at IS NULL`, [customer_id])
+        if (!c.rows[0]) {
+          throw Object.assign(new Error("Customer not found"), { statusCode: 404 })
+        }
+        await pool.query(`UPDATE "order" SET customer_id=$2, email=COALESCE($3,email), updated_at=NOW() WHERE id=$1`, [
+          req.params.id,
+          customer_id,
+          email ?? c.rows[0].email,
+        ])
+      } else {
+        await pool.query(`UPDATE "order" SET customer_id=NULL, updated_at=NOW() WHERE id=$1`, [req.params.id])
+      }
+    }
+    if (email !== undefined && customer_id === undefined) {
+      await pool.query(`UPDATE "order" SET email=$2, updated_at=NOW() WHERE id=$1`, [req.params.id, email])
+    }
+    if (region_id !== undefined) {
+      if (region_id) {
+        const r = await pool.query(`SELECT id FROM region WHERE id=$1 AND deleted_at IS NULL`, [region_id])
+        if (!r.rows[0]) {
+          throw Object.assign(new Error("Region not found"), { statusCode: 404 })
+        }
+      }
+      await pool.query(`UPDATE "order" SET region_id=$2, updated_at=NOW() WHERE id=$1`, [req.params.id, region_id])
+    }
+    if (sales_channel_id !== undefined) {
+      await pool.query(`UPDATE "order" SET sales_channel_id=$2, updated_at=NOW() WHERE id=$1`, [req.params.id, sales_channel_id])
+    }
+    if (shipping_address) {
+      await upsertAddress(req.params.id, "shipping", shipping_address)
+    }
+    if (billing_address) {
+      await upsertAddress(req.params.id, "billing", billing_address)
+    }
+    if (items !== undefined || promo_codes !== undefined) {
+      const mappedItems = items?.map((i) => ({ ...i, title: i.title ?? "Custom Item" }))
+      await replaceDraftItemsAndPromos(req.params.id, String(existing.rows[0].currency_code), mappedItems, promo_codes)
+    }
+    if (metadata !== undefined) {
+      for (const key of Object.keys(metadata)) {
+        if (!key.trim()) {
+          throw Object.assign(new Error("metadata keys must not be empty or whitespace"), { statusCode: 400 })
+        }
+      }
+      const cur = await pool.query(`SELECT metadata FROM "order" WHERE id=$1`, [req.params.id])
+      const merged = { ...(((cur.rows[0]?.metadata ?? {}) as Record<string, unknown>)) }
+      for (const [key, value] of Object.entries(metadata)) {
+        if (value === null) {
+          delete merged[key]
+        } else {
+          merged[key] = value
+        }
+      }
+      await pool.query(`UPDATE "order" SET metadata=$2, updated_at=NOW() WHERE id=$1`, [req.params.id, JSON.stringify(merged)])
+    }
+    res.json({ draft_order: await buildDraftOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.delete("/admin/draft-orders/:id", requireAuth, async (req, res, next) => {
+  try {
+    const r = await pool.query(`UPDATE "order" SET deleted_at=NOW() WHERE id=$1 AND is_draft_order=TRUE AND deleted_at IS NULL`, [req.params.id])
+    if (r.rowCount === 0) {
+      res.status(404).json({ message: "Draft order not found" })
+      return
+    }
+    res.json({ id: req.params.id, object: "draft-order", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Draft-order shipping methods (persisted immediately on the draft) ---
+
+draftCompatRouter.get("/admin/draft-orders/:id/shipping-options", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    res.json({ shipping_options: await fulfillmentService.optionsForOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.post("/admin/draft-orders/:id/shipping-methods", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    const { shipping_option_id, name, custom_amount, amount, data } = z
+      .object({
+        shipping_option_id: z.string().nullish(),
+        name: z.string().nullish(),
+        custom_amount: z.number().int().nonnegative().nullish(),
+        amount: z.number().int().nonnegative().nullish(),
+        data: z.record(z.string(), z.unknown()).nullish(),
+      })
+      .parse(req.body ?? {})
+    const optionId = shipping_option_id?.trim() || null
+    let methodName = name?.trim() || null
+    let optionAmount: number | null = null
+    if (optionId) {
+      const opt = await pool.query(`SELECT id, name, amount FROM shipping_option WHERE id=$1 AND deleted_at IS NULL`, [optionId])
+      if (!opt.rows[0]) {
+        res.status(404).json({ message: "Shipping option not found" })
+        return
+      }
+      methodName = String(opt.rows[0].name)
+      optionAmount = Number(opt.rows[0].amount ?? 0)
+    } else if (!methodName) {
+      res.status(400).json({ message: "name is required when shipping_option_id is omitted" })
+      return
+    }
+    const methodAmount = custom_amount ?? amount ?? optionAmount
+    if (methodAmount == null) {
+      res.status(400).json({ message: "custom_amount or amount is required for a custom shipping method" })
+      return
+    }
+    const inserted = await pool.query(
+      `INSERT INTO order_shipping_method (order_id, shipping_option_id, name, amount, data) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, optionId, methodName, methodAmount, data ? JSON.stringify(data) : null]
+    )
+    await recomputeDraftTotals(req.params.id)
+    res.json({ draft_order: await buildDraftOrder(req.params.id), shipping_method: mapShippingMethod(inserted.rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.post("/admin/draft-orders/:id/shipping-methods/:smId", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    const { amount, name, data } = z
+      .object({
+        amount: z.number().int().nonnegative().nullish(),
+        name: z.string().nullish(),
+        data: z.record(z.string(), z.unknown()).nullish(),
+      })
+      .parse(req.body ?? {})
+    const updated = await pool.query(
+      `UPDATE order_shipping_method SET amount=COALESCE($3, amount), name=COALESCE($4, name), data=COALESCE($5, data), updated_at=NOW() WHERE id=$1 AND order_id=$2 RETURNING *`,
+      [req.params.smId, req.params.id, amount ?? null, name?.trim() || null, data ? JSON.stringify(data) : null]
+    )
+    if (updated.rowCount === 0) {
+      res.status(404).json({ message: "Shipping method not found" })
+      return
+    }
+    await recomputeDraftTotals(req.params.id)
+    res.json({ draft_order: await buildDraftOrder(req.params.id), shipping_method: mapShippingMethod(updated.rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.delete("/admin/draft-orders/:id/shipping-methods/:smId", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
+    if (!draft) {
+      return
+    }
+    const deleted = await pool.query(`DELETE FROM order_shipping_method WHERE id=$1 AND order_id=$2 RETURNING id`, [
+      req.params.smId,
+      req.params.id,
+    ])
+    if (deleted.rowCount === 0) {
+      res.status(404).json({ message: "Shipping method not found" })
+      return
+    }
+    await recomputeDraftTotals(req.params.id)
+    res.json({
+      draft_order: await buildDraftOrder(req.params.id),
+      id: req.params.smId,
+      object: "shipping-method",
+      deleted: true,
+    })
+  } catch (e) {
+    next(e)
+  }
+})
+
+draftCompatRouter.post("/admin/draft-orders/:id/convert-to-order", requireAuth, async (req, res, next) => {
+  try {
+    const draft = await requireDraft(req.params.id, res)
