@@ -646,3 +646,219 @@ ordersCompatRouter.post("/admin/order-edits/:id/request", requireAuth, async (re
     } else {
       await pool.query(`UPDATE order_change SET status='requested' WHERE id=$1`, [edit.id])
     }
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/order-edits/:id/items", requireAuth, async (req, res, next) => {
+  try {
+    const { items } = z
+      .object({
+        items: z.array(z.object({ variant_id: z.string(), quantity: z.number().int().positive(), unit_price: z.number().int().nonnegative().nullish() })),
+      })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT currency_code FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    let edit = await activeEdit(req.params.id)
+    if (!edit) {
+      edit = await orderChangeService.request(req.params.id, "edit", undefined, [])
+    }
+    for (const it of items) {
+      let price = it.unit_price ?? null
+      if (price == null) {
+        price = await pricingService.resolveUnitPrice(it.variant_id, o.rows[0].currency_code).catch(() => 0)
+      }
+      await pool.query(
+        `INSERT INTO order_change_action (order_change_id, action, variant_id, quantity, unit_price) VALUES ($1,'add_item',$2,$3,$4)`,
+        [edit.id, it.variant_id, it.quantity, price]
+      )
+    }
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.delete("/admin/order-edits/:id/items/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Order edit not found" })
+      return
+    }
+    const r = await pool.query(`DELETE FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.actionId, edit.id])
+    if (r.rowCount === 0) {
+      res.status(404).json({ message: "Edit action not found" })
+      return
+    }
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/order-edits/:id/items/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const { quantity, unit_price } = z
+      .object({ quantity: z.number().int().positive().optional(), unit_price: z.number().int().nonnegative().nullish() })
+      .parse(req.body ?? {})
+    const edit = await activeEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Order edit not found" })
+      return
+    }
+    const existing = await pool.query(`SELECT * FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.actionId, edit.id])
+    if (!existing.rows[0]) {
+      res.status(404).json({ message: "Edit action not found" })
+      return
+    }
+    await pool.query(`UPDATE order_change_action SET quantity=COALESCE($3,quantity), unit_price=COALESCE($4,unit_price) WHERE id=$1 AND order_change_id=$2`, [
+      req.params.actionId,
+      edit.id,
+      quantity ?? null,
+      unit_price ?? null,
+    ])
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/order-edits/:id/items/item/:itemId", requireAuth, async (req, res, next) => {
+  try {
+    const { quantity, unit_price } = z
+      .object({ quantity: z.number().int().nonnegative(), unit_price: z.number().int().nonnegative().nullish() })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    const line = await pool.query(`SELECT id FROM order_line_item WHERE id=$1 AND order_id=$2`, [req.params.itemId, req.params.id])
+    if (!line.rows[0]) {
+      res.status(404).json({ message: "Order line item not found" })
+      return
+    }
+    let edit = await activeEdit(req.params.id)
+    if (!edit) {
+      edit = await orderChangeService.request(req.params.id, "edit", undefined, [])
+    }
+    if (quantity === 0) {
+      await pool.query(`INSERT INTO order_change_action (order_change_id, action, line_item_id) VALUES ($1,'remove_item',$2)`, [edit.id, req.params.itemId])
+    } else {
+      await pool.query(
+        `INSERT INTO order_change_action (order_change_id, action, line_item_id, quantity, unit_price) VALUES ($1,'update_qty',$2,$3,$4)`,
+        [edit.id, req.params.itemId, quantity, unit_price ?? null]
+      )
+    }
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Payment collections: create / delete / mark-as-paid ---
+
+ordersCompatRouter.post("/admin/payment-collections", requireAuth, async (req, res, next) => {
+  try {
+    const { order_id, amount } = z.object({ order_id: z.string(), amount: z.number().int().nonnegative().optional() }).parse(req.body ?? {})
+    const o = await pool.query(`SELECT * FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [order_id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    if (o.rows[0].payment_collection_id) {
+      const existing = await pool.query(`SELECT * FROM payment_collection WHERE id=$1 AND deleted_at IS NULL`, [o.rows[0].payment_collection_id])
+      if (existing.rows[0]) {
+        const payments = await pool.query(`SELECT * FROM payment WHERE payment_collection_id=$1 AND deleted_at IS NULL`, [existing.rows[0].id])
+        const sessions = await pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL`, [existing.rows[0].id])
+        res.json({ payment_collection: { ...existing.rows[0], payments: payments.rows, payment_sessions: sessions.rows } })
+        return
+      }
+    }
+    const total = amount ?? Number(o.rows[0].total ?? 0)
+    const { rows } = await pool.query(
+      `INSERT INTO payment_collection (currency_code, amount, status) VALUES ($1,$2,'not_paid') RETURNING *`,
+      [o.rows[0].currency_code, total]
+    )
+    await pool.query(`UPDATE "order" SET payment_collection_id=$2, updated_at=NOW() WHERE id=$1`, [order_id, rows[0].id])
+    res.status(201).json({ payment_collection: { ...rows[0], payments: [], payment_sessions: [] } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.delete("/admin/payment-collections/:id", requireAuth, async (req, res, next) => {
+  try {
+    const existing = await pool.query(`SELECT id FROM payment_collection WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!existing.rows[0]) {
+      res.status(404).json({ message: "Payment collection not found" })
+      return
+    }
+    await pool.query(`UPDATE payment_collection SET deleted_at=NOW() WHERE id=$1`, [req.params.id])
+    await pool.query(`UPDATE "order" SET payment_collection_id=NULL WHERE payment_collection_id=$1`, [req.params.id])
+    res.json({ id: req.params.id, object: "payment-collection", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/payment-collections/:id/mark-as-paid", requireAuth, async (req, res, next) => {
+  try {
+    const { order_id, provider_id } = z.object({ order_id: z.string(), provider_id: z.string().optional() }).parse(req.body ?? {})
+    const c = await pool.query(`SELECT * FROM payment_collection WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!c.rows[0]) {
+      res.status(404).json({ message: "Payment collection not found" })
+      return
+    }
+    const provider = provider_id ?? "manual"
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      await client.query(`INSERT INTO payment_session (payment_collection_id, provider_id, status) VALUES ($1,$2,'authorized')`, [req.params.id, provider])
+      await client.query(
+        `INSERT INTO payment (payment_collection_id, provider_id, amount, currency_code, status) VALUES ($1,$2,$3,$4,'captured')`,
+        [req.params.id, provider, c.rows[0].amount, c.rows[0].currency_code]
+      )
+      await client.query(
+        `UPDATE payment_collection SET authorized_amount=$2, captured_amount=$2, status='captured', completed_at=NOW(), updated_at=NOW() WHERE id=$1`,
+        [req.params.id, c.rows[0].amount]
+      )
+      await client.query(`UPDATE "order" SET status='completed' WHERE id=$1`, [order_id])
+      await client.query("COMMIT")
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+    const pc = await pool.query(`SELECT * FROM payment_collection WHERE id=$1`, [req.params.id])
+    const payments = await pool.query(`SELECT * FROM payment WHERE payment_collection_id=$1 AND deleted_at IS NULL`, [req.params.id])
+    const sessions = await pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL`, [req.params.id])
+    res.json({ payment_collection: { ...pc.rows[0], payments: payments.rows, payment_sessions: sessions.rows } })
+  } catch (e) {
