@@ -194,3 +194,199 @@ rmaCompatRouter.post("/admin/claims/:id/outbound/items/:actionId", requireAuth, 
   }
 })
 
+rmaCompatRouter.post("/admin/claims/:id/outbound/shipping-method", requireAuth, async (req, res, next) => {
+  try {
+    const body = shippingSchema.parse(req.body) ?? {}
+    await rmaService.addShipping("claim", req.params.id, "outbound", body)
+    res.json({ claim: await rmaService.getClaimDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.delete("/admin/claims/:id/outbound/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    await rmaService.removeShipping("claim", req.params.id, "outbound", req.params.actionId)
+    res.json({ claim: await rmaService.getClaimDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/claims/:id/outbound/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const patch = updateShippingSchema.parse(req.body) ?? {}
+    await rmaService.updateShipping("claim", req.params.id, "outbound", req.params.actionId, patch)
+    res.json({ claim: await rmaService.getClaimDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.delete("/admin/claims/:id/request", requireAuth, async (req, res, next) => {
+  try {
+    await rmaService.cancelClaimRequest(req.params.id)
+    res.status(200).json({ id: req.params.id, object: "claim", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/claims/:id/request", requireAuth, async (req, res, next) => {
+  try {
+    anyBodySchema.parse(req.body)
+    await rmaService.requestClaim(req.params.id)
+    res.json({ claim: await rmaService.getClaimDetail(req.params.id), return: await rmaService.getClaimReturnView(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------- exchanges ----------
+rmaCompatRouter.get("/admin/exchanges", requireAuth, async (req, res, next) => {
+  try {
+    const { body } = await runList({
+      req,
+      table: "exchange",
+      alias: "e",
+      select: "e.*",
+      base: "e.deleted_at IS NULL",
+      specs: EXCHANGE_FILTERS,
+      order: EXCHANGE_SORT,
+      defaultOrder: "e.created_at DESC",
+      // the previous service page defaulted to 20 rows, keep that
+      defaultLimit: 20,
+      key: "exchanges",
+    })
+    sendList(res, body)
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.get("/admin/exchanges/:id", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/inbound/items", requireAuth, async (req, res, next) => {
+  try {
+    const { items } = itemsSchema.parse(req.body)
+    for (const it of items) {
+      await rmaService.addExchangeItemRow(req.params.id, "inbound", { line_item_id: it.id, quantity: it.quantity })
+    }
+    res.json({ return: await rmaService.getExchangeReturnView(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.delete("/admin/exchanges/:id/inbound/items/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    await rmaService.removeExchangeItemRow(req.params.id, req.params.actionId, "inbound")
+    res.json({ return: await rmaService.getExchangeReturnView(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/inbound/items/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const patch = updateItemSchema.parse(req.body) ?? {}
+    await rmaService.updateExchangeItemRow(req.params.id, req.params.actionId, patch, "inbound")
+    res.json({ return: await rmaService.getExchangeReturnView(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/inbound/shipping-method", requireAuth, async (req, res, next) => {
+  try {
+    const body = shippingSchema.parse(req.body) ?? {}
+    await rmaService.addShipping("exchange", req.params.id, "inbound", body)
+    res.json({ return: await rmaService.getExchangeReturnView(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.delete("/admin/exchanges/:id/inbound/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    await rmaService.removeShipping("exchange", req.params.id, "inbound", req.params.actionId)
+    res.json({ return: await rmaService.getExchangeReturnView(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/inbound/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const patch = updateShippingSchema.parse(req.body) ?? {}
+    await rmaService.updateShipping("exchange", req.params.id, "inbound", req.params.actionId, patch)
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/outbound/items", requireAuth, async (req, res, next) => {
+  try {
+    const { items } = itemsSchema.parse(req.body)
+    for (const it of items) {
+      await rmaService.addExchangeItemRow(req.params.id, "outbound", { variant_id: it.id, quantity: it.quantity })
+    }
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.delete("/admin/exchanges/:id/outbound/items/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    await rmaService.removeExchangeItemRow(req.params.id, req.params.actionId, "outbound")
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/outbound/items/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const patch = updateItemSchema.parse(req.body) ?? {}
+    await rmaService.updateExchangeItemRow(req.params.id, req.params.actionId, patch, "outbound")
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/outbound/shipping-method", requireAuth, async (req, res, next) => {
+  try {
+    const body = shippingSchema.parse(req.body) ?? {}
+    await rmaService.addShipping("exchange", req.params.id, "outbound", body)
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.delete("/admin/exchanges/:id/outbound/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    await rmaService.removeShipping("exchange", req.params.id, "outbound", req.params.actionId)
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+rmaCompatRouter.post("/admin/exchanges/:id/outbound/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const patch = updateShippingSchema.parse(req.body) ?? {}
+    await rmaService.updateShipping("exchange", req.params.id, "outbound", req.params.actionId, patch)
+    res.json({ exchange: await rmaService.getExchangeDetail(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
