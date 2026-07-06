@@ -862,3 +862,217 @@ ordersCompatRouter.post("/admin/payment-collections/:id/mark-as-paid", requireAu
     const sessions = await pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL`, [req.params.id])
     res.json({ payment_collection: { ...pc.rows[0], payments: payments.rows, payment_sessions: sessions.rows } })
   } catch (e) {
+    next(e)
+  }
+})
+
+// --- Payments: retrieve + payment-providers list (order matters: static path first) ---
+
+ordersCompatRouter.get("/admin/payments/payment-providers", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset } = z.object({ limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }).parse(req.query)
+    const take = Math.min(limit ?? 50, 100)
+    const skip = offset ?? 0
+    const seen = await pool.query(
+      `SELECT DISTINCT provider_id FROM ((SELECT provider_id FROM payment WHERE deleted_at IS NULL) UNION (SELECT provider_id FROM payment_session WHERE deleted_at IS NULL)) p`
+    )
+    const ids = new Set(["manual", ...seen.rows.map((r: any) => r.provider_id).filter(Boolean)])
+    const all = [...ids].map((id) => ({ id, is_enabled: true }))
+    res.json({ payment_providers: all.slice(skip, skip + take), count: all.length, offset: skip, limit: take })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.get("/admin/payments/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM payment WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      res.status(404).json({ message: "Payment not found" })
+      return
+    }
+    const pc = await pool.query(`SELECT * FROM payment_collection WHERE id=$1 AND deleted_at IS NULL`, [rows[0].payment_collection_id])
+    res.json({ payment: { ...rows[0], payment_collection: pc.rows[0] ?? null } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Payments: list (sdk.admin.payment.list -> GET /admin/payments) ---
+// Lupus route (payments/route.ts GET) returns { payments, count, offset, limit }.
+
+ordersCompatRouter.get("/admin/payments", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset } = z.object({ limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }).parse(req.query)
+    const take = Math.min(limit ?? 50, 100)
+    const skip = offset ?? 0
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM payment WHERE deleted_at IS NULL`)
+    const { rows } = await pool.query(`SELECT * FROM payment WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [take, skip])
+    res.json({ payments: rows, count: total.rows[0].c, offset: skip, limit: take })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Orders: archive / complete (sdk.admin.order.archive/complete) ---
+// Lupus routes (orders/[id]/archive|complete/route.ts POST) flip status and
+// return { order } with 200.
+
+ordersCompatRouter.post("/admin/orders/:id/archive", requireAuth, async (req, res, next) => {
+  try {
+    const r = await pool.query(`UPDATE "order" SET status='archived', updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [req.params.id])
+    if (r.rowCount === 0) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/orders/:id/complete", requireAuth, async (req, res, next) => {
+  try {
+    z.object({}).passthrough().parse(req.body ?? {})
+    const r = await pool.query(`UPDATE "order" SET status='completed', updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [req.params.id])
+    if (r.rowCount === 0) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    res.json({ order: await buildAdminOrder(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Payment collections: create payment session ---
+// sdk.admin.paymentCollection.createPaymentSession({ provider_id, data }) ->
+// POST /admin/payment-collections/:id/payment-sessions. Lupus route returns
+// 200 { payment_collection } (refetched with sessions/payments).
+
+ordersCompatRouter.post("/admin/payment-collections/:id/payment-sessions", requireAuth, async (req, res, next) => {
+  try {
+    const { provider_id, data } = z
+      .object({ provider_id: z.string().min(1), data: z.record(z.any()).optional() })
+      .parse(req.body ?? {})
+    const c = await pool.query(`SELECT * FROM payment_collection WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!c.rows[0]) {
+      res.status(404).json({ message: "Payment collection not found" })
+      return
+    }
+    await pool.query(`INSERT INTO payment_session (payment_collection_id, provider_id, status, data) VALUES ($1,$2,'pending',$3)`, [
+      req.params.id,
+      provider_id,
+      data ? JSON.stringify(data) : null,
+    ])
+    const payments = await pool.query(`SELECT * FROM payment WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+    const sessions = await pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`, [req.params.id])
+    res.json({ payment_collection: { ...c.rows[0], payments: payments.rows, payment_sessions: sessions.rows } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// --- Order edits: shipping methods (singular `shipping-method`, NOT plural) ---
+// Lupus routes (order-edits/[id]/shipping-method[/[action_id]]/route.ts):
+// POST create -> { order_preview }, POST :action_id update -> { order_preview },
+// DELETE :action_id -> { order_preview }. Staged as order_change_action rows
+// (action='add_shipping', variant_id=shipping_option_id, title=name,
+// unit_price=amount), matching the draft-edit convention in this repo. The :id
+// follows this file's convention (the order id; the open edit is resolved via
+// activeEdit), same as the items handlers above.
+
+ordersCompatRouter.post("/admin/order-edits/:id/shipping-method", requireAuth, async (req, res, next) => {
+  try {
+    const { shipping_option_id, custom_amount } = z
+      .object({ shipping_option_id: z.string().optional(), custom_amount: z.number().int().nonnegative().optional() })
+      .parse(req.body ?? {})
+    const o = await pool.query(`SELECT id FROM "order" WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!o.rows[0]) {
+      res.status(404).json({ message: "Order not found" })
+      return
+    }
+    let name: string | null = null
+    let amount: number | null = custom_amount ?? null
+    if (shipping_option_id) {
+      const opt = await pool.query(`SELECT * FROM shipping_option WHERE id=$1 AND deleted_at IS NULL`, [shipping_option_id])
+      if (!opt.rows[0]) {
+        res.status(404).json({ message: "Shipping option not found" })
+        return
+      }
+      name = opt.rows[0].name
+      amount = amount ?? Number(opt.rows[0].amount)
+    }
+    if (name == null || amount == null) {
+      res.status(400).json({ message: "shipping_option_id or custom_amount is required" })
+      return
+    }
+    let edit = await activeEdit(req.params.id)
+    if (!edit) {
+      edit = await orderChangeService.request(req.params.id, "edit", undefined, [])
+    }
+    await pool.query(`INSERT INTO order_change_action (order_change_id, action, variant_id, title, unit_price) VALUES ($1,'add_shipping',$2,$3,$4)`, [
+      edit.id,
+      shipping_option_id ?? null,
+      name,
+      amount,
+    ])
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.post("/admin/order-edits/:id/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const { custom_amount } = z.object({ custom_amount: z.number().int().nonnegative().optional() }).parse(req.body ?? {})
+    const edit = await activeEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Order edit not found" })
+      return
+    }
+    const existing = await pool.query(`SELECT * FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.actionId, edit.id])
+    if (!existing.rows[0]) {
+      res.status(404).json({ message: "Edit action not found" })
+      return
+    }
+    await pool.query(`UPDATE order_change_action SET unit_price=COALESCE($3,unit_price) WHERE id=$1 AND order_change_id=$2`, [
+      req.params.actionId,
+      edit.id,
+      custom_amount ?? null,
+    ])
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
+
+ordersCompatRouter.delete("/admin/order-edits/:id/shipping-method/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const edit = await activeEdit(req.params.id)
+    if (!edit) {
+      res.status(404).json({ message: "Order edit not found" })
+      return
+    }
+    const r = await pool.query(`DELETE FROM order_change_action WHERE id=$1 AND order_change_id=$2`, [req.params.actionId, edit.id])
+    if (r.rowCount === 0) {
+      res.status(404).json({ message: "Edit action not found" })
+      return
+    }
+    const preview = await orderPreview(req.params.id, res)
+    if (!preview) {
+      return
+    }
+    res.json({ order_preview: preview })
+  } catch (e) {
+    next(e)
+  }
+})
