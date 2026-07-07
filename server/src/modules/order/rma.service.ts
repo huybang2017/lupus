@@ -484,3 +484,246 @@ export class RmaService {
   }
 
   async finalizeReturnReceive(id: string) {
+    const ret = await this.requireReturnRequest(id)
+    if (!["confirmed", "partially_received", "received"].includes(ret.status)) {
+      throw Object.assign(new Error("Return receive cannot be confirmed"), { statusCode: 400 })
+    }
+    await this.recomputeReturnStatus(id)
+    return this.requireReturnRequest(id)
+  }
+
+  async cancelReturnReceive(id: string) {
+    const r = await pool.query(`UPDATE return_request SET status='confirmed', updated_at=NOW() WHERE id=$1 AND status IN ('partially_received','received')`, [id])
+    if (r.rowCount === 0) throw Object.assign(new Error("Return receive is not cancelable"), { statusCode: 400 })
+  }
+
+  async requestClaim(id: string) {
+    const claim = await this.requireClaim(id)
+    if (claim.status !== "requested") throw Object.assign(new Error("Claim request cannot be confirmed"), { statusCode: 400 })
+    await this.confirmClaim(id)
+  }
+
+  async cancelClaimRequest(id: string) {
+    const r = await pool.query(`UPDATE claim SET status='canceled', updated_at=NOW() WHERE id=$1 AND status='requested' AND deleted_at IS NULL`, [id])
+    if (r.rowCount === 0) throw Object.assign(new Error("Claim request is not cancelable"), { statusCode: 400 })
+  }
+
+  async requestExchange(id: string) {
+    const exchange = await this.requireExchange(id)
+    if (exchange.status !== "requested") throw Object.assign(new Error("Exchange request cannot be confirmed"), { statusCode: 400 })
+    await this.confirmExchange(id)
+  }
+
+  async cancelExchangeRequest(id: string) {
+    const r = await pool.query(`UPDATE exchange SET status='canceled', updated_at=NOW() WHERE id=$1 AND status='requested' AND deleted_at IS NULL`, [id])
+    if (r.rowCount === 0) throw Object.assign(new Error("Exchange request is not cancelable"), { statusCode: 400 })
+  }
+
+  // ----- shipping registry (no RMA shipping table exists) -----
+  async addShipping(parentKind: "claim" | "exchange" | "return", parentId: string, leg: "inbound" | "outbound" | "request", input: { shipping_option_id?: string; custom_amount?: number }) {
+    const parent = parentKind === "claim" ? await this.requireClaim(parentId) : parentKind === "exchange" ? await this.requireExchange(parentId) : await this.requireReturnRequest(parentId)
+    this.assertEditable(parent, parentKind)
+    const method = {
+      id: `shact_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
+      shipping_option_id: input.shipping_option_id ?? "custom",
+      custom_amount: input.custom_amount ?? 0,
+      created_at: new Date().toISOString(),
+    }
+    const key = `${parentKind}:${parentId}:${leg}`
+    const list = rmaShippingMethods.get(key) ?? []
+    list.push(method)
+    rmaShippingMethods.set(key, list)
+    return method
+  }
+
+  async updateShipping(parentKind: "claim" | "exchange" | "return", parentId: string, leg: "inbound" | "outbound" | "request", shipId: string, patch: { shipping_option_id?: string; custom_amount?: number }) {
+    const list = rmaShippingMethods.get(`${parentKind}:${parentId}:${leg}`) ?? []
+    const method = list.find((m) => m.id === shipId)
+    if (!method) throw Object.assign(new Error("Shipping method not found"), { statusCode: 404 })
+    if (patch.shipping_option_id !== undefined) method.shipping_option_id = patch.shipping_option_id
+    if (patch.custom_amount !== undefined) method.custom_amount = patch.custom_amount
+    return method
+  }
+
+  async removeShipping(parentKind: "claim" | "exchange" | "return", parentId: string, leg: "inbound" | "outbound" | "request", shipId: string) {
+    const key = `${parentKind}:${parentId}:${leg}`
+    const list = rmaShippingMethods.get(key) ?? []
+    const idx = list.findIndex((m) => m.id === shipId)
+    if (idx === -1) throw Object.assign(new Error("Shipping method not found"), { statusCode: 404 })
+    const [removed] = list.splice(idx, 1)
+    rmaShippingMethods.set(key, list)
+    return removed
+  }
+
+  shippingFor(parentKind: "claim" | "exchange" | "return", parentId: string, leg: "inbound" | "outbound" | "request") {
+    return (rmaShippingMethods.get(`${parentKind}:${parentId}:${leg}`) ?? []).map((m) => ({
+      ...m,
+      actions: [{ id: m.id, action: "SHIPPING_ADD" }],
+    }))
+  }
+
+  // ----- Lupus-style detail views -----
+  claimItemView(row: any) {
+    const writeOff = row.title === RmaService.WRITE_OFF_TITLE
+    const action = row.direction === "outbound" ? "ITEM_ADD" : writeOff ? "WRITE_OFF_ITEM" : "RETURN_ITEM"
+    return {
+      id: row.id,
+      claim_id: row.claim_id,
+      direction: row.direction,
+      line_item_id: row.line_item_id,
+      variant_id: row.variant_id,
+      title: writeOff ? null : row.title,
+      quantity: Number(row.quantity),
+      unit_price: Number(row.unit_price),
+      received_quantity: Number(row.received_quantity),
+      reason_id: row.reason_id,
+      dismissed: Boolean(row.dismissed),
+      actions: [{ id: row.id, action }],
+    }
+  }
+
+  exchangeItemView(row: any) {
+    return {
+      id: row.id,
+      exchange_id: row.exchange_id,
+      direction: row.direction,
+      line_item_id: row.line_item_id,
+      variant_id: row.variant_id,
+      title: row.title,
+      quantity: Number(row.quantity),
+      unit_price: Number(row.unit_price),
+      received_quantity: Number(row.received_quantity),
+      dismissed: Boolean(row.dismissed),
+      actions: [{ id: row.id, action: row.direction === "outbound" ? "ITEM_ADD" : "RETURN_ITEM" }],
+    }
+  }
+
+  returnItemView(row: any) {
+    return {
+      id: row.id,
+      return_id: row.return_id,
+      line_item_id: row.line_item_id,
+      quantity: Number(row.quantity),
+      received_quantity: Number(row.received_quantity),
+      damaged_quantity: Number(row.damaged_quantity),
+      reason_id: row.reason_id,
+      dismissed: Boolean(row.dismissed),
+      actions: [{ id: row.id, action: "RETURN_ITEM" }],
+    }
+  }
+
+  async getClaimDetail(id: string) {
+    const claim = await this.requireClaim(id)
+    const { rows } = await pool.query(`SELECT * FROM claim_item WHERE claim_id=$1 AND dismissed=FALSE ORDER BY created_at ASC`, [id])
+    const items = rows.map((r) => this.claimItemView(r))
+    const writeOff = items.filter((i) => i.actions[0].action === "WRITE_OFF_ITEM")
+    const inboundItems = items.filter((i) => i.direction === "inbound" && i.actions[0].action === "RETURN_ITEM")
+    const outboundItems = items.filter((i) => i.direction === "outbound")
+    const inboundShipping = this.shippingFor("claim", id, "inbound")
+    const outboundShipping = this.shippingFor("claim", id, "outbound")
+    return {
+      id: claim.id,
+      order_id: claim.order_id,
+      order_change_id: claim.order_change_id,
+      type: claim.type,
+      status: claim.status,
+      refund_amount: Number(claim.refund_amount),
+      refunded: Boolean(claim.refunded),
+      created_by: claim.created_by,
+      created_at: claim.created_at,
+      updated_at: claim.updated_at,
+      return_id: null,
+      items,
+      additional_items: writeOff,
+      inbound_items: inboundItems,
+      outbound_items: outboundItems,
+      inbound: { items: inboundItems, shipping_methods: inboundShipping },
+      outbound: { items: outboundItems, shipping_methods: outboundShipping },
+      shipping_methods: [...inboundShipping, ...outboundShipping],
+    }
+  }
+
+  async getClaimReturnView(id: string) {
+    const detail: any = await this.getClaimDetail(id)
+    return {
+      id: detail.id,
+      order_id: detail.order_id,
+      claim_id: detail.id,
+      status: detail.status,
+      items: detail.inbound.items,
+      shipping_methods: detail.inbound.shipping_methods,
+      created_at: detail.created_at,
+      updated_at: detail.updated_at,
+    }
+  }
+
+  async getExchangeDetail(id: string) {
+    const exchange = await this.requireExchange(id)
+    const { rows } = await pool.query(`SELECT * FROM exchange_item WHERE exchange_id=$1 AND dismissed=FALSE ORDER BY created_at ASC`, [id])
+    const items = rows.map((r) => this.exchangeItemView(r))
+    const inboundItems = items.filter((i) => i.direction === "inbound")
+    const outboundItems = items.filter((i) => i.direction === "outbound")
+    const inboundShipping = this.shippingFor("exchange", id, "inbound")
+    const outboundShipping = this.shippingFor("exchange", id, "outbound")
+    return {
+      id: exchange.id,
+      order_id: exchange.order_id,
+      order_change_id: exchange.order_change_id,
+      status: exchange.status,
+      created_by: exchange.created_by,
+      created_at: exchange.created_at,
+      updated_at: exchange.updated_at,
+      return_id: null,
+      inbound_items: inboundItems,
+      outbound_items: outboundItems,
+      inbound: { items: inboundItems, shipping_methods: inboundShipping },
+      outbound: { items: outboundItems, shipping_methods: outboundShipping },
+      shipping_methods: [...inboundShipping, ...outboundShipping],
+    }
+  }
+
+  async getExchangeReturnView(id: string) {
+    const detail: any = await this.getExchangeDetail(id)
+    return {
+      id: detail.id,
+      order_id: detail.order_id,
+      exchange_id: detail.id,
+      status: detail.status,
+      items: detail.inbound.items,
+      shipping_methods: detail.inbound.shipping_methods,
+      created_at: detail.created_at,
+      updated_at: detail.updated_at,
+    }
+  }
+
+  async getReturnDetail(id: string) {
+    const ret = await this.requireReturnRequest(id)
+    const { rows } = await pool.query(`SELECT * FROM return_item WHERE return_id=$1 ORDER BY created_at ASC`, [id])
+    return {
+      id: ret.id,
+      order_id: ret.order_id,
+      order_change_id: ret.order_change_id,
+      status: ret.status,
+      refund_amount: Number(ret.refund_amount),
+      refunded: Boolean(ret.refunded),
+      reason_id: ret.reason_id,
+      created_by: ret.created_by,
+      created_at: ret.created_at,
+      updated_at: ret.updated_at,
+      items: rows.filter((r) => !r.dismissed).map((r) => this.returnItemView(r)),
+      dismissed_items: rows.filter((r) => r.dismissed).map((r) => this.returnItemView(r)),
+      shipping_methods: this.shippingFor("return", id, "request"),
+    }
+  }
+}
+
+type RmaShippingMethod = {
+  id: string
+  shipping_option_id: string
+  custom_amount: number
+  created_at: string
+}
+
+const rmaShippingMethods = new Map<string, RmaShippingMethod[]>()
+
+export const rmaService = new RmaService()
