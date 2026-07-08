@@ -474,3 +474,241 @@ platformCompatRouter.get("/admin/search", requireAuth, async (req, res, next) =>
           [like, lim, off]
         )
         results.push({ entity: ent, data: rows, count: total.rows[0].c, offset: off, limit: lim })
+      } else if (ent === "order") {
+        const total = await pool.query(`SELECT COUNT(*)::int AS c FROM "order" WHERE CAST(id AS TEXT) ILIKE $1`, [like])
+        const { rows } = await pool.query(`SELECT * FROM "order" WHERE CAST(id AS TEXT) ILIKE $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [like, lim, off])
+        results.push({ entity: ent, data: rows, count: total.rows[0].c, offset: off, limit: lim })
+      } else {
+        results.push({ entity: ent, data: [], count: 0, offset: off, limit: lim })
+      }
+    }
+    res.json({ results })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/search-indexes", requireAuth, async (_req, res, next) => {
+  try {
+    res.json({ search_indexes: [], enabled: false })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.delete("/admin/search-indexes/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    res.json({ id: req.params.id, object: "search_index", deleted: true, deleted_versions: 0 })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/search-indexes/:id/reindex", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    if (req.params.id === "product") {
+      await pool.query(`REINDEX INDEX IF EXISTS idx_product_search`).catch(() => undefined)
+    }
+    res.json({ job_id: `job_${Date.now()}`, indexes: [req.params.id] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// stores: GET list, POST update by id
+// (singular GET/POST /admin/store live in admin-platform.routes.ts)
+// ---------------------------------------------------------------------------
+
+async function storeWithLocales(id: string): Promise<any> {
+  const s = await pool.query(`SELECT * FROM store WHERE id=$1`, [id])
+  if (!s.rows[0]) {
+    throw notFound("Store", id)
+  }
+  const locales = await pool.query(`SELECT locale_code FROM store_locale WHERE store_id=$1`, [id])
+  return { ...s.rows[0], locales: locales.rows.map((r: any) => r.locale_code) }
+}
+
+// ---------------------------------------------------------------------------
+// translations over the translation + translation_locale tables.
+// Lupus AdminTranslation groups lupus rows by (locale_code, reference, reference_id).
+// Settings persist in user_preference under user_id=system (no settings table exists).
+// ---------------------------------------------------------------------------
+
+const translatableFields: Record<string, string[]> = {
+  product: ["title", "description", "subtitle"],
+  product_variant: ["title"],
+  product_category: ["name", "description"],
+  product_collection: ["title"],
+}
+
+function translationId(localeCode: string, reference: string, referenceId: string): string {
+  return `${localeCode}::${reference}::${referenceId}`
+}
+
+function parseTranslationId(id: string): { localeCode: string; reference: string; referenceId: string } | null {
+  const parts = id.split("::")
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    return null
+  }
+  return { localeCode: parts[0], reference: parts[1], referenceId: parts[2] }
+}
+
+function groupTranslationRows(rows: any[]): any[] {
+  const groups = new Map<string, any>()
+  for (const row of rows) {
+    const key = translationId(row.locale_code, row.entity, row.entity_id)
+    let g = groups.get(key)
+    if (!g) {
+      g = { id: key, reference_id: row.entity_id, reference: row.entity, locale_code: row.locale_code, translations: {}, created_at: row.created_at, updated_at: row.created_at, deleted_at: null }
+      groups.set(key, g)
+    }
+    g.translations[row.field] = row.text
+    if (row.created_at < g.created_at) {
+      g.created_at = row.created_at
+    }
+    if (row.created_at > g.updated_at) {
+      g.updated_at = row.created_at
+    }
+  }
+  return [...groups.values()]
+}
+
+platformCompatRouter.get("/admin/translations", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset, q, reference, reference_id, locale_code } = paginationSchema
+      .extend({
+        q: z.string().optional(),
+        reference: z.string().optional(),
+        reference_id: z.union([z.string(), z.array(z.string())]).optional(),
+        locale_code: z.union([z.string(), z.array(z.string())]).optional(),
+      })
+      .parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const conds: string[] = []
+    const params: any[] = []
+    if (reference) {
+      params.push(reference)
+      conds.push(`entity=$${params.length}`)
+    }
+    const refIds = reference_id ? (Array.isArray(reference_id) ? reference_id : [reference_id]) : []
+    if (refIds.length > 0) {
+      params.push(refIds)
+      conds.push(`entity_id = ANY($${params.length})`)
+    }
+    const locales = locale_code ? (Array.isArray(locale_code) ? locale_code : [locale_code]) : []
+    if (locales.length > 0) {
+      params.push(locales)
+      conds.push(`locale_code = ANY($${params.length})`)
+    }
+    if (q) {
+      params.push(`%${q}%`)
+      conds.push(`(entity_id ILIKE $${params.length} OR field ILIKE $${params.length} OR text ILIKE $${params.length})`)
+    }
+    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : ""
+    const groups = await pool.query(
+      `SELECT locale_code, entity, entity_id, MIN(created_at) AS created_at, MAX(created_at) AS updated_at FROM translation ${where} GROUP BY locale_code, entity, entity_id ORDER BY updated_at DESC`,
+      params
+    )
+    const count = groups.rows.length
+    const slice = groups.rows.slice(off, off + lim)
+    const translations: any[] = []
+    for (const g of slice) {
+      const { rows } = await pool.query(`SELECT field, text FROM translation WHERE locale_code=$1 AND entity=$2 AND entity_id=$3`, [g.locale_code, g.entity, g.entity_id])
+      const textMap: Record<string, string> = {}
+      for (const r of rows) {
+        textMap[r.field] = r.text
+      }
+      translations.push({ id: translationId(g.locale_code, g.entity, g.entity_id), reference_id: g.entity_id, reference: g.entity, locale_code: g.locale_code, translations: textMap, created_at: g.created_at, updated_at: g.updated_at, deleted_at: null })
+    }
+    res.json({ translations, count, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/translations/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { create, update, delete: del } = z
+      .object({
+        create: z.array(z.object({ reference_id: z.string(), reference: z.string(), locale_code: z.string(), translations: z.record(z.string()) })).optional(),
+        update: z.array(z.object({ id: z.string(), reference_id: z.string().optional(), reference: z.string().optional(), locale_code: z.string().optional(), translations: z.record(z.string()).optional() })).optional(),
+        delete: z.array(z.string()).optional(),
+      })
+      .parse(req.body)
+    const created: any[] = []
+    for (const c of create ?? []) {
+      await pool.query(`INSERT INTO translation_locale (code) VALUES ($1) ON CONFLICT DO NOTHING`, [c.locale_code])
+      for (const [field, text] of Object.entries(c.translations)) {
+        await pool.query(
+          `INSERT INTO translation (locale_code, entity, entity_id, field, text) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (locale_code, entity, entity_id, field) DO UPDATE SET text=$5`,
+          [c.locale_code, c.reference, c.reference_id, field, text]
+        )
+      }
+      const { rows } = await pool.query(`SELECT * FROM translation WHERE locale_code=$1 AND entity=$2 AND entity_id=$3`, [c.locale_code, c.reference, c.reference_id])
+      created.push(...groupTranslationRows(rows))
+    }
+    const updated: any[] = []
+    for (const u of update ?? []) {
+      const target = parseTranslationId(u.id)
+      if (!target) {
+        continue
+      }
+      const localeCode = u.locale_code ?? target.localeCode
+      const reference = u.reference ?? target.reference
+      const referenceId = u.reference_id ?? target.referenceId
+      await pool.query(`INSERT INTO translation_locale (code) VALUES ($1) ON CONFLICT DO NOTHING`, [localeCode])
+      for (const [field, text] of Object.entries(u.translations ?? {})) {
+        await pool.query(
+          `INSERT INTO translation (locale_code, entity, entity_id, field, text) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (locale_code, entity, entity_id, field) DO UPDATE SET text=$5`,
+          [localeCode, reference, referenceId, field, text]
+        )
+      }
+      if (localeCode !== target.localeCode || reference !== target.reference || referenceId !== target.referenceId) {
+        await pool.query(`DELETE FROM translation WHERE locale_code=$1 AND entity=$2 AND entity_id=$3`, [target.localeCode, target.reference, target.referenceId])
+      }
+      const { rows } = await pool.query(`SELECT * FROM translation WHERE locale_code=$1 AND entity=$2 AND entity_id=$3`, [localeCode, reference, referenceId])
+      if (rows.length > 0) {
+        updated.push(...groupTranslationRows(rows))
+      }
+    }
+    const ids: string[] = []
+    for (const id of del ?? []) {
+      const target = parseTranslationId(id)
+      if (!target) {
+        continue
+      }
+      await pool.query(`DELETE FROM translation WHERE locale_code=$1 AND entity=$2 AND entity_id=$3`, [target.localeCode, target.reference, target.referenceId])
+      ids.push(id)
+    }
+    res.json({ created, updated, deleted: { ids, object: "translation", deleted: true } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/translations/entities", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset, type } = paginationSchema.extend({ type: z.string().optional() }).parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const entityType = type ?? "product"
+    const fields = translatableFields[entityType]
+    if (!fields) {
+      res.json({ data: [], count: 0, offset: off, limit: lim })
+      return
+    }
+    let table = ""
+    let cols = ""
+    if (entityType === "product") {
+      table = "product"
+      cols = "id, title, description, subtitle"
+    } else if (entityType === "product_variant") {
+      table = "product_variant"
+      cols = "id, title"
+    } else if (entityType === "product_category") {
+      table = "product_category"
+      cols = "id, name, description"
+    } else {
