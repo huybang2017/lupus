@@ -950,3 +950,241 @@ platformCompatRouter.get("/admin/views/entities", requireAuth, async (_req, res,
 platformCompatRouter.get("/admin/views/:entity/columns", requireAuth, async (req, res, next) => {
   try {
     res.json({ columns: viewColumns[req.params.entity] ?? defaultViewColumns(req.params.entity) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/views/:entity/configurations", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset } = paginationSchema.parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM admin_view WHERE deleted_at IS NULL AND config->>'entity'=$1`, [req.params.entity])
+    const { rows } = await pool.query(
+      `SELECT * FROM admin_view WHERE deleted_at IS NULL AND config->>'entity'=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [req.params.entity, lim, off]
+    )
+    res.json({ view_configurations: rows.map(viewConfigurationShape), count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/views/:entity/configurations", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { name, is_system_default, set_active, configuration } = z
+      .object({
+        name: z.string().nullable().optional(),
+        is_system_default: z.boolean().optional(),
+        set_active: z.boolean().optional(),
+        configuration: z.object({ visible_columns: z.array(z.string()), column_order: z.array(z.string()) }).passthrough(),
+      })
+      .parse(req.body)
+    const config = { entity: req.params.entity, is_system_default: is_system_default ?? false, configuration }
+    const { rows } = await pool.query(`INSERT INTO admin_view (name, config, created_by) VALUES ($1,$2,$3) RETURNING *`, [
+      name ?? null,
+      JSON.stringify(config),
+      is_system_default ? null : req.auth?.email ?? null,
+    ])
+    if (set_active) {
+      await pool.query(
+        `INSERT INTO user_preference (user_id, key, value) VALUES ($1,$2,$3) ON CONFLICT (user_id, key) DO UPDATE SET value=$3, updated_at=NOW()`,
+        [req.auth?.email ?? "anon", `active_view:${req.params.entity}`, JSON.stringify({ view_configuration_id: rows[0].id })]
+      )
+    }
+    res.status(201).json({ view_configuration: viewConfigurationShape(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/views/:entity/configurations/active", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const pref = await pool.query(`SELECT value FROM user_preference WHERE user_id=$1 AND key=$2`, [req.auth?.email ?? "anon", `active_view:${req.params.entity}`])
+    const prefVal = pref.rows[0] ? (typeof pref.rows[0].value === "string" ? JSON.parse(pref.rows[0].value) : pref.rows[0].value) : null
+    const activeId: string | null = prefVal?.view_configuration_id ?? null
+    if (activeId) {
+      const { rows } = await pool.query(`SELECT * FROM admin_view WHERE id=$1 AND deleted_at IS NULL AND config->>'entity'=$2`, [activeId, req.params.entity])
+      if (rows[0]) {
+        res.json({ view_configuration: viewConfigurationShape(rows[0]), active_view_configuration_id: activeId })
+        return
+      }
+    }
+    const sys = await pool.query(`SELECT * FROM admin_view WHERE deleted_at IS NULL AND config->>'entity'=$1 AND (config->>'is_system_default')::boolean IS TRUE ORDER BY created_at DESC LIMIT 1`, [req.params.entity])
+    res.json({ view_configuration: sys.rows[0] ? viewConfigurationShape(sys.rows[0]) : null, active_view_configuration_id: activeId })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/views/:entity/configurations/active", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { view_configuration_id } = z.object({ view_configuration_id: z.string().nullable() }).parse(req.body)
+    if (view_configuration_id) {
+      const { rows } = await pool.query(`SELECT id FROM admin_view WHERE id=$1 AND deleted_at IS NULL AND config->>'entity'=$2`, [view_configuration_id, req.params.entity])
+      if (!rows[0]) {
+        throw notFound("View configuration", view_configuration_id)
+      }
+    }
+    await pool.query(
+      `INSERT INTO user_preference (user_id, key, value) VALUES ($1,$2,$3) ON CONFLICT (user_id, key) DO UPDATE SET value=$3, updated_at=NOW()`,
+      [req.auth?.email ?? "anon", `active_view:${req.params.entity}`, JSON.stringify({ view_configuration_id })]
+    )
+    res.json({ success: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/views/:entity/configurations/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM admin_view WHERE id=$1 AND deleted_at IS NULL AND config->>'entity'=$2`, [req.params.id, req.params.entity])
+    if (!rows[0]) {
+      throw notFound("View configuration", req.params.id)
+    }
+    res.json({ view_configuration: viewConfigurationShape(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/views/:entity/configurations/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { name, is_system_default, set_active, configuration } = z
+      .object({
+        name: z.string().nullable().optional(),
+        is_system_default: z.boolean().optional(),
+        set_active: z.boolean().optional(),
+        configuration: z.object({ visible_columns: z.array(z.string()), column_order: z.array(z.string()) }).passthrough().optional(),
+      })
+      .parse(req.body)
+    const prev = await pool.query(`SELECT * FROM admin_view WHERE id=$1 AND deleted_at IS NULL AND config->>'entity'=$2`, [req.params.id, req.params.entity])
+    if (!prev.rows[0]) {
+      throw notFound("View configuration", req.params.id)
+    }
+    const prevCfg = typeof prev.rows[0].config === "string" ? JSON.parse(prev.rows[0].config) : prev.rows[0].config ?? {}
+    const config = {
+      entity: req.params.entity,
+      is_system_default: is_system_default ?? prevCfg.is_system_default ?? false,
+      configuration: configuration ?? prevCfg.configuration ?? {},
+    }
+    const { rows } = await pool.query(`UPDATE admin_view SET name=$2, config=$3, updated_at=NOW() WHERE id=$1 RETURNING *`, [
+      req.params.id,
+      name !== undefined ? name : prev.rows[0].name,
+      JSON.stringify(config),
+    ])
+    if (set_active) {
+      await pool.query(
+        `INSERT INTO user_preference (user_id, key, value) VALUES ($1,$2,$3) ON CONFLICT (user_id, key) DO UPDATE SET value=$3, updated_at=NOW()`,
+        [req.auth?.email ?? "anon", `active_view:${req.params.entity}`, JSON.stringify({ view_configuration_id: req.params.id })]
+      )
+    }
+    res.json({ view_configuration: viewConfigurationShape(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.delete("/admin/views/:entity/configurations/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const gone = await pool.query(`UPDATE admin_view SET deleted_at=NOW() WHERE id=$1 AND deleted_at IS NULL AND config->>'entity'=$2 RETURNING id`, [req.params.id, req.params.entity])
+    if (!gone.rows[0]) {
+      throw notFound("View configuration", req.params.id)
+    }
+    res.json({ id: req.params.id, object: "view_configuration", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// workflow executions: GET list, GET retrieve (table: workflow_execution;
+// the singular /admin/workflows/executions alias lives in infra.routes.ts)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// stores: GET retrieve by id (sdk.admin.store.retrieve -> GET /admin/stores/:id
+// -> { store }). The list + update handlers above already exist.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// payment provider webhooks (no auth: Lupus hooks are unauthenticated and
+// verify via provider signature/raw body).
+// POST /hooks/payment/:provider per
+// upstream/src/api/hooks/payment/[provider]/route.ts (200 on
+// receipt). Signature verification happens only when configured
+// (STRIPE_SECRET_KEY for stripe); stripe events delegate to the existing
+// handleStripeWebhook logic from providers/external-providers.ts.
+// ---------------------------------------------------------------------------
+
+platformCompatRouter.post("/hooks/payment/:provider", async (req, res, next) => {
+  try {
+    const { provider } = req.params
+    if (provider !== "stripe") {
+      res.json({ received: true, provider, verified: false })
+      return
+    }
+    const { id } = z.object({ id: z.string() }).passthrough().parse(req.body ?? {})
+    if (!process.env.STRIPE_SECRET_KEY) {
+      res.json({ received: true, provider, verified: false })
+      return
+    }
+    const result = await handleStripeWebhook(id)
+    res.json({ received: true, provider, verified: true, ...(result as Record<string, unknown>) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// uploads (sdk.admin.upload.* -> /admin/uploads[/:id], /admin/uploads/presigned-urls).
+// Lupus shapes: POST -> { files }, GET :id -> { file },
+// DELETE :id -> { id, object: "file", deleted: true }, presigned-urls ->
+// { url, filename, ... } (single-file S3 flow). Lupus has no S3: POST
+// /admin/uploads/presigned-urls returns the { urls: [] } stub ONLY when no S3
+// config is present (file.service.ts registers just the local provider; the S3
+// provider from external-providers.ts activates only with S3_ENDPOINT etc.).
+// GET /admin/uploads list has no Lupus equivalent; it returns the
+// { files, count, offset, limit } envelope over file_record.
+// POST accepts multipart/form-data (parsed without extra deps) as well as the
+// JSON { filename, content_base64, mime_type? } shape, and reuses
+// fileService.upload from infra.
+// ---------------------------------------------------------------------------
+
+function parseMultipartFiles(buffer: Buffer, boundary: string): { filename: string; mimeType?: string; content: Buffer }[] {
+  const out: { filename: string; mimeType?: string; content: Buffer }[] = []
+  const text = buffer.toString("latin1")
+  for (const part of text.split(`--${boundary}`)) {
+    const nameMatch = part.match(/filename="([^"]+)"/)
+    if (!nameMatch) {
+      continue
+    }
+    const headerEnd = part.indexOf("\r\n\r\n")
+    if (headerEnd < 0) {
+      continue
+    }
+    const headers = part.slice(0, headerEnd)
+    let content = part.slice(headerEnd + 4)
+    if (content.endsWith("\r\n")) {
+      content = content.slice(0, -2)
+    }
+    const typeMatch = headers.match(/[Cc]ontent-[Tt]ype:\s*([^\r\n;]+)/)
+    out.push({ filename: nameMatch[1], mimeType: typeMatch?.[1]?.trim(), content: Buffer.from(content, "latin1") })
+  }
+  return out
+}
+
+function readRawBody(req: any): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on("data", (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)))
+    req.on("end", () => resolve(Buffer.concat(chunks)))
+    req.on("error", reject)
+  })
+}
+
+platformCompatRouter.get("/admin/uploads", requireAuth, async (req, res, next) => {
