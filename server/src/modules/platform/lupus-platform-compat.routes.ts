@@ -236,3 +236,241 @@ platformCompatRouter.get("/admin/property-labels/:id", requireAuth, async (req, 
 
 platformCompatRouter.post("/admin/property-labels/:id", requireAuth, async (req: AuthedRequest, res, next) => {
   try {
+    if (req.params.id === "batch") {
+      next("route")
+      return
+    }
+    await requirePolicy(req, "settings:write")
+    const { entity, property, label } = z.object({ entity: z.string().optional(), property: z.string().optional(), label: z.string().optional() }).parse(req.body)
+    const prev = await pool.query(`SELECT * FROM property_label WHERE id=$1`, [req.params.id])
+    if (!prev.rows[0]) {
+      throw notFound("Property label", req.params.id)
+    }
+    const cur = prev.rows[0]
+    const { rows } = await pool.query(`UPDATE property_label SET entity=$2, property=$3, label=$4 WHERE id=$1 RETURNING *`, [
+      req.params.id,
+      entity ?? cur.entity,
+      property ?? cur.property,
+      label ?? cur.label,
+    ])
+    res.json({ property_label: propertyLabelShape(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.delete("/admin/property-labels/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const deleted = await pool.query(`DELETE FROM property_label WHERE id=$1 RETURNING id`, [req.params.id])
+    if (!deleted.rows[0]) {
+      throw notFound("Property label", req.params.id)
+    }
+    res.json({ id: req.params.id, object: "property_label", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/property-labels/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { create, update, delete: del } = z
+      .object({
+        create: z.array(z.object({ entity: z.string(), property: z.string(), label: z.string() })).optional(),
+        update: z.array(z.object({ id: z.string(), entity: z.string().optional(), property: z.string().optional(), label: z.string().optional() })).optional(),
+        delete: z.array(z.string()).optional(),
+      })
+      .parse(req.body)
+    const created: any[] = []
+    for (const c of create ?? []) {
+      const { rows } = await pool.query(
+        `INSERT INTO property_label (entity, property, label) VALUES ($1,$2,$3) ON CONFLICT (entity, property) DO UPDATE SET label=$3 RETURNING *`,
+        [c.entity, c.property, c.label]
+      )
+      created.push(propertyLabelShape(rows[0]))
+    }
+    const updated: any[] = []
+    for (const u of update ?? []) {
+      const prev = await pool.query(`SELECT * FROM property_label WHERE id=$1`, [u.id])
+      if (!prev.rows[0]) {
+        continue
+      }
+      const cur = prev.rows[0]
+      const { rows } = await pool.query(`UPDATE property_label SET entity=$2, property=$3, label=$4 WHERE id=$1 RETURNING *`, [
+        u.id,
+        u.entity ?? cur.entity,
+        u.property ?? cur.property,
+        u.label ?? cur.label,
+      ])
+      updated.push(propertyLabelShape(rows[0]))
+    }
+    const deleted: any[] = []
+    for (const id of del ?? []) {
+      const gone = await pool.query(`DELETE FROM property_label WHERE id=$1 RETURNING id`, [id])
+      if (gone.rows[0]) {
+        deleted.push({ id, object: "property_label", deleted: true })
+      }
+    }
+    res.json({ created, updated, deleted })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// regions admin: GET list, GET retrieve, POST update, DELETE
+// (create POST /admin/regions lives in region.routes.ts)
+// ---------------------------------------------------------------------------
+
+async function regionWithCountries(id: string): Promise<any> {
+  const r = await pool.query(`SELECT * FROM region WHERE id=$1 AND deleted_at IS NULL`, [id])
+  if (!r.rows[0]) {
+    throw notFound("Region", id)
+  }
+  const c = await pool.query(`SELECT iso_2 FROM region_country WHERE region_id=$1 AND deleted_at IS NULL`, [id])
+  return { ...r.rows[0], countries: c.rows }
+}
+
+// ?country_code lives on the region_country join, not on region, and it is a user
+// value, so it cannot be a base condition. It is read here, coerced to lower
+// case and appended as a bind param ($n after every filter param), and the two
+// queries are then issued by hand - exactly what runList does internally.
+function countryCodeClause(query: Record<string, unknown>, paramIndex: number): { sql: string; params: string[] } | null {
+  const raw = Array.isArray(query.country_code) ? query.country_code[0] : query.country_code
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
+  if (!value) {
+    return null
+  }
+  return {
+    sql: `EXISTS (SELECT 1 FROM region_country rc WHERE rc.region_id = r.id AND rc.deleted_at IS NULL AND LOWER(rc.iso_2) = $${paramIndex})`,
+    params: [value],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// sales channels: GET retrieve, POST update, DELETE
+// (create/list/product-links live in channel-location.routes.ts)
+// ---------------------------------------------------------------------------
+
+async function salesChannelShape(id: string): Promise<any> {
+  const { rows } = await pool.query(`SELECT * FROM sales_channel WHERE id=$1 AND deleted_at IS NULL`, [id])
+  if (!rows[0]) {
+    throw notFound("Sales channel", id)
+  }
+  const products = await pool.query(
+    `SELECT p.id, p.title, p.handle, p.status FROM product_sales_channel psc
+     JOIN product p ON p.id = psc.product_id AND p.deleted_at IS NULL
+     WHERE psc.sales_channel_id = $1 ORDER BY p.created_at DESC LIMIT 200`,
+    [id]
+  )
+  return { ...rows[0], products: products.rows }
+}
+
+platformCompatRouter.post("/admin/sales-channels/:id/products/remove", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { product_ids } = z.object({ product_ids: z.array(z.string()) }).parse(req.body)
+    await pool.query(`DELETE FROM product_sales_channel WHERE sales_channel_id = $1 AND product_id = ANY($2)`, [req.params.id, product_ids])
+    res.json({ sales_channel: await salesChannelShape(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/sales-channels/:id", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ sales_channel: await salesChannelShape(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/sales-channels/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { name, description, is_disabled, metadata } = z
+      .object({ name: z.string().min(1).optional(), description: z.string().nullable().optional(), is_disabled: z.boolean().optional(), metadata: z.record(z.any()).nullable().optional() })
+      .parse(req.body)
+    const prev = await pool.query(`SELECT * FROM sales_channel WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!prev.rows[0]) {
+      throw notFound("Sales channel", req.params.id)
+    }
+    const cur = prev.rows[0]
+    if (name !== undefined && !name.trim()) {
+      throw Object.assign(new Error("name cannot be empty"), { statusCode: 400 })
+    }
+    await pool.query(`UPDATE sales_channel SET name=$2, description=$3, is_disabled=$4, metadata=$5, updated_at=NOW() WHERE id=$1`, [
+      req.params.id,
+      name !== undefined ? name.trim() : cur.name,
+      description !== undefined ? description : cur.description,
+      is_disabled ?? cur.is_disabled,
+      metadata !== undefined ? (metadata ? JSON.stringify(metadata) : null) : cur.metadata,
+    ])
+    res.json({ sales_channel: await salesChannelShape(req.params.id) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.delete("/admin/sales-channels/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const exists = await pool.query(`SELECT 1 FROM sales_channel WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!exists.rows[0]) {
+      throw notFound("Sales channel", req.params.id)
+    }
+    const isDefault = await pool.query(`SELECT 1 FROM store WHERE default_sales_channel_id=$1`, [req.params.id])
+    if (isDefault.rows[0]) {
+      throw Object.assign(new Error("Cannot delete the default sales channel"), { statusCode: 400 })
+    }
+    await pool.query(`UPDATE sales_channel SET deleted_at=NOW(), updated_at=NOW() WHERE id=$1`, [req.params.id])
+    // a deleted channel no longer publishes products, scopes API keys or serves a stock location
+    await pool.query(`DELETE FROM product_sales_channel WHERE sales_channel_id=$1`, [req.params.id])
+    await pool.query(`DELETE FROM api_key_sales_channel WHERE sales_channel_id=$1`, [req.params.id])
+    await pool.query(`DELETE FROM sales_channel_stock_location WHERE sales_channel_id=$1`, [req.params.id])
+    res.json({ id: req.params.id, object: "sales-channel", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// search: GET grouped search, search-indexes list/delete/reindex
+// (no search module configured: indexes report enabled=false; reindex is a
+// best-effort local GIN refresh for the product index)
+// ---------------------------------------------------------------------------
+
+platformCompatRouter.get("/admin/search", requireAuth, async (req, res, next) => {
+  try {
+    const { q, entity, limit, offset } = z
+      .object({ q: z.string().optional(), entity: z.union([z.string(), z.array(z.string())]).optional(), limit: z.coerce.number().int().min(1).max(100).optional(), offset: z.coerce.number().int().min(0).optional() })
+      .parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    let entities: string[]
+    if (!entity) {
+      entities = ["product", "order", "customer"]
+    } else if (Array.isArray(entity)) {
+      entities = entity.flatMap((e) => e.split(",")).map((e) => e.trim()).filter(Boolean)
+    } else {
+      entities = entity.split(",").map((e) => e.trim()).filter(Boolean)
+    }
+    const like = `%${(q ?? "").trim()}%`
+    const results: any[] = []
+    for (const ent of entities) {
+      if (ent === "product") {
+        const total = await pool.query(`SELECT COUNT(*)::int AS c FROM product WHERE deleted_at IS NULL AND ($1='%%' OR title ILIKE $1 OR COALESCE(description,'') ILIKE $1 OR handle ILIKE $1)`, [like])
+        const { rows } = await pool.query(
+          `SELECT * FROM product WHERE deleted_at IS NULL AND ($1='%%' OR title ILIKE $1 OR COALESCE(description,'') ILIKE $1 OR handle ILIKE $1) ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
+          [like, lim, off]
+        )
+        results.push({ entity: ent, data: rows, count: total.rows[0].c, offset: off, limit: lim })
+      } else if (ent === "customer") {
+        const total = await pool.query(
+          `SELECT COUNT(*)::int AS c FROM customer WHERE deleted_at IS NULL AND ($1='%%' OR COALESCE(email,'') ILIKE $1 OR COALESCE(first_name,'') ILIKE $1 OR COALESCE(last_name,'') ILIKE $1)`,
+          [like]
+        )
+        const { rows } = await pool.query(
+          `SELECT * FROM customer WHERE deleted_at IS NULL AND ($1='%%' OR COALESCE(email,'') ILIKE $1 OR COALESCE(first_name,'') ILIKE $1 OR COALESCE(last_name,'') ILIKE $1) ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+          [like, lim, off]
+        )
+        results.push({ entity: ent, data: rows, count: total.rows[0].c, offset: off, limit: lim })
