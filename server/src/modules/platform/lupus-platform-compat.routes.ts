@@ -1188,3 +1188,238 @@ function readRawBody(req: any): Promise<Buffer> {
 }
 
 platformCompatRouter.get("/admin/uploads", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset } = paginationSchema.parse(req.query)
+    const { limit: lim, offset: off } = pageOf({ limit, offset })
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM file_record WHERE deleted_at IS NULL`)
+    const { rows } = await pool.query(`SELECT * FROM file_record WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [lim, off])
+    res.json({ files: rows, count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/uploads/presigned-urls", requireAuth, async (req, res, next) => {
+  try {
+    z.object({}).passthrough().parse(req.body ?? {})
+    if (process.env.S3_ENDPOINT && process.env.S3_BUCKET && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY) {
+      res.status(501).json({ message: "S3 presigned URLs are not implemented for this provider" })
+      return
+    }
+    res.json({ urls: [] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/uploads", requireAuth, async (req, res, next) => {
+  try {
+    const contentType = String(req.headers["content-type"] ?? "")
+    const uploads: { filename: string; content_base64: string; mime_type?: string }[] = []
+    if (contentType.includes("multipart/form-data")) {
+      const boundary = contentType.split("boundary=")[1]?.split(";")[0]?.trim()
+      if (!boundary) {
+        res.status(400).json({ message: "Missing multipart boundary" })
+        return
+      }
+      const raw = await readRawBody(req)
+      for (const f of parseMultipartFiles(raw, boundary)) {
+        uploads.push({ filename: f.filename, content_base64: f.content.toString("base64"), mime_type: f.mimeType })
+      }
+      if (uploads.length === 0) {
+        res.status(400).json({ message: "No files were uploaded" })
+        return
+      }
+    } else {
+      const { filename, content_base64, mime_type } = z
+        .object({ filename: z.string().min(1), content_base64: z.string().min(1), mime_type: z.string().optional() })
+        .parse(req.body ?? {})
+      uploads.push({ filename, content_base64, mime_type })
+    }
+    const files: any[] = []
+    for (const u of uploads) {
+      files.push(await fileService.upload(u))
+    }
+    res.json({ files })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/uploads/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM file_record WHERE id=$1 AND deleted_at IS NULL`, [req.params.id])
+    if (!rows[0]) {
+      throw notFound("File", req.params.id)
+    }
+    res.json({ file: rows[0] })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.delete("/admin/uploads/:id", requireAuth, async (req, res, next) => {
+  try {
+    await fileService.remove(req.params.id)
+    res.json({ id: req.params.id, object: "file", deleted: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// index + cloud (lupus has neither module; minimal Lupus-compatible shapes).
+// GET /admin/index/details (Lupus: { metadata: indexInfo }) is backed by live
+// row counts from the existing search-relevant tables (the postgres GIN index
+// idx_product_search from schema-infra.sql is the search backend).
+// POST /admin/index/sync mirrors Lupus's empty-200 acknowledgement.
+// GET /cloud/auth mirrors Lupus's { enabled } (always false: no cloud).
+// POST /cloud/auth/users mirrors Lupus's user-provisioning route but answers
+// 400 disabled (no cloud identity provider exists here).
+// ---------------------------------------------------------------------------
+
+platformCompatRouter.get("/admin/index/details", requireAuth, async (_req, res, next) => {
+  try {
+    const [products, orders, customers] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS c FROM product WHERE deleted_at IS NULL`),
+      pool.query(`SELECT COUNT(*)::int AS c FROM "order" WHERE deleted_at IS NULL`),
+      pool.query(`SELECT COUNT(*)::int AS c FROM customer WHERE deleted_at IS NULL`),
+    ])
+    res.json({
+      metadata: {
+        enabled: true,
+        backend: "postgres-gin",
+        indexes: [
+          { entity: "product", documents: products.rows[0].c },
+          { entity: "order", documents: orders.rows[0].c },
+          { entity: "customer", documents: customers.rows[0].c },
+        ],
+      },
+    })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/index/sync", requireAuth, async (req, res, next) => {
+  try {
+    z.object({ strategy: z.string().optional() }).passthrough().parse(req.body ?? {})
+    await pool.query(`REINDEX INDEX IF EXISTS idx_product_search`).catch(() => undefined)
+    res.sendStatus(200)
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/cloud/auth", async (_req, res, next) => {
+  try {
+    res.json({ enabled: false })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/cloud/auth/users", requireAuth, async (_req, res, next) => {
+  try {
+    res.status(400).json({ message: "Cloud auth is not enabled" })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// Workflow engine ops (Lupus runs async workflows; lupus executes synchronously
+// through services, so run() records a completed execution and subscribe replays state).
+platformCompatRouter.post("/admin/workflows-executions/:workflow_id/run", requireAuth, async (req, res, next) => {
+  try {
+    const { transaction_id, input } = z
+      .object({ transaction_id: z.string().optional(), input: z.record(z.any()).optional() })
+      .parse(req.body ?? {})
+    const trx = transaction_id ?? `trx_${Date.now().toString(36)}`
+    const { rows } = await pool.query(
+      `INSERT INTO workflow_execution (workflow_id, transaction_id, input, status, output, finished_at) VALUES ($1,$2,$3,'succeeded',$4,NOW()) RETURNING *`,
+      [req.params.workflow_id, trx, JSON.stringify(input ?? {}), JSON.stringify({ acknowledged: true })]
+    )
+    void rows
+    res.json({ acknowledgement: { workflow_id: req.params.workflow_id, transaction_id: trx, status: "succeeded" } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/workflows-executions/:workflow_id/:transaction_id", requireAuth, async (req, res, next) => {
+  try {
+    if (req.params.transaction_id === "subscribe") {
+      next("route")
+      return
+    }
+    const { rows } = await pool.query(
+      `SELECT * FROM workflow_execution WHERE workflow_id=$1 AND (transaction_id=$2 OR id=$2) ORDER BY created_at DESC LIMIT 1`,
+      [req.params.workflow_id, req.params.transaction_id]
+    )
+    if (!rows[0]) {
+      throw Object.assign(new Error("Workflow execution not found"), { statusCode: 404 })
+    }
+    res.json({ workflow_execution: toWorkflowExecution(rows[0]) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+function sseState(res: any, execution: any) {
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" })
+  res.write(`event: state\ndata: ${JSON.stringify(execution)}\n\n`)
+  res.end()
+}
+
+platformCompatRouter.get("/admin/workflows-executions/:workflow_id/subscribe", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM workflow_execution WHERE workflow_id=$1 ORDER BY created_at DESC LIMIT 1`, [req.params.workflow_id])
+    sseState(res, rows[0] ? toWorkflowExecution(rows[0]) : { workflow_id: req.params.workflow_id, state: "idle" })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/workflows-executions/:workflow_id/:transaction_id/subscribe", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM workflow_execution WHERE workflow_id=$1 AND (transaction_id=$2 OR id=$2) ORDER BY created_at DESC LIMIT 1`,
+      [req.params.workflow_id, req.params.transaction_id]
+    )
+    sseState(res, rows[0] ? toWorkflowExecution(rows[0]) : { workflow_id: req.params.workflow_id, state: "idle" })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/workflows-executions/:workflow_id/steps/success", requireAuth, async (req, res, next) => {
+  try {
+    const { transaction_id, step_id, response } = z
+      .object({ transaction_id: z.string(), step_id: z.string(), response: z.any().optional() })
+      .parse(req.body)
+    await pool.query(
+      `UPDATE workflow_execution SET steps = steps || $3::jsonb, status='succeeded', output=COALESCE(output,'{}'::jsonb) || $4::jsonb, finished_at=NOW()
+       WHERE workflow_id=$1 AND (transaction_id=$2 OR id=$2)`,
+      [req.params.workflow_id, transaction_id, JSON.stringify([{ step_id, status: "ok", response: response ?? null }]), JSON.stringify({ last_step: step_id })]
+    )
+    res.json({ success: true })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/workflows-executions/:workflow_id/steps/failure", requireAuth, async (req, res, next) => {
+  try {
+    const { transaction_id, step_id, response } = z
+      .object({ transaction_id: z.string(), step_id: z.string(), response: z.any().optional() })
+      .parse(req.body)
+    await pool.query(
+      `UPDATE workflow_execution SET steps = steps || $3::jsonb, status='failed', error=COALESCE($4::text, error), finished_at=NOW()
+       WHERE workflow_id=$1 AND (transaction_id=$2 OR id=$2)`,
+      [req.params.workflow_id, transaction_id, JSON.stringify([{ step_id, status: "failed", response: response ?? null }]), response ? String(response) : null]
+    )
+    res.json({ success: true })
+  } catch (e) {
+    next(e)
+  }
+})
