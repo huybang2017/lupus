@@ -712,3 +712,241 @@ platformCompatRouter.get("/admin/translations/entities", requireAuth, async (req
       table = "product_category"
       cols = "id, name, description"
     } else {
+      table = "product_collection"
+      cols = "id, title"
+    }
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM ${table} WHERE deleted_at IS NULL`)
+    const { rows } = await pool.query(`SELECT ${cols} FROM ${table} WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [lim, off])
+    const data: any[] = []
+    for (const row of rows) {
+      const t = await pool.query(`SELECT * FROM translation WHERE entity=$1 AND entity_id=$2`, [entityType, row.id])
+      const picked: Record<string, unknown> = { id: row.id }
+      for (const f of fields) {
+        picked[f] = row[f] ?? null
+      }
+      data.push({ ...picked, translations: groupTranslationRows(t.rows) })
+    }
+    res.json({ data, count: total.rows[0].c, offset: off, limit: lim })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/translations/settings", requireAuth, async (req, res, next) => {
+  try {
+    const { entity_type } = z.object({ entity_type: z.union([z.string(), z.array(z.string())]).optional() }).parse(req.query)
+    const { rows } = await pool.query(`SELECT key, value FROM user_preference WHERE user_id='system' AND key LIKE 'translation_settings:%'`)
+    const stored: Record<string, any> = {}
+    for (const r of rows) {
+      const val = typeof r.value === "string" ? JSON.parse(r.value) : r.value
+      stored[String(r.key).slice("translation_settings:".length)] = val
+    }
+    const types = entity_type ? (Array.isArray(entity_type) ? entity_type : [entity_type]) : Object.keys(translatableFields)
+    const translation_settings: Record<string, any> = {}
+    for (const t of types) {
+      const s = stored[t]
+      translation_settings[t] = {
+        id: s?.id ?? `trset_${t}`,
+        fields: s?.fields ?? translatableFields[t] ?? [],
+        is_active: s?.is_active ?? false,
+        inactive_fields: [],
+      }
+    }
+    res.json({ translation_settings })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.post("/admin/translations/settings/batch", requireAuth, async (req: AuthedRequest, res, next) => {
+  try {
+    await requirePolicy(req, "settings:write")
+    const { create, update, delete: del } = z
+      .object({
+        create: z.array(z.object({ entity_type: z.string(), fields: z.array(z.string()).optional(), is_active: z.boolean().optional() })).optional(),
+        update: z.array(z.object({ id: z.string(), entity_type: z.string().optional(), fields: z.array(z.string()).optional(), is_active: z.boolean().optional() })).optional(),
+        delete: z.array(z.string()).optional(),
+      })
+      .parse(req.body)
+    const now = new Date().toISOString()
+    const created: any[] = []
+    for (const c of create ?? []) {
+      const setting = { id: `trset_${c.entity_type}`, entity_type: c.entity_type, fields: c.fields ?? translatableFields[c.entity_type] ?? [], is_active: c.is_active ?? false, created_at: now, updated_at: now, deleted_at: null }
+      await pool.query(
+        `INSERT INTO user_preference (user_id, key, value) VALUES ('system',$1,$2) ON CONFLICT (user_id, key) DO UPDATE SET value=$2, updated_at=NOW()`,
+        [`translation_settings:${c.entity_type}`, JSON.stringify(setting)]
+      )
+      created.push(setting)
+    }
+    const updated: any[] = []
+    for (const u of update ?? []) {
+      const { rows } = await pool.query(`SELECT key, value FROM user_preference WHERE user_id='system' AND key LIKE 'translation_settings:%'`)
+      let found: any = null
+      let foundKey = ""
+      for (const r of rows) {
+        const val = typeof r.value === "string" ? JSON.parse(r.value) : r.value
+        if (val?.id === u.id || String(r.key) === `translation_settings:${u.entity_type ?? ""}`) {
+          found = val
+          foundKey = String(r.key)
+          break
+        }
+      }
+      if (!found) {
+        continue
+      }
+      const entityType = u.entity_type ?? found.entity_type
+      const setting = {
+        id: found.id ?? u.id,
+        entity_type: entityType,
+        fields: u.fields ?? found.fields ?? translatableFields[entityType] ?? [],
+        is_active: u.is_active ?? found.is_active ?? false,
+        created_at: found.created_at ?? now,
+        updated_at: now,
+        deleted_at: null,
+      }
+      await pool.query(
+        `INSERT INTO user_preference (user_id, key, value) VALUES ('system',$1,$2) ON CONFLICT (user_id, key) DO UPDATE SET value=$2, updated_at=NOW()`,
+        [`translation_settings:${entityType}`, JSON.stringify(setting)]
+      )
+      if (foundKey && foundKey !== `translation_settings:${entityType}`) {
+        await pool.query(`DELETE FROM user_preference WHERE user_id='system' AND key=$1`, [foundKey])
+      }
+      updated.push(setting)
+    }
+    const ids: string[] = []
+    for (const id of del ?? []) {
+      await pool.query(`DELETE FROM user_preference WHERE user_id='system' AND (key=$1 OR value->>'id'=$2)`, [`translation_settings:${id}`, id])
+      ids.push(id)
+    }
+    res.json({ created, updated, deleted: { ids, object: "translation_settings", deleted: true } })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/translations/statistics", requireAuth, async (req, res, next) => {
+  try {
+    const { locales, entity_types } = z
+      .object({ locales: z.union([z.string(), z.array(z.string())]).optional(), entity_types: z.union([z.string(), z.array(z.string())]).optional() })
+      .parse(req.query)
+    const localeList = locales ? (Array.isArray(locales) ? locales : locales.split(",").map((s) => s.trim()).filter(Boolean)) : []
+    const typeList = entity_types ? (Array.isArray(entity_types) ? entity_types : entity_types.split(",").map((s) => s.trim()).filter(Boolean)) : Object.keys(translatableFields)
+    const localesResolved: string[] = localeList.length > 0 ? localeList : (await pool.query(`SELECT code FROM translation_locale`)).rows.map((r: any) => r.code)
+    const statistics: Record<string, any> = {}
+    for (const t of typeList) {
+      const fields = translatableFields[t] ?? []
+      let table = ""
+      if (t === "product") {
+        table = "product"
+      } else if (t === "product_variant") {
+        table = "product_variant"
+      } else if (t === "product_category") {
+        table = "product_category"
+      } else if (t === "product_collection") {
+        table = "product_collection"
+      }
+      const entityCount = table ? (await pool.query(`SELECT COUNT(*)::int AS c FROM ${table} WHERE deleted_at IS NULL`)).rows[0].c : 0
+      const byLocale: Record<string, any> = {}
+      let expected = 0
+      let translated = 0
+      for (const loc of localesResolved) {
+        const exp = entityCount * fields.length
+        const got = (await pool.query(`SELECT COUNT(*)::int AS c FROM translation WHERE entity=$1 AND locale_code=$2 AND text IS NOT NULL AND text <> ''`, [t, loc])).rows[0].c
+        byLocale[loc] = { expected: exp, translated: got, missing: Math.max(exp - got, 0) }
+        expected += exp
+        translated += got
+      }
+      statistics[t] = { expected, translated, missing: Math.max(expected - translated, 0), by_locale: byLocale }
+    }
+    res.json({ statistics })
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// views: entities, columns, entity configurations CRUD + active configuration.
+// Configurations reuse admin_view (entity + flags live inside config JSONB);
+// the active view per user reuses user_preference (key active_view:<entity>).
+// ---------------------------------------------------------------------------
+
+const viewEntities = [
+  "api_key",
+  "claim",
+  "customer",
+  "customer_group",
+  "draft_order",
+  "exchange",
+  "inventory_item",
+  "order",
+  "price_list",
+  "product",
+  "product_category",
+  "product_collection",
+  "product_variant",
+  "promotion",
+  "region",
+  "return",
+  "sales_channel",
+  "stock_location",
+].sort()
+
+function defaultViewColumns(entity: string): any[] {
+  return [
+    { id: "id", name: "ID", description: `${entity} identifier`, field: "id", sortable: true, hideable: false, default_visible: true, data_type: "string" },
+    { id: "created_at", name: "Created", field: "created_at", sortable: true, hideable: true, default_visible: true, data_type: "date" },
+    { id: "updated_at", name: "Updated", field: "updated_at", sortable: true, hideable: true, default_visible: false, data_type: "date" },
+  ]
+}
+
+const viewColumns: Record<string, any[]> = {
+  order: [
+    { id: "id", name: "ID", field: "id", sortable: true, hideable: false, default_visible: true, data_type: "string" },
+    { id: "display_id", name: "Display ID", field: "display_id", sortable: true, hideable: true, default_visible: true, data_type: "string" },
+    { id: "status", name: "Status", field: "status", sortable: true, hideable: true, default_visible: true, data_type: "enum" },
+    { id: "email", name: "Email", field: "email", sortable: false, hideable: true, default_visible: true, data_type: "string" },
+    { id: "total", name: "Total", field: "total", sortable: true, hideable: true, default_visible: true, data_type: "currency" },
+    { id: "created_at", name: "Created", field: "created_at", sortable: true, hideable: true, default_visible: true, data_type: "date" },
+  ],
+  product: [
+    { id: "id", name: "ID", field: "id", sortable: true, hideable: false, default_visible: true, data_type: "string" },
+    { id: "title", name: "Title", field: "title", sortable: true, hideable: true, default_visible: true, data_type: "string" },
+    { id: "handle", name: "Handle", field: "handle", sortable: true, hideable: true, default_visible: false, data_type: "string" },
+    { id: "status", name: "Status", field: "status", sortable: true, hideable: true, default_visible: true, data_type: "enum" },
+    { id: "created_at", name: "Created", field: "created_at", sortable: true, hideable: true, default_visible: true, data_type: "date" },
+  ],
+  customer: [
+    { id: "id", name: "ID", field: "id", sortable: true, hideable: false, default_visible: true, data_type: "string" },
+    { id: "email", name: "Email", field: "email", sortable: true, hideable: true, default_visible: true, data_type: "string" },
+    { id: "first_name", name: "First name", field: "first_name", sortable: true, hideable: true, default_visible: true, data_type: "string" },
+    { id: "last_name", name: "Last name", field: "last_name", sortable: true, hideable: true, default_visible: true, data_type: "string" },
+    { id: "created_at", name: "Created", field: "created_at", sortable: true, hideable: true, default_visible: true, data_type: "date" },
+  ],
+}
+
+function viewConfigurationShape(row: any): any {
+  const cfg = typeof row.config === "string" ? JSON.parse(row.config) : row.config ?? {}
+  const isDefault = cfg.is_system_default ?? false
+  return {
+    id: row.id,
+    entity: cfg.entity ?? null,
+    name: row.name,
+    user_id: isDefault ? null : row.created_by,
+    is_system_default: isDefault,
+    configuration: cfg.configuration ?? {},
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+platformCompatRouter.get("/admin/views/entities", requireAuth, async (_req, res, next) => {
+  try {
+    res.json({ entities: viewEntities.map((name) => ({ name })) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+platformCompatRouter.get("/admin/views/:entity/columns", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ columns: viewColumns[req.params.entity] ?? defaultViewColumns(req.params.entity) })
