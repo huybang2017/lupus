@@ -238,3 +238,243 @@ export class PricingService {
         )
       }
     }
+    return this.retrievePriceList(id)
+  }
+
+  async listPriceListPrices(id: string, limit: number, offset: number): Promise<{ prices: any[]; count: number }> {
+    const exists = await pool.query(`SELECT id FROM price_list WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!exists.rows[0]) {
+      throw Object.assign(new Error("Price list not found"), { statusCode: 404 })
+    }
+    const { rows } = await pool.query(
+      `SELECT p.*, v.id AS variant_id FROM price p
+       JOIN price_set ps ON ps.id = p.price_set_id
+       JOIN product_variant v ON v.price_set_id = ps.id
+       WHERE p.price_list_id = $1 AND p.deleted_at IS NULL
+       ORDER BY p.created_at DESC LIMIT $2 OFFSET $3`,
+      [id, limit, offset]
+    )
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM price WHERE price_list_id = $1 AND deleted_at IS NULL`, [id])
+    return { prices: rows, count: Number(total.rows[0].c) }
+  }
+
+  /** Ensure a variant has a price_set, creating one if missing. Shared with product create/update. */
+  async ensureVariantPriceSet(variantId: string): Promise<string> {
+    const ps = await pool.query(`SELECT price_set_id FROM product_variant WHERE id = $1`, [variantId])
+    if (!ps.rows[0]) {
+      throw Object.assign(new Error(`Variant ${variantId} not found`), { statusCode: 404 })
+    }
+    if (ps.rows[0].price_set_id) {
+      return ps.rows[0].price_set_id as string
+    }
+    const created = await pool.query(`INSERT INTO price_set DEFAULT VALUES RETURNING id`)
+    await pool.query(`UPDATE product_variant SET price_set_id = $2 WHERE id = $1`, [variantId, created.rows[0].id])
+    return created.rows[0].id as string
+  }
+
+  async batchPriceListPrices(
+    id: string,
+    input: {
+      create?: { variant_id: string; currency_code: string; amount: number; min_quantity?: number | null; max_quantity?: number | null }[]
+      update?: { id: string; variant_id?: string; currency_code?: string; amount?: number; min_quantity?: number | null; max_quantity?: number | null }[]
+      delete?: string[]
+    }
+  ): Promise<{ created: any[]; updated: any[]; deleted: string[] }> {
+    const exists = await pool.query(`SELECT id FROM price_list WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!exists.rows[0]) {
+      throw Object.assign(new Error("Price list not found"), { statusCode: 404 })
+    }
+    const created: any[] = []
+    for (const c of input.create ?? []) {
+      this.assertQuantities(c)
+      const psId = await this.ensureVariantPriceSet(c.variant_id)
+      const { rows } = await pool.query(
+        `INSERT INTO price (price_set_id, currency_code, amount, min_quantity, max_quantity, price_list_id)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [psId, c.currency_code.toLowerCase(), c.amount, c.min_quantity ?? null, c.max_quantity ?? null, id]
+      )
+      created.push({ ...rows[0], variant_id: c.variant_id })
+    }
+    const updated: any[] = []
+    for (const u of input.update ?? []) {
+      {
+        // the range that will exist after the update must still make sense
+        const was = await pool.query(`SELECT min_quantity, max_quantity FROM price WHERE id = $1 AND price_list_id = $2 AND deleted_at IS NULL`, [u.id, id])
+        if (was.rows[0]) {
+          this.assertQuantities({
+            min_quantity: u.min_quantity !== undefined ? u.min_quantity : was.rows[0].min_quantity,
+            max_quantity: u.max_quantity !== undefined ? u.max_quantity : was.rows[0].max_quantity,
+          })
+        }
+      }
+      const sets: string[] = []
+      const params: any[] = []
+      if (u.currency_code !== undefined) {
+        params.push(u.currency_code.toLowerCase())
+        sets.push(`currency_code = $${params.length}`)
+      }
+      if (u.amount !== undefined) {
+        params.push(u.amount)
+        sets.push(`amount = $${params.length}`)
+      }
+      if (u.min_quantity !== undefined) {
+        params.push(u.min_quantity)
+        sets.push(`min_quantity = $${params.length}`)
+      }
+      if (u.max_quantity !== undefined) {
+        params.push(u.max_quantity)
+        sets.push(`max_quantity = $${params.length}`)
+      }
+      if (u.variant_id !== undefined) {
+        params.push(await this.ensureVariantPriceSet(u.variant_id))
+        sets.push(`price_set_id = $${params.length}`)
+      }
+      if (sets.length === 0) {
+        const cur = await pool.query(`SELECT * FROM price WHERE id = $1 AND price_list_id = $2 AND deleted_at IS NULL`, [u.id, id])
+        if (cur.rows[0]) updated.push(cur.rows[0])
+        continue
+      }
+      params.push(u.id, id)
+      const { rows } = await pool.query(
+        `UPDATE price SET ${sets.join(", ")} WHERE id = $${params.length - 1} AND price_list_id = $${params.length} AND deleted_at IS NULL RETURNING *`,
+        params
+      )
+      if (rows[0]) updated.push(rows[0])
+    }
+    const deleted: string[] = []
+    for (const pid of input.delete ?? []) {
+      await pool.query(`UPDATE price SET deleted_at = NOW() WHERE id = $1 AND price_list_id = $2`, [pid, id])
+      deleted.push(pid)
+    }
+    await pool.query(`UPDATE price_list SET updated_at = NOW() WHERE id = $1`, [id])
+    return { created, updated, deleted }
+  }
+
+  async linkPriceListProducts(id: string, input: { add?: string[]; remove?: string[] }): Promise<any> {
+    const exists = await pool.query(`SELECT id FROM price_list WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!exists.rows[0]) {
+      throw Object.assign(new Error("Price list not found"), { statusCode: 404 })
+    }
+    for (const productId of input.add ?? []) {
+      const variants = await pool.query(`SELECT id FROM product_variant WHERE product_id = $1 AND deleted_at IS NULL`, [productId])
+      for (const v of variants.rows) {
+        const psId = await this.ensureVariantPriceSet(v.id)
+        const base = await pool.query(
+          `SELECT currency_code, amount, min_quantity, max_quantity FROM price
+           WHERE price_set_id = $1 AND price_list_id IS NULL AND deleted_at IS NULL`,
+          [psId]
+        )
+        for (const b of base.rows) {
+          const dup = await pool.query(
+            `SELECT id FROM price WHERE price_set_id = $1 AND price_list_id = $2 AND currency_code = $3 AND deleted_at IS NULL LIMIT 1`,
+            [psId, id, b.currency_code]
+          )
+          if (dup.rows[0]) continue
+          await pool.query(
+            `INSERT INTO price (price_set_id, currency_code, amount, min_quantity, max_quantity, price_list_id)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [psId, b.currency_code, b.amount, b.min_quantity ?? null, b.max_quantity ?? null, id]
+          )
+        }
+      }
+    }
+    for (const productId of input.remove ?? []) {
+      await pool.query(
+        `UPDATE price SET deleted_at = NOW() WHERE id IN (
+           SELECT p.id FROM price p
+           JOIN product_variant v ON v.price_set_id = p.price_set_id
+           WHERE p.price_list_id = $1 AND v.product_id = $2 AND p.deleted_at IS NULL
+         )`,
+        [id, productId]
+      )
+    }
+    return this.retrievePriceList(id)
+  }
+
+  // ---- Lupus-compat price preferences (admin/price-preferences) ----
+  // Refs: upstream/packages/core/js-sdk/src/admin/price-preference.ts +
+  // upstream/src/api/admin/price-preferences/.../route.ts.
+  // No dedicated table ships in the .sql schemas, so the table is ensured here
+  // (runtime DDL, not a migration file): { attribute, value, is_tax_inclusive }.
+
+  private prefTableReady = false
+
+  private async ensurePreferenceTable(): Promise<void> {
+    if (this.prefTableReady) return
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS price_preference (
+        id TEXT PRIMARY KEY DEFAULT ('pp_' || encode(gen_random_bytes(12), 'hex')),
+        attribute TEXT,
+        value TEXT,
+        is_tax_inclusive BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ
+      )`
+    )
+    this.prefTableReady = true
+  }
+
+  async listPricePreferences(limit: number, offset: number): Promise<{ preferences: any[]; count: number }> {
+    await this.ensurePreferenceTable()
+    const { rows } = await pool.query(
+      `SELECT * FROM price_preference WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    )
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM price_preference WHERE deleted_at IS NULL`)
+    return { preferences: rows, count: Number(total.rows[0].c) }
+  }
+
+  async createPricePreference(input: { attribute?: string | null; value?: string | null; is_tax_inclusive?: boolean }): Promise<any> {
+    await this.ensurePreferenceTable()
+    const { rows } = await pool.query(
+      `INSERT INTO price_preference (attribute, value, is_tax_inclusive) VALUES ($1,$2,$3) RETURNING *`,
+      [input.attribute ?? null, input.value ?? null, input.is_tax_inclusive ?? false]
+    )
+    return rows[0]
+  }
+
+  async retrievePricePreference(id: string): Promise<any> {
+    await this.ensurePreferenceTable()
+    const { rows } = await pool.query(`SELECT * FROM price_preference WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!rows[0]) {
+      throw Object.assign(new Error("Price preference not found"), { statusCode: 404 })
+    }
+    return rows[0]
+  }
+
+  async updatePricePreference(id: string, patch: { attribute?: string | null; value?: string | null; is_tax_inclusive?: boolean }): Promise<any> {
+    await this.ensurePreferenceTable()
+    const sets: string[] = []
+    const params: any[] = []
+    if (patch.attribute !== undefined) {
+      params.push(patch.attribute)
+      sets.push(`attribute = $${params.length}`)
+    }
+    if (patch.value !== undefined) {
+      params.push(patch.value)
+      sets.push(`value = $${params.length}`)
+    }
+    if (patch.is_tax_inclusive !== undefined) {
+      params.push(patch.is_tax_inclusive)
+      sets.push(`is_tax_inclusive = $${params.length}`)
+    }
+    sets.push(`updated_at = NOW()`)
+    params.push(id)
+    const { rows } = await pool.query(
+      `UPDATE price_preference SET ${sets.join(", ")} WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`,
+      params
+    )
+    if (!rows[0]) {
+      throw Object.assign(new Error("Price preference not found"), { statusCode: 404 })
+    }
+    return rows[0]
+  }
+
+  async deletePricePreference(id: string): Promise<void> {
+    await this.ensurePreferenceTable()
+    await pool.query(`UPDATE price_preference SET deleted_at = NOW() WHERE id = $1`, [id])
+  }
+}
+
+export const pricingService = new PricingService()
