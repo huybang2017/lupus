@@ -207,3 +207,212 @@ export class ProductService {
         const avail = await locationInventoryService.availableForVariant(v.id)
         inventoryByVariant[v.id] = avail === Number.MAX_SAFE_INTEGER ? null : Math.max(0, avail)
       })
+    )
+
+    const pricesBy: Record<string, any[]> = {}
+    for (const r of priceRes.rows) {
+      pricesBy[r.variant_id] = pricesBy[r.variant_id] ?? []
+      pricesBy[r.variant_id].push({ currency_code: r.currency_code, amount: Number(r.amount) })
+    }
+    const optsBy: Record<string, { option_id: string; value: string }[]> = {}
+    for (const r of optValRes.rows) {
+      optsBy[r.variant_id] = optsBy[r.variant_id] ?? []
+      optsBy[r.variant_id].push({ option_id: r.option_id, value: r.value })
+    }
+    const variantsByProduct: Record<string, any[]> = {}
+    for (const v of variantRes.rows) {
+      variantsByProduct[v.product_id] = variantsByProduct[v.product_id] ?? []
+      variantsByProduct[v.product_id].push({
+        id: v.id,
+        product_id: v.product_id,
+        title: v.title,
+        sku: v.sku,
+        manage_inventory: v.manage_inventory,
+        allow_backorder: v.allow_backorder,
+        inventory_quantity: inventoryByVariant[v.id],
+        thumbnail: v.thumbnail,
+        prices: pricesBy[v.id] ?? [],
+        options: optsBy[v.id] ?? [],
+      })
+    }
+    const optionsByProduct: Record<string, any[]> = {}
+    for (const o of optionRes.rows) {
+      optionsByProduct[o.product_id] = optionsByProduct[o.product_id] ?? []
+      optionsByProduct[o.product_id].push({ id: o.id, title: o.title, values: o.values })
+    }
+    const imagesByProduct: Record<string, any[]> = {}
+    for (const i of imageRes.rows) {
+      imagesByProduct[i.product_id] = imagesByProduct[i.product_id] ?? []
+      imagesByProduct[i.product_id].push({ id: i.id, url: i.url, rank: i.rank })
+    }
+    return products.map((p) => ({
+      ...p,
+      variants: variantsByProduct[p.id] ?? [],
+      options: optionsByProduct[p.id] ?? [],
+      images: imagesByProduct[p.id] ?? [],
+    }))
+  }
+
+  async create(input: CreateProductInput): Promise<ProductDTO> {
+    const handle = input.handle ?? toHandle(input.title)
+    if (!/^[a-z0-9-]+$/.test(handle)) {
+      throw badRequest(`Invalid handle: ${handle}`)
+    }
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const { rows } = await client.query(
+        `INSERT INTO product (title, handle, description, status) VALUES ($1,$2,$3,$4) RETURNING *`,
+        [input.title, handle, input.description ?? null, input.status ?? "draft"]
+      )
+      const product = rows[0]
+      for (const v of input.variants ?? []) {
+        const vr = await client.query(
+          `INSERT INTO product_variant (product_id, title, sku) VALUES ($1,$2,$3) RETURNING id`,
+          [product.id, v.title, v.sku ?? null]
+        )
+        if (v.prices && v.prices.length > 0) {
+          await this.setVariantPrices(client, vr.rows[0].id, v.prices)
+        }
+      }
+      await client.query("COMMIT")
+      const { eventBus } = await import("../infra/platform-infra.service")
+      await eventBus.emit("product.created", { product_id: product.id }).catch(() => undefined)
+      return product
+    } catch (err: any) {
+      await client.query("ROLLBACK")
+      if (err?.code === "23505") {
+        throw Object.assign(new Error(`Product with handle ${handle} already exists`), { statusCode: 409 })
+      }
+      throw err
+    } finally {
+      client.release()
+    }
+  }
+
+  async update(id: string, patch: Partial<{ title: string; handle: string; subtitle: string | null; description: string | null; status: string; thumbnail: string | null; weight: number | null; discountable: boolean; collection_id: string | null; type_id: string | null; shipping_profile_id: string | null; metadata: Record<string, unknown> | null }>): Promise<ProductDTO> {
+    const sets: string[] = []
+    const params: any[] = []
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue
+      params.push(v)
+      sets.push(`${k} = $${params.length}`)
+    }
+    if (sets.length === 0) {
+      const cur = await this.retrieve(id)
+      if (!cur) throw notFound("Product not found")
+      return cur
+    }
+    params.push(id)
+    try {
+      const { rows } = await pool.query(
+        `UPDATE product SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`,
+        params
+      )
+      if (!rows[0]) throw notFound("Product not found")
+      const { eventBus } = await import("../infra/platform-infra.service")
+      await eventBus.emit("product.updated", { product_id: id }).catch(() => undefined)
+      return rows[0]
+    } catch (err: any) {
+      if (err?.code === "23505") throw Object.assign(new Error("Handle already exists"), { statusCode: 409 })
+      throw err
+    }
+  }
+
+  // ---- single-call create/update contract (Lupus-shaped: options+variants+images+
+  // prices+categories+tags+collection+type in one transaction) ----
+
+  private validateCreateFullInput(input: CreateProductFullInput): void {
+    const optionTitles = (input.options ?? []).map((o) => o.title)
+    const seen = new Set<string>()
+    for (const t of optionTitles) {
+      if (seen.has(t)) throw badRequest(`Duplicate product option: ${t}`)
+      seen.add(t)
+    }
+    for (const v of input.variants ?? []) {
+      if (!v.prices || v.prices.length === 0) {
+        throw badRequest(`Variant "${v.title}" must have at least one price`)
+      }
+      for (const t of optionTitles) {
+        if (!v.options?.[t]) {
+          throw badRequest(`Variant "${v.title}" is missing a value for option "${t}"`)
+        }
+      }
+    }
+  }
+
+  private validateUpdateFullInput(patch: UpdateProductFullInput): void {
+    const optionTitles = (patch.options ?? []).map((o) => o.title)
+    const seen = new Set<string>()
+    for (const t of optionTitles) {
+      if (seen.has(t)) throw badRequest(`Duplicate product option: ${t}`)
+      seen.add(t)
+    }
+    if (patch.options !== undefined && patch.variants !== undefined) {
+      // Only brand-new variants (no id) must state a value for every option here —
+      // an existing variant being partially patched (e.g. just a price change)
+      // keeps whatever option assignment it already has unless it resends `options`.
+      for (const v of patch.variants) {
+        if (v.id) continue
+        for (const t of optionTitles) {
+          if (!v.options?.[t]) {
+            throw badRequest(`Variant "${v.title}" is missing a value for option "${t}"`)
+          }
+        }
+      }
+    }
+    for (const v of patch.variants ?? []) {
+      if (!v.id && (!v.prices || v.prices.length === 0)) {
+        throw badRequest(`Variant "${v.title}" must have at least one price`)
+      }
+    }
+  }
+
+  private async insertVariantRow(client: any, productId: string, v: CreateProductVariantInput): Promise<string> {
+    const { rows } = await client.query(
+      `INSERT INTO product_variant (product_id, title, sku, barcode, ean, upc, manage_inventory, allow_backorder, variant_rank, origin_country, mid_code, material, hs_code, weight, length, height, width, thumbnail, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
+      [
+        productId,
+        v.title,
+        v.sku ?? null,
+        v.barcode ?? null,
+        v.ean ?? null,
+        v.upc ?? null,
+        v.manage_inventory ?? true,
+        v.allow_backorder ?? false,
+        v.variant_rank ?? null,
+        v.origin_country ?? null,
+        v.mid_code ?? null,
+        v.material ?? null,
+        v.hs_code ?? null,
+        v.weight ?? null,
+        v.length ?? null,
+        v.height ?? null,
+        v.width ?? null,
+        v.thumbnail ?? null,
+        v.metadata ? JSON.stringify(v.metadata) : null,
+      ]
+    )
+    return rows[0].id as string
+  }
+
+  private async updateVariantRow(client: any, variantId: string, v: Partial<CreateProductVariantInput>): Promise<void> {
+    const sets: string[] = []
+    const params: any[] = []
+    for (const k of VARIANT_SCALAR_COLUMNS) {
+      const value = (v as any)[k]
+      if (value !== undefined) {
+        params.push(value)
+        sets.push(`${k} = $${params.length}`)
+      }
+    }
+    if (v.metadata !== undefined) {
+      params.push(v.metadata ? JSON.stringify(v.metadata) : null)
+      sets.push(`metadata = $${params.length}`)
+    }
+    if (sets.length === 0) return
+    params.push(variantId)
+    await client.query(`UPDATE product_variant SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length}`, params)
+  }
+
