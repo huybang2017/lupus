@@ -625,3 +625,211 @@ export class ProductService {
             const wantValues = new Set(o.values)
             for (const row of existingVals.rows) {
               if (!wantValues.has(row.value)) {
+                await client.query(`UPDATE product_option_value SET deleted_at = NOW() WHERE id = $1`, [row.id])
+              }
+            }
+            const haveValues = new Set(existingVals.rows.map((r: any) => r.value))
+            for (const val of o.values) {
+              if (!haveValues.has(val)) {
+                await client.query(`INSERT INTO product_option_value (option_id, value) VALUES ($1,$2)`, [o.id, val])
+              }
+            }
+          } else {
+            const created = await client.query(`INSERT INTO product_option (product_id, title) VALUES ($1,$2) RETURNING id`, [id, o.title])
+            for (const val of [...new Set(o.values)]) {
+              await client.query(`INSERT INTO product_option_value (option_id, value) VALUES ($1,$2)`, [created.rows[0].id, val])
+            }
+          }
+        }
+      }
+
+      if (patch.variants !== undefined) {
+        const keepIds = patch.variants.filter((v) => v.id).map((v) => v.id as string)
+        const existingVariants = await client.query(`SELECT id FROM product_variant WHERE product_id = $1 AND deleted_at IS NULL`, [id])
+        for (const row of existingVariants.rows) {
+          if (!keepIds.includes(row.id)) {
+            await client.query(`UPDATE product_variant SET deleted_at = NOW() WHERE id = $1`, [row.id])
+          }
+        }
+        for (const v of patch.variants) {
+          let variantId = v.id
+          if (variantId) {
+            await this.updateVariantRow(client, variantId, v)
+          } else {
+            variantId = await this.insertVariantRow(client, id, v as CreateProductVariantInput)
+          }
+          if (v.options) {
+            await assignVariantOptions(client, id, variantId, v.options)
+          }
+          if (v.prices) {
+            await this.setVariantPrices(client, variantId, v.prices)
+          }
+          if (v.manage_inventory !== false) {
+            await this.setupVariantInventory(client, variantId, v as CreateProductVariantInput)
+          }
+        }
+      }
+
+      if (patch.categories !== undefined) {
+        await client.query(`DELETE FROM product_category_product WHERE product_id = $1`, [id])
+        for (const c of patch.categories) {
+          await client.query(`INSERT INTO product_category_product (product_id, category_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [id, c.id])
+        }
+      }
+
+      if (patch.tags !== undefined) {
+        await client.query(`DELETE FROM product_tags WHERE product_id = $1`, [id])
+        for (const t of patch.tags) {
+          const tagId = await this.upsertTag(client, t)
+          if (tagId) {
+            await client.query(`INSERT INTO product_tags (product_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [id, tagId])
+          }
+        }
+      }
+
+      if (patch.sales_channels !== undefined) {
+        await client.query(`DELETE FROM product_sales_channel WHERE product_id = $1`, [id])
+        for (const sc of patch.sales_channels) {
+          await client.query(`INSERT INTO product_sales_channel (product_id, sales_channel_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [id, sc.id])
+        }
+      }
+
+      await client.query("COMMIT")
+      const { eventBus } = await import("../infra/platform-infra.service")
+      await eventBus.emit("product.updated", { product_id: id }).catch(() => undefined)
+      return (await this.retrieve(id)) as ProductDTO
+    } catch (err: any) {
+      await client.query("ROLLBACK")
+      if (err?.code === "23505") throw Object.assign(new Error("Handle already exists"), { statusCode: 409 })
+      throw err
+    } finally {
+      client.release()
+    }
+  }
+
+  // ---- variants (admin/product-variants parity) ----
+  async listVariants(productId: string) {
+    const { rows } = await pool.query(
+      `SELECT v.*,
+         COALESCE((SELECT json_agg(json_build_object('currency_code', p.currency_code, 'amount', p.amount))
+                   FROM price p WHERE p.price_set_id = v.price_set_id AND p.price_list_id IS NULL AND p.deleted_at IS NULL), '[]') AS prices
+       FROM product_variant v WHERE v.product_id = $1 AND v.deleted_at IS NULL ORDER BY v.created_at`,
+      [productId]
+    )
+    return rows
+  }
+
+  async createVariant(productId: string, input: { title: string; sku?: string; prices?: { currency_code: string; amount: number }[]; options?: Record<string, string> }) {
+    const p = await this.retrieve(productId)
+    if (!p) throw notFound("Product not found")
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const vr = await client.query(`INSERT INTO product_variant (product_id, title, sku) VALUES ($1,$2,$3) RETURNING *`, [productId, input.title, input.sku ?? null])
+      const variantId = vr.rows[0].id as string
+      if (input.prices && input.prices.length > 0) {
+        await this.setVariantPrices(client, variantId, input.prices)
+      }
+      await assignVariantOptions(client, productId, variantId, input.options ?? {})
+      await client.query("COMMIT")
+      return vr.rows[0]
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async updateVariant(variantId: string, patch: Partial<{ title: string; sku: string | null }>) {
+    const sets: string[] = []
+    const params: any[] = []
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue
+      params.push(v)
+      sets.push(`${k} = $${params.length}`)
+    }
+    if (sets.length === 0) return null
+    params.push(variantId)
+    const { rows } = await pool.query(`UPDATE product_variant SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params)
+    if (!rows[0]) throw notFound("Variant not found")
+    return rows[0]
+  }
+
+  async deleteVariant(variantId: string) {
+    await pool.query(`UPDATE product_variant SET deleted_at = NOW() WHERE id = $1`, [variantId])
+  }
+
+  // ---- options (admin/product-options parity) ----
+  async listOptions(productId: string) {
+    const { rows } = await pool.query(
+      `SELECT o.*, COALESCE((SELECT json_agg(json_build_object('id', id, 'value', value) ORDER BY rank, created_at) FROM product_option_value WHERE option_id = o.id AND deleted_at IS NULL), '[]') AS values
+       FROM product_option o WHERE o.product_id = $1 AND o.deleted_at IS NULL ORDER BY o.created_at`,
+      [productId]
+    )
+    return rows
+  }
+
+  async createOption(productId: string, title: string, values: string[] = []) {
+    const p = await this.retrieve(productId)
+    if (!p) throw notFound("Product not found")
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const o = await client.query(`INSERT INTO product_option (product_id, title) VALUES ($1,$2) RETURNING *`, [productId, title])
+      for (const v of [...new Set(values)]) {
+        await client.query(`INSERT INTO product_option_value (option_id, value) VALUES ($1,$2)`, [o.rows[0].id, v])
+      }
+      await client.query("COMMIT")
+      return o.rows[0]
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  /** Global (non-exclusive) option: a reusable title + values template not owned by a product. */
+  async createGlobalOption(title: string, values: string[] = []) {
+    const t = title.trim()
+    if (!t) throw badRequest("Option title is required")
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const o = await client.query(
+        `INSERT INTO product_option (product_id, title, is_exclusive) VALUES (NULL, $1, FALSE) RETURNING *`,
+        [t]
+      )
+      const ordered = [...new Set(values.map((x) => x.trim()).filter(Boolean))]
+      for (let i = 0; i < ordered.length; i++) {
+        await client.query(`INSERT INTO product_option_value (option_id, value, rank) VALUES ($1,$2,$3)`, [o.rows[0].id, ordered[i], i])
+      }
+      await client.query("COMMIT")
+      return o.rows[0]
+    } catch (e: any) {
+      await client.query("ROLLBACK")
+      if (e?.code === "23505") throw Object.assign(new Error(`A global option named "${t}" already exists`), { statusCode: 409 })
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async addOptionValue(optionId: string, value: string) {
+    const { rows } = await pool.query(`INSERT INTO product_option_value (option_id, value) VALUES ($1,$2) RETURNING *`, [optionId, value])
+    return rows[0]
+  }
+
+  async deleteOption(optionId: string) {
+    await pool.query(`UPDATE product_option SET deleted_at = NOW() WHERE id = $1`, [optionId])
+    await pool.query(`UPDATE product_option_value SET deleted_at = NOW() WHERE option_id = $1`, [optionId])
+  }
+
+  async softDelete(id: string): Promise<void> {
+    await pool.query(`UPDATE product SET deleted_at = NOW() WHERE id = $1`, [id])
+    await pool.query(`UPDATE product_variant SET deleted_at = NOW() WHERE product_id = $1`, [id])
+  }
+}
+
+export const productService = new ProductService()
