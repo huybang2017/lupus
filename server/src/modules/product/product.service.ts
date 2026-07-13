@@ -416,3 +416,212 @@ export class ProductService {
     await client.query(`UPDATE product_variant SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length}`, params)
   }
 
+  /** Create (or replace) the variant's base (non price-list) price_set rows. */
+  private async setVariantPrices(client: any, variantId: string, prices: CreateProductVariantPriceInput[]): Promise<void> {
+    const cur = await client.query(`SELECT price_set_id FROM product_variant WHERE id = $1`, [variantId])
+    let priceSetId = cur.rows[0]?.price_set_id as string | undefined
+    if (!priceSetId) {
+      const ps = await client.query(`INSERT INTO price_set DEFAULT VALUES RETURNING id`)
+      priceSetId = ps.rows[0].id
+      await client.query(`UPDATE product_variant SET price_set_id = $2 WHERE id = $1`, [variantId, priceSetId])
+    }
+    await client.query(`UPDATE price SET deleted_at = NOW() WHERE price_set_id = $1 AND price_list_id IS NULL AND deleted_at IS NULL`, [priceSetId])
+    for (const p of prices) {
+      await client.query(
+        `INSERT INTO price (price_set_id, currency_code, amount, min_quantity, max_quantity, price_list_id) VALUES ($1,$2,$3,$4,$5,NULL)
+         ON CONFLICT (price_set_id, currency_code) WHERE price_list_id IS NULL AND deleted_at IS NULL
+         DO UPDATE SET amount = $3, min_quantity = $4, max_quantity = $5, deleted_at = NULL`,
+        [priceSetId, p.currency_code.toLowerCase(), p.amount, p.min_quantity ?? null, p.max_quantity ?? null]
+      )
+    }
+  }
+
+  /** Link explicit inventory items, or auto-create a default one (Lupus: createProductVariantsWorkflow). */
+  private async setupVariantInventory(client: any, variantId: string, v: CreateProductVariantInput): Promise<void> {
+    if (v.manage_inventory === false) return
+    if (v.inventory_items && v.inventory_items.length > 0) {
+      for (const link of v.inventory_items) {
+        const exists = await client.query(`SELECT id FROM inventory_item WHERE id = $1 AND deleted_at IS NULL`, [link.inventory_item_id])
+        if (!exists.rows[0]) {
+          throw notFound(`Inventory item not found: ${link.inventory_item_id}`)
+        }
+        await client.query(
+          `INSERT INTO variant_inventory_item (variant_id, inventory_item_id, required_quantity) VALUES ($1,$2,$3)
+           ON CONFLICT (variant_id, inventory_item_id) DO UPDATE SET required_quantity = $3`,
+          [variantId, link.inventory_item_id, link.required_quantity ?? 1]
+        )
+      }
+      return
+    }
+    const already = await client.query(`SELECT 1 FROM variant_inventory_item WHERE variant_id = $1 LIMIT 1`, [variantId])
+    if (already.rows[0]) return
+    const item = await client.query(
+      `INSERT INTO inventory_item (sku, origin_country, hs_code, requires_shipping, title, description, weight, length, height, width, mid_code, material)
+       VALUES ($1,$2,$3,TRUE,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      [v.sku ?? null, v.origin_country ?? null, v.hs_code ?? null, v.title, v.title, v.weight ?? null, v.length ?? null, v.height ?? null, v.width ?? null, v.mid_code ?? null, v.material ?? null]
+    )
+    await client.query(`INSERT INTO variant_inventory_item (variant_id, inventory_item_id, required_quantity) VALUES ($1,$2,1)`, [variantId, item.rows[0].id])
+  }
+
+  private async upsertTag(client: any, t: { id?: string; value?: string }): Promise<string | undefined> {
+    if (t.id) return t.id
+    if (!t.value) return undefined
+    const tr = await client.query(`INSERT INTO product_tag (value) VALUES ($1) ON CONFLICT (value) WHERE deleted_at IS NULL DO UPDATE SET value = $1 RETURNING id`, [t.value])
+    return tr.rows[0].id as string
+  }
+
+  async createFull(input: CreateProductFullInput): Promise<ProductDTO> {
+    if (!input.title) throw badRequest("title is required")
+    this.validateCreateFullInput(input)
+    const handle = input.handle ?? toHandle(input.title)
+    if (!/^[a-z0-9-]+$/.test(handle)) {
+      throw badRequest(`Invalid handle: ${handle}`)
+    }
+    const images = input.images ?? []
+    const thumbnail = input.thumbnail ?? images[0]?.url ?? null
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const { rows } = await client.query(
+        `INSERT INTO product (title, handle, subtitle, description, is_giftcard, status, thumbnail, weight, discountable, external_id, metadata, collection_id, type_id, shipping_profile_id, height, width, length, mid_code, hs_code, origin_country, material)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
+        [
+          input.title,
+          handle,
+          input.subtitle ?? null,
+          input.description ?? null,
+          input.is_giftcard ?? false,
+          input.status ?? "draft",
+          thumbnail,
+          input.weight ?? null,
+          input.discountable ?? true,
+          input.external_id ?? null,
+          input.metadata ? JSON.stringify(input.metadata) : null,
+          input.collection_id ?? null,
+          input.type_id ?? null,
+          input.shipping_profile_id ?? null,
+          input.height ?? null,
+          input.width ?? null,
+          input.length ?? null,
+          input.mid_code ?? null,
+          input.hs_code ?? null,
+          input.origin_country ?? null,
+          input.material ?? null,
+        ]
+      )
+      const product = rows[0]
+      const productId = product.id as string
+
+      for (let i = 0; i < images.length; i++) {
+        await client.query(`INSERT INTO product_image (product_id, url, rank) VALUES ($1,$2,$3)`, [productId, images[i].url, i])
+      }
+
+      for (const o of input.options ?? []) {
+        const created = await client.query(`INSERT INTO product_option (product_id, title) VALUES ($1,$2) RETURNING id`, [productId, o.title])
+        const optionId = created.rows[0].id
+        for (const v of [...new Set(o.values)]) {
+          await client.query(`INSERT INTO product_option_value (option_id, value) VALUES ($1,$2)`, [optionId, v])
+        }
+      }
+
+      for (const v of input.variants ?? []) {
+        const variantId = await this.insertVariantRow(client, productId, v)
+        if (v.options) {
+          await assignVariantOptions(client, productId, variantId, v.options)
+        }
+        await this.setVariantPrices(client, variantId, v.prices)
+        await this.setupVariantInventory(client, variantId, v)
+      }
+
+      for (const c of input.categories ?? []) {
+        await client.query(`INSERT INTO product_category_product (product_id, category_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [productId, c.id])
+      }
+
+      for (const t of input.tags ?? []) {
+        const tagId = await this.upsertTag(client, t)
+        if (tagId) {
+          await client.query(`INSERT INTO product_tags (product_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [productId, tagId])
+        }
+      }
+
+      for (const sc of input.sales_channels ?? []) {
+        await client.query(`INSERT INTO product_sales_channel (product_id, sales_channel_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [productId, sc.id])
+      }
+
+      await client.query("COMMIT")
+      const { eventBus } = await import("../infra/platform-infra.service")
+      await eventBus.emit("product.created", { product_id: productId }).catch(() => undefined)
+      const full = await this.retrieve(productId)
+      return full as ProductDTO
+    } catch (err: any) {
+      await client.query("ROLLBACK")
+      if (err?.code === "23505") {
+        throw Object.assign(new Error(`Product with handle ${handle} already exists`), { statusCode: 409 })
+      }
+      throw err
+    } finally {
+      client.release()
+    }
+  }
+
+  async updateFull(id: string, patch: UpdateProductFullInput): Promise<ProductDTO> {
+    this.validateUpdateFullInput(patch)
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const existing = await client.query(`SELECT id FROM product WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id])
+      if (!existing.rows[0]) {
+        throw notFound("Product not found")
+      }
+
+      const sets: string[] = []
+      const params: any[] = []
+      for (const k of ["title", "handle", "subtitle", "description", "status", "thumbnail", "weight", "discountable", "external_id", "collection_id", "type_id", "shipping_profile_id", "height", "width", "length", "mid_code", "hs_code", "origin_country", "material"] as const) {
+        const v = (patch as any)[k]
+        if (v !== undefined) {
+          params.push(v)
+          sets.push(`${k} = $${params.length}`)
+        }
+      }
+      if (patch.metadata !== undefined) {
+        params.push(patch.metadata ? JSON.stringify(patch.metadata) : null)
+        sets.push(`metadata = $${params.length}`)
+      }
+      if (sets.length > 0) {
+        params.push(id)
+        await client.query(`UPDATE product SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${params.length}`, params)
+      }
+
+      if (patch.images !== undefined) {
+        const keepIds = patch.images.filter((i) => i.id).map((i) => i.id as string)
+        if (keepIds.length > 0) {
+          await client.query(`DELETE FROM product_image WHERE product_id = $1 AND id <> ALL($2)`, [id, keepIds])
+        } else {
+          await client.query(`DELETE FROM product_image WHERE product_id = $1`, [id])
+        }
+        for (let i = 0; i < patch.images.length; i++) {
+          const img = patch.images[i]
+          if (img.id) {
+            await client.query(`UPDATE product_image SET url = $2, rank = $3 WHERE id = $1 AND product_id = $4`, [img.id, img.url, i, id])
+          } else {
+            await client.query(`INSERT INTO product_image (product_id, url, rank) VALUES ($1,$2,$3)`, [id, img.url, i])
+          }
+        }
+      }
+
+      if (patch.options !== undefined) {
+        const keepIds = patch.options.filter((o) => o.id).map((o) => o.id as string)
+        const existingOpts = await client.query(`SELECT id FROM product_option WHERE product_id = $1 AND deleted_at IS NULL`, [id])
+        for (const row of existingOpts.rows) {
+          if (!keepIds.includes(row.id)) {
+            await client.query(`UPDATE product_option SET deleted_at = NOW() WHERE id = $1`, [row.id])
+            await client.query(`UPDATE product_option_value SET deleted_at = NOW() WHERE option_id = $1`, [row.id])
+          }
+        }
+        for (const o of patch.options) {
+          if (o.id) {
+            await client.query(`UPDATE product_option SET title = $2, deleted_at = NULL, updated_at = NOW() WHERE id = $1`, [o.id, o.title])
+            const existingVals = await client.query(`SELECT id, value FROM product_option_value WHERE option_id = $1 AND deleted_at IS NULL`, [o.id])
+            const wantValues = new Set(o.values)
+            for (const row of existingVals.rows) {
+              if (!wantValues.has(row.value)) {
