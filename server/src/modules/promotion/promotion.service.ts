@@ -390,3 +390,199 @@ export class PromotionService {
       await this.addAdjustment(cartId, l.line_id, promo, Math.round(take * l.unit_price * (pct / 100)))
       freeUnits -= take
     }
+  }
+
+  private async applyShipping(cartId: string, promo: any) {
+    const methods = await pool.query(`SELECT id, amount FROM cart_shipping_method WHERE cart_id=$1`, [cartId])
+    for (const m of methods.rows) {
+      const amount = Number(m.amount)
+      const discount =
+        promo.application_type === "percentage"
+          ? Math.round(amount * (Math.min(Math.max(Number(promo.application_value), 0), 100) / 100))
+          : Math.min(Math.round(Number(promo.application_value)), amount)
+      if (discount > 0) {
+        await pool.query(
+          `INSERT INTO shipping_method_adjustment (cart_id, shipping_method_id, promotion_id, code, amount) VALUES ($1,$2,$3,$4,$5)`,
+          [cartId, m.id, promo.id, promo.code, -discount]
+        )
+      }
+    }
+  }
+
+  // ---- Lupus-compat admin reads (dashboard parity) ----
+  // Refs: upstream/packages/core/js-sdk/src/admin/promotion.ts (retrieve/listRules/
+  // addRules/updateRules/removeRules/listRuleAttributes/listRuleValues),
+  // upstream/packages/core/js-sdk/src/admin/campaign.ts
+  // (retrieve/update/batchPromotions) +
+  // upstream/src/api/admin/promotions| campaigns/.../route.ts.
+  // Rule types: "rules" -> promotion_rule, "target-rules" -> promotion_target_rule,
+  // "buy-rules" -> promotion_buy_rule (+ the buy minimum quantity stored on the promotion).
+
+  private ruleTable(ruleType: string): "promotion_rule" | "promotion_target_rule" | "promotion_buy_rule" {
+    if (ruleType === "rules") return "promotion_rule"
+    if (ruleType === "target-rules" || ruleType === "target_rules") return "promotion_target_rule"
+    if (ruleType === "buy-rules" || ruleType === "buy_rules") return "promotion_buy_rule"
+    throw bad(`Unknown rule type: ${ruleType}`)
+  }
+
+  private mapCampaign(row: any, promotions: any[] = []): any {
+    if (!row) return null
+    const spend = row.budget_limit != null
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      currency: row.currency_code,
+      campaign_identifier: row.identifier ?? row.id,
+      starts_at: row.starts_at,
+      ends_at: row.ends_at,
+      budget: {
+        id: row.id,
+        type: spend ? "spend" : "usage",
+        currency_code: row.currency_code,
+        limit: spend ? row.budget_limit : (row.usage_limit ?? 0),
+        used: spend ? (row.budget_used ?? 0) : (row.usage_count ?? 0),
+      },
+      promotions,
+      created_at: row.created_at,
+      updated_at: row.created_at,
+      deleted_at: row.deleted_at,
+    }
+  }
+
+  async retrievePromotion(id: string): Promise<any> {
+    const { rows } = await pool.query(`SELECT * FROM promotion WHERE id = $1 AND deleted_at IS NULL`, [id])
+    const promo = rows[0]
+    if (!promo) {
+      throw bad("Promotion not found", 404)
+    }
+    const rules = await pool.query(`SELECT * FROM promotion_rule WHERE promotion_id = $1 ORDER BY created_at`, [id])
+    const targetRules = await pool.query(`SELECT * FROM promotion_target_rule WHERE promotion_id = $1 ORDER BY created_at`, [id])
+    const storedBuyRules = await pool.query(`SELECT * FROM promotion_buy_rule WHERE promotion_id = $1 ORDER BY created_at`, [id])
+    const buyRules = [
+      ...storedBuyRules.rows,
+      ...(promo.buy_min_quantity != null
+        ? [{ id: promo.id, attribute: "buy_min_quantity", operator: "gte", values: [String(promo.buy_min_quantity)] }]
+        : []),
+    ]
+    let campaign = null
+    if (promo.campaign_id) {
+      const c = await pool.query(`SELECT * FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [promo.campaign_id])
+      campaign = this.mapCampaign(c.rows[0])
+    }
+    const isBuyGet = promo.application_type === "buyget"
+    return {
+      ...promo,
+      type: isBuyGet ? "buyget" : "standard",
+      application_method: {
+        id: promo.id,
+        // a buy-get promotion discounts a percentage of the target units (100 = free)
+        type: isBuyGet ? "percentage" : promo.application_type,
+        target_type: promo.application_target,
+        allocation: promo.application_allocation,
+        value: isBuyGet ? (promo.application_value ?? 100) : promo.application_value,
+        currency_code: promo.application_currency,
+        max_quantity: promo.application_max_quantity,
+        apply_to_quantity: promo.application_apply_to_quantity,
+        buy_rules_min_quantity: promo.buy_min_quantity,
+        target_rules: targetRules.rows,
+        buy_rules: storedBuyRules.rows,
+      },
+      rules: rules.rows,
+      target_rules: targetRules.rows,
+      buy_rules: buyRules,
+      campaign,
+    }
+  }
+
+  async listPromotionRules(id: string, ruleType: string): Promise<any[]> {
+    const promo = await pool.query(`SELECT id FROM promotion WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!promo.rows[0]) {
+      throw bad("Promotion not found", 404)
+    }
+    const table = this.ruleTable(ruleType)
+    if (table === "promotion_buy_rule") {
+      return (await this.retrievePromotion(id)).buy_rules
+    }
+    const { rows } = await pool.query(`SELECT * FROM ${table} WHERE promotion_id = $1 ORDER BY created_at`, [id])
+    return rows
+  }
+
+  async batchPromotionRules(
+    id: string,
+    ruleType: string,
+    input: { create?: any[]; update?: any[]; delete?: string[]; rules?: any[]; rule_ids?: string[] }
+  ): Promise<any> {
+    const promo = await pool.query(`SELECT * FROM promotion WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!promo.rows[0]) {
+      throw bad("Promotion not found", 404)
+    }
+    const table = this.ruleTable(ruleType)
+    const create = input.create ?? input.rules ?? []
+    const remove = input.delete ?? input.rule_ids ?? []
+    const isMinQuantity = (attribute: unknown) => attribute === "buy_min_quantity" || attribute === DISGUISED.BUY_RULES_MIN_QUANTITY
+    if (table === "promotion_buy_rule") {
+      for (const c of create.filter((r) => isMinQuantity(r.attribute) || r.buy_min_quantity != null)) {
+        const qty = c.buy_min_quantity ?? (c.values ? Number(c.values[0]) : undefined) ?? (c.value != null ? Number(c.value) : undefined)
+        if (qty != null && Number.isFinite(qty)) {
+          await pool.query(`UPDATE promotion SET buy_min_quantity = $2 WHERE id = $1`, [id, Math.max(1, Math.round(qty))])
+        }
+      }
+      for (const u of (input.update ?? []).filter((r) => isMinQuantity(r.attribute) || r.id === id)) {
+        const qty = u.buy_min_quantity ?? (u.values ? Number(u.values[0]) : undefined)
+        if (qty != null && Number.isFinite(qty)) {
+          await pool.query(`UPDATE promotion SET buy_min_quantity = $2 WHERE id = $1`, [id, Math.max(1, Math.round(qty))])
+        }
+      }
+      if (remove.includes(id)) {
+        await pool.query(`UPDATE promotion SET buy_min_quantity = NULL WHERE id = $1`, [id])
+      }
+      const realCreate = create.filter((r) => !isMinQuantity(r.attribute) && r.buy_min_quantity == null)
+      const realUpdate = (input.update ?? []).filter((r) => !isMinQuantity(r.attribute) && r.id !== id)
+      const realRemove = remove.filter((rid) => rid !== id)
+      return this.batchRows(id, table, { create: realCreate, update: realUpdate, remove: realRemove })
+    }
+    return this.batchRows(id, table, { create, update: input.update ?? [], remove })
+  }
+
+  private async batchRows(
+    id: string,
+    table: "promotion_rule" | "promotion_target_rule" | "promotion_buy_rule",
+    input: { create: any[]; update: any[]; remove: string[] }
+  ): Promise<any> {
+    for (const c of input.create) {
+      const parsed = { attribute: c.attribute ?? "items.product.id", operator: c.operator ?? "in", values: c.values ?? c.value ?? [] }
+      const vals = Array.isArray(parsed.values) ? parsed.values : [parsed.values]
+      await pool.query(
+        `INSERT INTO ${table} (promotion_id, attribute, operator, values) VALUES ($1,$2,$3,$4)`,
+        [id, parsed.attribute, parsed.operator, JSON.stringify(vals)]
+      )
+    }
+    for (const u of input.update) {
+      if (!u.id) continue
+      const sets: string[] = []
+      const params: any[] = []
+      if (u.attribute !== undefined) {
+        params.push(u.attribute)
+        sets.push(`attribute = $${params.length}`)
+      }
+      if (u.operator !== undefined) {
+        params.push(u.operator)
+        sets.push(`operator = $${params.length}`)
+      }
+      if (u.values !== undefined || u.value !== undefined) {
+        const vals = u.values !== undefined ? (Array.isArray(u.values) ? u.values : [u.values]) : [u.value]
+        params.push(JSON.stringify(vals))
+        sets.push(`values = $${params.length}`)
+      }
+      if (sets.length === 0) continue
+      params.push(u.id, id)
+      await pool.query(
+        `UPDATE ${table} SET ${sets.join(", ")} WHERE id = $${params.length - 1} AND promotion_id = $${params.length}`,
+        params
+      )
+    }
+    for (const rid of input.remove) {
+      await pool.query(`DELETE FROM ${table} WHERE id = $1 AND promotion_id = $2`, [rid, id])
+    }
+    return this.retrievePromotion(id)
