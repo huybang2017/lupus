@@ -194,3 +194,199 @@ export class PromotionService {
       const hitOp = (hit: boolean) => (r.operator === "ne" ? !hit : hit)
       const attribute = normalizeAttribute(r.attribute)
       if (attribute === "currency_code") {
+        if (!hitOp(!!cart?.currency_code && vals.includes(cart.currency_code))) return false
+      } else if (attribute === "min_subtotal") {
+        const sub = await pool.query(`SELECT COALESCE(SUM(quantity * unit_price),0)::int AS s FROM cart_line_item WHERE cart_id=$1 AND deleted_at IS NULL`, [cartId])
+        const s = Number(sub.rows[0].s)
+        const v = Number(vals[0])
+        if (r.operator === "gte" && !(s >= v)) return false
+        if (r.operator === "lte" && !(s <= v)) return false
+      } else if (attribute === "customer.groups.id") {
+        // a guest cart can never satisfy a customer-group rule written with the legacy name
+        if (!cart?.customer_id && r.attribute === "customer_group_id") return false
+        let hit = false
+        if (cart?.customer_id) {
+          const g = await pool.query(`SELECT 1 FROM customer_group_customer WHERE customer_group_id = ANY($1) AND customer_id=$2`, [vals, cart.customer_id])
+          hit = g.rows.length > 0
+        }
+        if (!hitOp(hit)) return false
+      } else if (attribute === "region.id") {
+        if (!hitOp(!!cart?.region_id && vals.includes(cart.region_id))) return false
+      } else if (attribute === "sales_channel_id") {
+        if (!hitOp(!!cart?.sales_channel_id && vals.includes(cart.sales_channel_id))) return false
+      } else if (attribute === "shipping_address.country_code") {
+        const a = await pool.query(`SELECT country_code FROM cart_address WHERE cart_id=$1 AND kind='shipping'`, [cartId])
+        const cc = String(a.rows[0]?.country_code ?? "").toLowerCase()
+        if (!hitOp(!!cc && vals.map((v) => v.toLowerCase()).includes(cc))) return false
+      }
+    }
+    return true
+  }
+
+  /** Trim this promo's adjustments so campaign spend stays within budget_limit. */
+  private async enforceBudgetCap(cartId: string, promo: any): Promise<void> {
+    const camp = await pool.query(`SELECT budget_limit, budget_used FROM campaign WHERE id=$1`, [promo.campaign_id])
+    const c = camp.rows[0]
+    if (!c || c.budget_limit == null) return
+    const remaining = c.budget_limit - c.budget_used
+    if (remaining < 0) {
+      await pool.query(`DELETE FROM line_item_adjustment WHERE cart_id=$1 AND promotion_id=$2`, [cartId, promo.id])
+      return
+    }
+    const adj = await pool.query(`SELECT id, amount FROM line_item_adjustment WHERE cart_id=$1 AND promotion_id=$2 ORDER BY created_at`, [cartId, promo.id])
+    let total = adj.rows.reduce((s: number, r: any) => s + Math.abs(Number(r.amount)), 0)
+    for (const r of adj.rows) {
+      if (total <= remaining) break
+      const over = total - remaining
+      const cut = Math.min(over, Math.abs(Number(r.amount)))
+      const next = Math.abs(Number(r.amount)) - cut
+      total -= cut
+      if (next <= 0) {
+        await pool.query(`DELETE FROM line_item_adjustment WHERE id=$1`, [r.id])
+      } else {
+        await pool.query(`UPDATE line_item_adjustment SET amount=$2 WHERE id=$1`, [r.id, -next])
+      }
+    }
+  }
+
+  private lineValues(attribute: string, l: EligibleLine): (string | null | undefined)[] | null {
+    switch (normalizeAttribute(attribute)) {
+      case "items.product.id":
+        return [l.product_id]
+      case "items.product.categories.id":
+        return l.category_ids ?? []
+      case "items.product.collection_id":
+        return [l.collection_id]
+      case "items.product.type_id":
+        return [l.type_id]
+      case "items.product.tags.id":
+        return l.tag_ids ?? []
+      default:
+        return null // unknown attribute: the rule does not constrain items
+    }
+  }
+
+  /** Lines matching every rule of `table` (no rules = every line). */
+  private async filterEligible(
+    promotionId: string,
+    lines: EligibleLine[],
+    table: "promotion_target_rule" | "promotion_buy_rule"
+  ): Promise<EligibleLine[]> {
+    const rules = await pool.query(`SELECT * FROM ${table} WHERE promotion_id=$1`, [promotionId])
+    if (rules.rows.length === 0) {
+      return lines
+    }
+    return lines.filter((l) =>
+      rules.rows.every((r) => {
+        const vals: string[] = (Array.isArray(r.values) ? r.values : [r.values]).map(String)
+        const have = this.lineValues(r.attribute, l)
+        if (have === null) return true
+        const hit = have.some((v) => v != null && vals.includes(String(v)))
+        return r.operator === "ne" ? !hit : hit
+      })
+    )
+  }
+
+  /**
+   * How many units of each line the promotion may discount.
+   * 'each'  -> per line item, up to max_quantity
+   * 'once'  -> cart-wide, up to max_quantity (priciest units first)
+   * else    -> every unit
+   */
+  private unitsPerLine(promo: any, lines: EligibleLine[]): Map<string, number> {
+    const out = new Map<string, number>()
+    const max: number | null = promo.application_max_quantity ?? null
+    if (promo.application_allocation === "each" && max != null) {
+      for (const l of lines) out.set(l.line_id, Math.min(l.quantity, max))
+    } else if (promo.application_allocation === "once" && max != null) {
+      let left = max
+      for (const l of [...lines].sort((a, b) => b.unit_price - a.unit_price)) {
+        const take = Math.min(l.quantity, left)
+        out.set(l.line_id, take)
+        left -= take
+      }
+    } else {
+      for (const l of lines) out.set(l.line_id, l.quantity)
+    }
+    return out
+  }
+
+  private async addAdjustment(cartId: string, lineId: string, promo: any, amount: number) {
+    if (amount <= 0) return
+    await pool.query(
+      `INSERT INTO line_item_adjustment (cart_id, line_item_id, promotion_id, code, amount) VALUES ($1,$2,$3,$4,$5)`,
+      [cartId, lineId, promo.id, promo.code, -amount]
+    )
+  }
+
+  private async applyPercentage(cartId: string, promo: any, lines: EligibleLine[]) {
+    const pct = Math.min(Math.max(Number(promo.application_value), 0), 100)
+    const units = this.unitsPerLine(promo, lines)
+    for (const l of lines) {
+      // Lupus rounds per-line: round(unit*qty*pct/100)
+      await this.addAdjustment(cartId, l.line_id, promo, Math.round(l.unit_price * (units.get(l.line_id) ?? 0) * (pct / 100)))
+    }
+  }
+
+  private async applyFixed(cartId: string, promo: any, lines: EligibleLine[]) {
+    const value = Math.round(Number(promo.application_value))
+    if (promo.application_allocation === "each" || promo.application_allocation === "once") {
+      const units = this.unitsPerLine(promo, lines)
+      for (const l of lines) {
+        const perUnit = Math.min(value, l.unit_price)
+        await this.addAdjustment(cartId, l.line_id, promo, perUnit * (units.get(l.line_id) ?? 0))
+      }
+      return
+    }
+    // across: cap by eligible subtotal, distribute proportionally, remainder to first line
+    const subtotal = lines.reduce((s, l) => s + l.unit_price * l.quantity, 0)
+    if (subtotal <= 0) return
+    const shares = lines.map((l) => Math.floor((l.unit_price * l.quantity * Math.min(value, subtotal)) / subtotal))
+    const distributed = shares.reduce((s, x) => s + x, 0)
+    let remainder = Math.min(value, subtotal) - distributed
+    for (let i = 0; i < lines.length; i++) {
+      let share = shares[i]
+      if (remainder > 0) {
+        share += 1
+        remainder -= 1
+      }
+      await this.addAdjustment(cartId, lines[i].line_id, promo, share)
+    }
+  }
+
+  private async applyBuyGet(cartId: string, promo: any, lines: EligibleLine[]) {
+    const minQty: number = promo.buy_min_quantity ?? 2
+    const buyRuleCount = (await pool.query(`SELECT COUNT(*)::int AS c FROM promotion_buy_rule WHERE promotion_id=$1`, [promo.id])).rows[0].c
+    const targets = await this.filterEligible(promo.id, lines, "promotion_target_rule")
+    if (targets.length === 0) {
+      return
+    }
+    const legacy = buyRuleCount === 0 && promo.application_apply_to_quantity == null
+    // rows created before the wizard port counted the target lines towards the buy quantity
+    const buyLines = legacy ? targets : await this.filterEligible(promo.id, lines, "promotion_buy_rule")
+    const buyQty = buyLines.reduce((s, l) => s + l.quantity, 0)
+    if (buyQty < minQty) {
+      return
+    }
+    const maxQty: number | null = promo.application_max_quantity
+    const applyTo: number | null = promo.application_apply_to_quantity
+    const sorted = [...targets].sort((a, b) => a.unit_price - b.unit_price)
+    const totalTargetQty = targets.reduce((s, l) => s + l.quantity, 0)
+
+    let freeUnits: number
+    let pct = 100
+    if (legacy) {
+      // rows created before the wizard port: "buy N, cheapest unit(s) free"
+      freeUnits = Math.min(buyQty - minQty + 1, maxQty ?? buyQty - minQty + 1)
+    } else {
+      pct = promo.application_value != null ? Math.min(Math.max(Number(promo.application_value), 0), 100) : 100
+      freeUnits = (applyTo ?? 1) * Math.floor(buyQty / minQty)
+      if (maxQty != null) freeUnits = Math.min(freeUnits, maxQty)
+    }
+    freeUnits = Math.min(freeUnits, totalTargetQty)
+    for (const l of sorted) {
+      if (freeUnits <= 0) break
+      const take = Math.min(freeUnits, l.quantity)
+      await this.addAdjustment(cartId, l.line_id, promo, Math.round(take * l.unit_price * (pct / 100)))
+      freeUnits -= take
+    }
