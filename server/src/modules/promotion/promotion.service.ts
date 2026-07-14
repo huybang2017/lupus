@@ -586,3 +586,196 @@ export class PromotionService {
       await pool.query(`DELETE FROM ${table} WHERE id = $1 AND promotion_id = $2`, [rid, id])
     }
     return this.retrievePromotion(id)
+  }
+
+  /**
+   * The conditions of one rule type in the shape Lupus's dashboard reads: labels for the
+   * attribute / operator / values, plus the "disguised" rows that are really fields of the
+   * application method (currency, minimum quantity, quantity the promotion applies to).
+   */
+  async listRulesDetailed(id: string, ruleType: string): Promise<any[]> {
+    const promo = await this.retrievePromotion(id)
+    const m = promo.application_method
+    const isBuyGet = promo.type === "buyget"
+    const stored: any[] =
+      ruleType === "rules" ? promo.rules : ruleType === "target-rules" ? promo.target_rules : (m.buy_rules ?? [])
+    const eq = { operator: "eq", operator_label: OPERATOR_LABELS.eq, disguised: true }
+    const out: any[] = []
+    if (ruleType === "rules" && (m.currency_code || m.type === "fixed")) {
+      out.push({
+        ...eq,
+        id: undefined,
+        attribute: DISGUISED.CURRENCY_CODE,
+        attribute_label: "Currency Code",
+        field_type: "select",
+        required: m.type === "fixed",
+        values: m.currency_code ? await labelRuleValues("currency_code", [m.currency_code]) : [],
+      })
+    }
+    if (isBuyGet && ruleType === "target-rules") {
+      out.push({
+        ...eq,
+        id: undefined,
+        attribute: DISGUISED.APPLY_TO_QUANTITY,
+        attribute_label: "Quantity of items promotion will apply to",
+        field_type: "number",
+        required: true,
+        values: m.apply_to_quantity,
+      })
+    }
+    if (isBuyGet && ruleType === "buy-rules") {
+      out.push({
+        ...eq,
+        id: undefined,
+        attribute: DISGUISED.BUY_RULES_MIN_QUANTITY,
+        attribute_label: "Minimum quantity of items",
+        field_type: "number",
+        required: true,
+        values: m.buy_rules_min_quantity,
+      })
+    }
+    for (const r of stored) {
+      const attribute = normalizeAttribute(r.attribute)
+      const d = describeAttribute(r.attribute)
+      const vals = (Array.isArray(r.values) ? r.values : [r.values]).map(String)
+      out.push({
+        id: r.id,
+        attribute,
+        attribute_label: d.label,
+        operator: r.operator,
+        operator_label: OPERATOR_LABELS[r.operator] ?? r.operator,
+        field_type: d.field_type,
+        required: false,
+        disguised: false,
+        values: d.field_type === "number" ? Number(vals[0]) : await labelRuleValues(attribute, vals),
+      })
+    }
+    return out
+  }
+
+  /** POST /admin/promotions/:id with Lupus's edit payload (details drawer, campaign drawer, disguised rules). */
+  async updatePromotion(id: string, raw: unknown): Promise<any> {
+    const body = updatePromotionSchema.parse(raw)
+    const curRes = await pool.query(`SELECT * FROM promotion WHERE id = $1 AND deleted_at IS NULL`, [id])
+    const cur = curRes.rows[0]
+    if (!cur) throw bad("Promotion not found", 404)
+    const m = body.application_method ?? {}
+    const isBuyGet = cur.application_type === "buyget"
+    const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
+
+    const next = {
+      type: isBuyGet ? "percentage" : (m.type ?? cur.application_type),
+      value: m.value !== undefined ? m.value : cur.application_value,
+      allocation: isBuyGet ? null : (m.allocation ?? cur.application_allocation),
+      max_quantity: has(m, "max_quantity") ? (m.max_quantity ?? null) : cur.application_max_quantity,
+      currency: has(m, "currency_code") ? (m.currency_code?.toLowerCase() ?? null) : cur.application_currency,
+      apply_to: has(m, "apply_to_quantity") ? (m.apply_to_quantity ?? null) : cur.application_apply_to_quantity,
+      buy_min: has(m, "buy_rules_min_quantity") ? (m.buy_rules_min_quantity ?? null) : cur.buy_min_quantity,
+    }
+    const issues: string[] = []
+    if (next.value == null || next.value < 0) issues.push("The promotion value must be 0 or more")
+    if (next.type === "percentage" && next.value != null && next.value > 100) issues.push("A percentage cannot be more than 100")
+    if (next.type === "fixed" && !next.currency) issues.push("A fixed amount needs a currency")
+    if (!isBuyGet && cur.application_target === "items") {
+      if ((next.allocation === "each" || next.allocation === "once") && next.max_quantity == null) issues.push("A maximum quantity is required for this allocation")
+    }
+    if (next.allocation === "across") next.max_quantity = null
+    if (isBuyGet) {
+      if (next.apply_to == null) issues.push("The quantity the promotion applies to is required")
+      if (next.buy_min == null) issues.push("The minimum quantity of items is required")
+    }
+    if (issues.length > 0) throw bad(issues.join(". "))
+
+    const sets: string[] = []
+    const params: unknown[] = []
+    const set = (col: string, v: unknown) => {
+      params.push(v)
+      sets.push(`${col} = $${params.length}`)
+    }
+    if (body.code !== undefined) set("code", body.code.toLowerCase())
+    if (body.status !== undefined) set("status", body.status)
+    if (body.is_automatic !== undefined) set("is_automatic", body.is_automatic)
+    if (body.is_tax_inclusive !== undefined) set("is_tax_inclusive", body.is_tax_inclusive && !isBuyGet && next.type === "fixed")
+    if (body.limit !== undefined || body.usage_limit !== undefined) set("usage_limit", body.limit ?? body.usage_limit ?? null)
+    if (body.campaign_id !== undefined) {
+      if (body.campaign_id) {
+        const c = await pool.query(`SELECT id FROM campaign WHERE id=$1 AND deleted_at IS NULL`, [body.campaign_id])
+        if (!c.rows[0]) throw bad("Campaign not found", 404)
+      }
+      set("campaign_id", body.campaign_id)
+    }
+    if (body.application_method) {
+      if (m.value !== undefined) set("application_value", next.value)
+      if (!isBuyGet && m.type !== undefined) set("application_type", next.type)
+      if (!isBuyGet && (m.allocation !== undefined || next.allocation !== cur.application_allocation)) set("application_allocation", next.allocation)
+      if (has(m, "max_quantity") || (next.allocation === "across" && cur.application_max_quantity != null)) set("application_max_quantity", next.max_quantity)
+      if (has(m, "currency_code")) set("application_currency", next.currency)
+      if (has(m, "apply_to_quantity")) set("application_apply_to_quantity", next.apply_to)
+      if (has(m, "buy_rules_min_quantity")) set("buy_min_quantity", next.buy_min)
+    }
+    if (sets.length > 0) {
+      params.push(id)
+      try {
+        await pool.query(`UPDATE promotion SET ${sets.join(", ")} WHERE id = $${params.length}`, params)
+      } catch (e: any) {
+        if (e?.code === "23505") throw bad(`A promotion with code "${body.code}" already exists`, 409)
+        throw e
+      }
+    }
+    return this.retrievePromotion(id)
+  }
+
+  async retrieveCampaign(id: string): Promise<any> {
+    const { rows } = await pool.query(`SELECT * FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!rows[0]) {
+      throw bad("Campaign not found", 404)
+    }
+    const promos = await pool.query(`SELECT * FROM promotion WHERE campaign_id = $1 AND deleted_at IS NULL ORDER BY created_at`, [id])
+    return this.mapCampaign(rows[0], promos.rows)
+  }
+
+  async updateCampaign(id: string, patch: { name?: string; description?: string | null; currency_code?: string | null; starts_at?: string | null; ends_at?: string | null; budget_limit?: number | null; usage_limit?: number | null }): Promise<any> {
+    const sets: string[] = []
+    const params: any[] = []
+    const cols: Record<string, string> = { name: "name", description: "description", currency_code: "currency_code", starts_at: "starts_at", ends_at: "ends_at", budget_limit: "budget_limit", usage_limit: "usage_limit" }
+    for (const [k, col] of Object.entries(cols)) {
+      const v = (patch as any)[k]
+      if (v === undefined) continue
+      params.push(typeof v === "string" && k === "currency_code" ? v.toLowerCase() : v)
+      sets.push(`${col} = $${params.length}`)
+    }
+    if (sets.length > 0) {
+      params.push(id)
+      const { rows } = await pool.query(
+        `UPDATE campaign SET ${sets.join(", ")} WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`,
+        params
+      )
+      if (!rows[0]) {
+        throw bad("Campaign not found", 404)
+      }
+    } else {
+      const cur = await pool.query(`SELECT id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [id])
+      if (!cur.rows[0]) {
+        throw bad("Campaign not found", 404)
+      }
+    }
+    return this.retrieveCampaign(id)
+  }
+
+  async batchCampaignPromotions(id: string, input: { add?: string[]; remove?: string[] }): Promise<any> {
+    const cur = await pool.query(`SELECT id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [id])
+    if (!cur.rows[0]) {
+      throw bad("Campaign not found", 404)
+    }
+    for (const pid of input.add ?? []) {
+      await pool.query(`UPDATE promotion SET campaign_id = $2 WHERE id = $1 AND deleted_at IS NULL`, [pid, id])
+    }
+    for (const pid of input.remove ?? []) {
+      await pool.query(`UPDATE promotion SET campaign_id = NULL WHERE id = $1 AND campaign_id = $2`, [pid, id])
+    }
+    return this.retrieveCampaign(id)
+  }
+}
+
+export const promotionService = new PromotionService()
+export type { RuleType }
