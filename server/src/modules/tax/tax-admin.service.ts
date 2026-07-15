@@ -178,3 +178,182 @@ export class TaxAdminService {
     const client = await pool.connect()
     try {
       await client.query("BEGIN")
+      const { rows } = await client.query(
+        `INSERT INTO tax_region (country_code, province_code, parent_id, provider_id, metadata, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [country, province, parent?.id ?? null, providerId, input.metadata ?? null, createdBy]
+      )
+      const id = rows[0].id as string
+      if (input.default_tax_rate) {
+        const d = input.default_tax_rate
+        this.checkRateValue(d.rate)
+        if (!d.name?.trim() || !d.code?.trim()) fail("The default tax rate needs a name and a code")
+        await client.query(
+          `INSERT INTO tax_rate (tax_region_id, name, code, rate, is_default, is_combinable, created_by) VALUES ($1,$2,$3,$4,TRUE,$5,$6)`,
+          [id, d.name.trim(), d.code.trim(), d.rate ?? 0, d.is_combinable ?? false, createdBy]
+        )
+      }
+      await client.query("COMMIT")
+      return this.retrieveRegion(id)
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async updateRegion(id: string, input: { provider_id?: string; metadata?: Record<string, unknown> | null }) {
+    await this.retrieveRegion(id)
+    const sets: string[] = []
+    const params: unknown[] = []
+    if (input.provider_id !== undefined) {
+      await this.assertProvider(input.provider_id)
+      params.push(input.provider_id)
+      sets.push(`provider_id = $${params.length}`)
+    }
+    if (input.metadata !== undefined) {
+      params.push(input.metadata)
+      sets.push(`metadata = $${params.length}`)
+    }
+    sets.push("updated_at = NOW()")
+    params.push(id)
+    await pool.query(`UPDATE tax_region SET ${sets.join(", ")} WHERE id = $${params.length}`, params)
+    return this.retrieveRegion(id)
+  }
+
+  async removeRegion(id: string) {
+    const gone = await pool.query(`UPDATE tax_region SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id`, [id])
+    if (!gone.rows[0]) fail(`Tax region with id: ${id} was not found`, 404)
+    // its provinces go with it, together with every rate and rule below them
+    await pool.query(`UPDATE tax_region SET deleted_at = NOW(), updated_at = NOW() WHERE parent_id = $1 AND deleted_at IS NULL`, [id])
+    const scope = `(SELECT id FROM tax_region WHERE id = $1 OR parent_id = $1)`
+    await pool.query(`UPDATE tax_rate_rule SET deleted_at = NOW() WHERE deleted_at IS NULL AND tax_rate_id IN (SELECT id FROM tax_rate WHERE tax_region_id IN ${scope})`, [id])
+    await pool.query(`UPDATE tax_rate SET deleted_at = NOW(), updated_at = NOW() WHERE deleted_at IS NULL AND tax_region_id IN ${scope}`, [id])
+  }
+
+  private async assertProvider(id: string) {
+    const p = await pool.query(`SELECT 1 FROM tax_provider WHERE id = $1 AND is_enabled = TRUE`, [id])
+    if (!p.rows[0]) fail(`Tax provider with id: ${id} was not found`, 404)
+  }
+
+  // ---------- rates ----------
+
+  private checkRateValue(rate?: number | null) {
+    if (rate !== undefined && rate !== null && (!Number.isFinite(rate) || rate < 0 || rate > 100)) fail("A tax rate must be a percentage between 0 and 100")
+  }
+
+  private async checkRules(rules: RuleInput[]) {
+    const seen = new Set<string>()
+    for (const rule of rules) {
+      const cfg = REFERENCE_TABLE[rule.reference]
+      if (!cfg) fail(`Unknown rule reference: ${rule.reference}`)
+      const key = `${rule.reference}:${rule.reference_id}`
+      if (seen.has(key)) fail(`Duplicate rule: ${rule.reference} ${rule.reference_id}`)
+      seen.add(key)
+      const found = await pool.query(`SELECT 1 FROM ${cfg.table} WHERE id = $1 AND deleted_at IS NULL`, [rule.reference_id])
+      if (!found.rows[0]) fail(`${cfg.noun} with id: ${rule.reference_id} was not found`, 404)
+    }
+  }
+
+  async createRate(input: RateInput & { tax_region_id: string; name: string; code: string }, createdBy: string | null) {
+    const region = await pool.query(`SELECT id FROM tax_region WHERE id = $1 AND deleted_at IS NULL`, [input.tax_region_id])
+    if (!region.rows[0]) fail(`Tax region with id: ${input.tax_region_id} was not found`, 404)
+    const name = input.name.trim()
+    const code = input.code.trim()
+    if (!name) fail("name is required")
+    if (!code) fail("code is required")
+    this.checkRateValue(input.rate)
+    const rules = input.rules ?? []
+    if (input.is_default && rules.length > 0) fail("A default tax rate cannot have rules")
+    await this.checkRules(rules)
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      if (input.is_default) await client.query(`UPDATE tax_rate SET is_default = FALSE, updated_at = NOW() WHERE tax_region_id = $1 AND is_default = TRUE AND deleted_at IS NULL`, [input.tax_region_id])
+      const { rows } = await client.query(
+        `INSERT INTO tax_rate (tax_region_id, name, code, rate, is_default, is_combinable, metadata, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        [input.tax_region_id, name, code, input.rate ?? 0, input.is_default ?? false, input.is_combinable ?? false, input.metadata ?? null, createdBy]
+      )
+      for (const rule of rules) await client.query(`INSERT INTO tax_rate_rule (tax_rate_id, reference, reference_id, created_by) VALUES ($1,$2,$3,$4)`, [rows[0].id, rule.reference, rule.reference_id, createdBy])
+      await client.query("COMMIT")
+      return this.retrieveRate(rows[0].id)
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async updateRate(id: string, input: RateInput) {
+    const cur = await this.retrieveRate(id)
+    const name = input.name !== undefined ? input.name.trim() : undefined
+    const code = input.code !== undefined ? input.code.trim() : undefined
+    if (name === "") fail("name cannot be empty")
+    if (code === "") fail("code cannot be empty")
+    this.checkRateValue(input.rate)
+    const makeDefault = input.is_default === true
+    const rules = input.rules
+    if ((makeDefault || (input.is_default === undefined && cur.is_default)) && (rules ?? cur.rules).length > 0) fail("A default tax rate cannot have rules")
+    if (rules) await this.checkRules(rules)
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      if (makeDefault) await client.query(`UPDATE tax_rate SET is_default = FALSE, updated_at = NOW() WHERE tax_region_id = $1 AND id <> $2 AND is_default = TRUE AND deleted_at IS NULL`, [cur.tax_region_id, id])
+      const sets: string[] = []
+      const params: unknown[] = []
+      const set = (column: string, value: unknown) => {
+        params.push(value)
+        sets.push(`${column} = $${params.length}`)
+      }
+      if (name !== undefined) set("name", name)
+      if (code !== undefined) set("code", code)
+      if (input.rate !== undefined) set("rate", input.rate)
+      if (input.is_default !== undefined) set("is_default", input.is_default)
+      if (input.is_combinable !== undefined) set("is_combinable", input.is_combinable)
+      if (input.metadata !== undefined) set("metadata", input.metadata)
+      sets.push("updated_at = NOW()")
+      params.push(id)
+      await client.query(`UPDATE tax_rate SET ${sets.join(", ")} WHERE id = $${params.length}`, params)
+      if (rules) {
+        await client.query(`UPDATE tax_rate_rule SET deleted_at = NOW() WHERE tax_rate_id = $1 AND deleted_at IS NULL`, [id])
+        for (const rule of rules) await client.query(`INSERT INTO tax_rate_rule (tax_rate_id, reference, reference_id) VALUES ($1,$2,$3)`, [id, rule.reference, rule.reference_id])
+      }
+      await client.query("COMMIT")
+      return this.retrieveRate(id)
+    } catch (e) {
+      await client.query("ROLLBACK")
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async removeRate(id: string) {
+    const gone = await pool.query(`UPDATE tax_rate SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id`, [id])
+    if (!gone.rows[0]) fail(`Tax rate with id: ${id} was not found`, 404)
+    await pool.query(`UPDATE tax_rate_rule SET deleted_at = NOW() WHERE tax_rate_id = $1 AND deleted_at IS NULL`, [id])
+  }
+
+  // ---------- rate rules ----------
+
+  async addRule(rateId: string, rule: RuleInput, createdBy: string | null) {
+    const rate = await this.retrieveRate(rateId)
+    if (rate.is_default) fail("A default tax rate cannot have rules")
+    await this.checkRules([rule])
+    const dup = await pool.query(`SELECT 1 FROM tax_rate_rule WHERE tax_rate_id = $1 AND reference = $2 AND reference_id = $3 AND deleted_at IS NULL`, [rateId, rule.reference, rule.reference_id])
+    if (dup.rows[0]) fail(`The tax rate already has a rule for ${rule.reference} ${rule.reference_id}`, 409)
+    await pool.query(`INSERT INTO tax_rate_rule (tax_rate_id, reference, reference_id, created_by) VALUES ($1,$2,$3,$4)`, [rateId, rule.reference, rule.reference_id, createdBy])
+    await pool.query(`UPDATE tax_rate SET updated_at = NOW() WHERE id = $1`, [rateId])
+    return this.retrieveRate(rateId)
+  }
+
+  async removeRule(rateId: string, ruleId: string) {
+    const gone = await pool.query(`UPDATE tax_rate_rule SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND tax_rate_id = $2 AND deleted_at IS NULL RETURNING id`, [ruleId, rateId])
+    if (!gone.rows[0]) fail(`Tax rate rule with id: ${ruleId} was not found`, 404)
+    await pool.query(`UPDATE tax_rate SET updated_at = NOW() WHERE id = $1`, [rateId])
+    return this.retrieveRate(rateId)
+  }
+}
+
+export const taxAdminService = new TaxAdminService()
