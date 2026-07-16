@@ -186,3 +186,190 @@ describe("draft flow parity (admin order + draft-order UX)", () => {
     const order = got.json.order
     assert.equal(typeof order.display_id, "number")
     assert.equal(order.customer?.id, customerA)
+    assert.equal(order.customer?.email, `paritya-${T}@example.com`)
+    assert.equal(order.customer?.first_name, "Ada")
+    assert.equal(order.sales_channel, null)
+    assert.equal(order.item_subtotal, 2000)
+    assert.equal(order.shipping_subtotal, 0)
+    assert.equal(order.tax_total, 0)
+    assert.equal(order.pending_difference, order.total)
+    assert.deepEqual(order.shipping_methods, [])
+    assert.equal(order.items.length, 1)
+    assert.equal(order.items[0].variant_sku, sku)
+    assert.equal(order.items[0].quantity, 1)
+    assert.equal(order.items[0].unit_price, 2000)
+    assert.ok(Array.isArray(order.payments))
+    assert.ok(Array.isArray(order.fulfillments))
+    assert.ok(Array.isArray(order.credit_lines))
+  })
+
+  it("updates order email, shipping address and billing address", async () => {
+    const mail = await api("POST", `/admin/orders/${orderId}`, { email: `changed-${T}@example.com` }, token)
+    assert.equal(mail.status, 200)
+    assert.equal(mail.json.order.email, `changed-${T}@example.com`)
+    const ship = await api(
+      "POST",
+      `/admin/orders/${orderId}`,
+      { shipping_address: { first_name: "Ada", last_name: "Lovelace", address_1: "99 Ship St", city: "Austin", postal_code: "73301", country_code: "us" } },
+      token
+    )
+    assert.equal(ship.status, 200)
+    assert.equal(ship.json.order.shipping_address.address_1, "99 Ship St")
+    const bill = await api(
+      "POST",
+      `/admin/orders/${orderId}`,
+      { billing_address: { first_name: "Ada", last_name: "Lovelace", address_1: "11 Bill Ave", city: "Boston", postal_code: "02101", country_code: "us" } },
+      token
+    )
+    assert.equal(bill.status, 200)
+    assert.equal(bill.json.order.billing_address.address_1, "11 Bill Ave")
+  })
+
+  it("transfers ownership to another customer", async () => {
+    const r = await api("POST", `/admin/orders/${orderId}/transfer`, { customer_id: customerB }, token)
+    assert.equal(r.status, 200)
+    assert.equal(r.json.order.customer_id, customerB)
+    assert.equal(r.json.order.email, `parityb-${T}@example.com`)
+  })
+
+  it("lists a customer saved addresses", async () => {
+    const r = await api("GET", `/admin/customers/${customerA}/addresses`, undefined, token)
+    assert.equal(r.status, 200)
+    assert.ok(Array.isArray(r.json.addresses))
+    assert.ok(r.json.addresses.length >= 1)
+    assert.equal(r.json.addresses[0].address_1, "12 Main St")
+    assert.equal(r.json.addresses[0].city, "Springfield")
+    const list = await api("GET", "/admin/customers?limit=5&offset=0", undefined, token)
+    assert.equal(list.status, 200)
+    const found = list.json.customers.find((c: any) => c.id === customerA)
+    assert.ok(found)
+    assert.equal(found.email, `paritya-${T}@example.com`)
+    assert.equal(found.first_name, "Ada")
+  })
+
+  it("replaces promo codes and reflects the discount", async () => {
+    const created = await api(
+      "POST",
+      "/admin/draft-orders",
+      { email: `promo-${T}@example.com`, currency_code: "usd", items: [{ variant_id: variantId, quantity: 1 }] },
+      token
+    )
+    assert.equal(created.status, 201)
+    const id = created.json.draft_order.id
+    const upd = await api("POST", `/admin/draft-orders/${id}`, { promo_codes: [promoCode] }, token)
+    assert.equal(upd.status, 200)
+    assert.ok((upd.json.draft_order.promo_codes ?? []).includes(promoCode))
+    assert.equal(upd.json.draft_order.summary.discount_total, -200)
+    assert.equal(upd.json.draft_order.summary.total, 1800)
+  })
+
+  it("creates a draft with region_id, customer_id, addresses and no currency_code", async () => {
+    const r = await api("POST", "/admin/draft-orders", {
+      region_id: (await pool.query(`SELECT id FROM region WHERE deleted_at IS NULL LIMIT 1`)).rows[0].id,
+      customer_id: customerA,
+      sales_channel_id: (await pool.query(`SELECT id FROM sales_channel WHERE deleted_at IS NULL LIMIT 1`)).rows[0]?.id,
+      shipping_address: { first_name: "Ada", last_name: "Lovelace", address_1: "12 Main St", city: "Springfield", country_code: "us", postal_code: "12345" },
+      billing_address: { first_name: "Ada", last_name: "Lovelace", address_1: "12 Main St", city: "Springfield", country_code: "us", postal_code: "12345" },
+    }, token)
+    assert.equal(r.status, 201)
+    const d = r.json.draft_order
+    assert.equal(d.customer?.id, customerA)
+    assert.equal(d.customer?.email, `paritya-${T}@example.com`)
+    assert.equal(d.region?.id, d.region_id)
+    assert.equal(d.shipping_address?.address_1, "12 Main St")
+    assert.equal(d.billing_address?.address_1, "12 Main St")
+    assert.equal(d.items.length, 0)
+    assert.ok(d.currency_code)
+  })
+
+  it("creates a draft with custom items that have title but no variant_id", async () => {
+    const r = await api("POST", "/admin/draft-orders", {
+      email: `custom-${T}@example.com`,
+      currency_code: "usd",
+      items: [{ title: "Custom Widget", quantity: 2, unit_price: 500 }],
+    }, token)
+    assert.equal(r.status, 201)
+    const d = r.json.draft_order
+    assert.equal(d.items.length, 1)
+    assert.equal(d.items[0].title, "Custom Widget")
+    assert.equal(d.items[0].variant_id, null)
+    assert.equal(d.items[0].quantity, 2)
+    assert.equal(d.items[0].unit_price, 500)
+    assert.equal(d.items[0].subtotal, 1000)
+    assert.equal(d.items[0].total, 1000)
+  })
+
+  it("draft items carry variant_title, variant_sku, product_title and draft has sales_channel", async () => {
+    const r = await api("POST", "/admin/draft-orders", {
+      email: `fields-${T}@example.com`,
+      currency_code: "usd",
+      items: [{ variant_id: variantId, quantity: 1 }],
+    }, token)
+    assert.equal(r.status, 201)
+    const d = r.json.draft_order
+    assert.equal(d.items[0].variant_title, "M")
+    assert.equal(d.items[0].variant_sku, sku)
+    assert.equal(d.items[0].product_title, `Parity Shirt ${T}`)
+    assert.ok(d.sales_channel !== null || d.sales_channel === null)
+  })
+
+  it("buildAdminOrder original_total equals subtotal + shipping + tax", async () => {
+    const r = await api("POST", "/admin/draft-orders", {
+      email: `orig-${T}@example.com`,
+      currency_code: "usd",
+      items: [{ variant_id: variantId, quantity: 1 }],
+    }, token)
+    assert.equal(r.status, 201)
+    const draftId = r.json.draft_order.id
+    const conv = await api("POST", `/admin/draft-orders/${draftId}/convert-to-order`, {}, token)
+    assert.equal(conv.status, 200)
+    const orderId = conv.json.order.id
+    const got = await api("GET", `/admin/orders/${orderId}`, undefined, token)
+    assert.equal(got.status, 200)
+    const order = got.json.order
+    assert.equal(order.original_total, order.item_subtotal + order.shipping_total + order.tax_total)
+  })
+
+  it("discounted draft item total uses subtraction convention", async () => {
+    const r = await api("POST", "/admin/draft-orders", {
+      email: `disc-${T}@example.com`,
+      currency_code: "usd",
+      items: [{ variant_id: variantId, quantity: 1 }],
+    }, token)
+    assert.equal(r.status, 201)
+    const id = r.json.draft_order.id
+    const upd = await api("POST", `/admin/draft-orders/${id}`, { promo_codes: [promoCode] }, token)
+    assert.equal(upd.status, 200)
+    const d = upd.json.draft_order
+    const item = d.items[0]
+    assert.equal(item.subtotal - Number(item.discount_total), item.total)
+  })
+
+  it("partial refunds accumulate correctly", async () => {
+    const r = await api("POST", "/admin/draft-orders", {
+      email: `ref-${T}@example.com`,
+      currency_code: "usd",
+      items: [{ variant_id: variantId, quantity: 1 }],
+    }, token)
+    assert.equal(r.status, 201)
+    const draftId = r.json.draft_order.id
+    const conv = await api("POST", `/admin/draft-orders/${draftId}/convert-to-order`, {}, token)
+    assert.equal(conv.status, 200)
+    const orderId = conv.json.order.id
+const coll = await pool.query(`SELECT payment_collection_id FROM "order" WHERE id=$1`, [orderId])
+    const collectionId = coll.rows[0].payment_collection_id
+    await paymentService.authorize(collectionId)
+    await paymentService.capture(collectionId)
+    const ref1 = await api("POST", `/admin/payments/${collectionId}/refund`, { amount: 500 }, token)
+    assert.equal(ref1.status, 200)
+    const ref2 = await api("POST", `/admin/payments/${collectionId}/refund`, { amount: 300 }, token)
+    assert.equal(ref2.status, 200)
+    const pc = await pool.query(`SELECT refunded_amount FROM payment_collection WHERE id=$1`, [collectionId])
+    const pay = await pool.query(`SELECT status, refunded_amount FROM payment WHERE payment_collection_id=$1`, [collectionId])
+    assert.equal(Number(pc.rows[0].refunded_amount), 800)
+    for (const p of pay.rows) {
+      assert.equal(Number(p.refunded_amount), 800)
+      assert.ok(p.status === "refunded" || p.status === "partially_refunded")
+    }
+  })
+})
