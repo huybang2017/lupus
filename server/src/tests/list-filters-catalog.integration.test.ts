@@ -682,3 +682,231 @@ describe("admin list filters (catalog / promo / pricing / inventory / tax)", () 
     assert.equal(status.status, 200)
     assert.equal(status.json.count, 1, "only the seeded draft price list matches status=draft")
     assert.deepEqual(ids(status.json.price_lists), [priceLists[0]])
+    const active = await api("GET", `/admin/price-lists?id=${priceLists[0]}&id=${priceLists[1]}&status=active`, undefined, token)
+    assert.equal(active.json.count, 1)
+    assert.deepEqual(ids(active.json.price_lists), [priceLists[1]])
+    const bogus = await api("GET", "/admin/price-lists?status=bogus&limit=100", undefined, token)
+    assert.equal(bogus.status, 200, "an unknown price-list status must be ignored")
+    const clean = await api("GET", "/admin/price-lists?limit=100", undefined, token)
+    assert.equal(bogus.json.count, clean.json.count)
+    assert.equal((await api("GET", `/admin/price-lists?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  // ------------------------------------------------------ inventory / fulfillment ---
+
+  it("inventory-items: q, sku, location_id EXISTS, created_at and order", async () => {
+    await baseline("/admin/inventory-items", "inventory_items", items)
+    // the hydrateInventoryItem enrichment is preserved (scoped to the seeded item
+    // because product creation also auto-creates level-less inventory items)
+    const row = (await api("GET", `/admin/inventory-items?id=${items[0]}`, undefined, token)).json.inventory_items[0]
+    assert.ok(Array.isArray(row.location_levels))
+    assert.ok("stocked_quantity" in row.location_levels[0])
+    assert.equal(row.location_levels[0].location_id, locations[0])
+    assert.equal(row.location_levels[0].id, `${items[0]}:${locations[0]}`)
+
+    const q = await api("GET", `/admin/inventory-items?q=${encodeURIComponent(`${P}iskuA`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.inventory_items), [items[0]])
+    assert.equal(q.json.count, 1)
+    const byTitle = await api("GET", `/admin/inventory-items?q=${encodeURIComponent(`${P}ititleB`)}`, undefined, token)
+    assert.deepEqual(ids(byTitle.json.inventory_items), [items[1]])
+
+    const two = await api("GET", `/admin/inventory-items?id=${items[0]}&id=${items[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.inventory_items), [items[1], items[0]])
+    const asc = await api("GET", `/admin/inventory-items?id=${items[0]}&id=${items[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.inventory_items), [items[0], items[1]])
+
+    const sku = await api("GET", `/admin/inventory-items?sku=${encodeURIComponent(`${P}iskuB`)}`, undefined, token)
+    assert.deepEqual(ids(sku.json.inventory_items), [items[1]])
+
+    const byLocation = await api("GET", `/admin/inventory-items?location_id=${locations[1]}&id=${items[0]}&id=${items[1]}`, undefined, token)
+    assert.equal(byLocation.status, 200)
+    assert.deepEqual(ids(byLocation.json.inventory_items), [items[1]])
+    const none = await api("GET", `/admin/inventory-items?location_id=${P}no-such-location&limit=100`, undefined, token)
+    assert.equal(none.status, 200)
+    assert.equal(none.json.count, 0)
+    const shipping = await api("GET", `/admin/inventory-items?requires_shipping=true&id=${items[0]}&id=${items[1]}`, undefined, token)
+    assert.equal(shipping.json.count, 2)
+
+    assert.equal((await api("GET", `/admin/inventory-items?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("inventory location levels: location_id, q and order stay scoped to the item", async () => {
+    const levels = await api("GET", `/admin/inventory-items/${items[0]}/location-levels`, undefined, token)
+    assert.equal(levels.status, 200)
+    assert.equal(levels.json.count, 1)
+    assert.equal(levels.json.inventory_levels[0].location_id, locations[0])
+    assert.equal(levels.json.inventory_levels[0].inventory_item_id, items[0])
+
+    const byLocation = await api("GET", `/admin/inventory-items/${items[0]}/location-levels?location_id=${locations[0]}`, undefined, token)
+    assert.equal(byLocation.json.count, 1)
+    const miss = await api("GET", `/admin/inventory-items/${items[0]}/location-levels?location_id=${locations[1]}`, undefined, token)
+    assert.equal(miss.status, 200)
+    assert.equal(miss.json.count, 0)
+    const byQ = await api("GET", `/admin/inventory-items/${items[0]}/location-levels?q=${encodeURIComponent(locations[0])}`, undefined, token)
+    assert.equal(byQ.json.count, 1)
+    const ordered = await api("GET", `/admin/inventory-items/${items[0]}/location-levels?order=-stocked_quantity`, undefined, token)
+    assert.equal(ordered.status, 200)
+  })
+
+  it("reservations: whitelisted column filters, created_at and order", async () => {
+    const body = await baseline("/admin/reservations", "reservations", reservations)
+    for (const field of ["id", "inventory_item_id", "location_id", "quantity"]) {
+      assert.ok(field in body.reservations[0], `reservation row is missing ${field}`)
+    }
+
+    const byItem = await api("GET", `/admin/reservations?inventory_item_id=${items[0]}`, undefined, token)
+    assert.equal(byItem.status, 200)
+    assert.deepEqual(ids(byItem.json.reservations), [reservations[0]])
+    const byLocation = await api("GET", `/admin/reservations?location_id=${locations[1]}&limit=100`, undefined, token)
+    assert.deepEqual(ids(byLocation.json.reservations), [reservations[1]])
+    const miss = await api("GET", `/admin/reservations?inventory_item_id=${P}no-such-item&limit=100`, undefined, token)
+    assert.equal(miss.status, 200)
+    assert.equal(miss.json.count, 0)
+
+    const two = await api("GET", `/admin/reservations?id=${reservations[0]}&id=${reservations[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.reservations), [reservations[1], reservations[0]])
+    const asc = await api("GET", `/admin/reservations?id=${reservations[0]}&id=${reservations[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.reservations), [reservations[0], reservations[1]])
+    assert.equal((await api("GET", `/admin/reservations?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("stock-locations: q over name/address/city, created_at and order", async () => {
+    await baseline("/admin/stock-locations", "stock_locations", locations)
+
+    const q = await api("GET", `/admin/stock-locations?q=${encodeURIComponent(`${P}locA`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.stock_locations), [locations[0]])
+    assert.equal(q.json.count, 1)
+    const byCity = await api("GET", `/admin/stock-locations?q=${encodeURIComponent(`${P}cityB`)}`, undefined, token)
+    assert.deepEqual(ids(byCity.json.stock_locations), [locations[1]])
+
+    const two = await api("GET", `/admin/stock-locations?id=${locations[0]}&id=${locations[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.stock_locations), [locations[1], locations[0]])
+    const asc = await api("GET", `/admin/stock-locations?id=${locations[0]}&id=${locations[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.stock_locations), [locations[0], locations[1]])
+    const byName = await api("GET", `/admin/stock-locations?name=${encodeURIComponent(`${P}locB`)}`, undefined, token)
+    assert.deepEqual(ids(byName.json.stock_locations), [locations[1]])
+    assert.equal((await api("GET", `/admin/stock-locations?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("shipping-profiles: q, created_at and order", async () => {
+    await baseline("/admin/shipping-profiles", "shipping_profiles", profiles)
+
+    const q = await api("GET", `/admin/shipping-profiles?q=${encodeURIComponent(`${P}spB`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.shipping_profiles), [profiles[1]])
+    assert.equal(q.json.count, 1)
+
+    const two = await api("GET", `/admin/shipping-profiles?id=${profiles[0]}&id=${profiles[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.shipping_profiles), [profiles[1], profiles[0]])
+    const asc = await api("GET", `/admin/shipping-profiles?id=${profiles[0]}&id=${profiles[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.shipping_profiles), [profiles[0], profiles[1]])
+    assert.equal((await api("GET", `/admin/shipping-profiles?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  // ------------------------------------------------------------------- tax ---
+
+  it("tax-regions: q over the country/province codes, filters, created_at and order", async () => {
+    const body = await baseline("/admin/tax-regions", "tax_regions", taxRegions)
+    // taxRegionShape hydration is preserved
+    assert.ok(Array.isArray(body.tax_regions[0].tax_rates))
+
+    const q = await api("GET", `/admin/tax-regions?q=${encodeURIComponent(taxCountries[0])}`, undefined, token)
+    assert.equal(q.status, 200)
+    // a two-letter code can also sit inside another region's province code, so only check membership
+    assert.ok(ids(q.json.tax_regions).includes(taxRegions[0]))
+    assert.ok(!ids(q.json.tax_regions).includes(taxRegions[1]))
+
+    const two = await api("GET", `/admin/tax-regions?id=${taxRegions[0]}&id=${taxRegions[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.tax_regions), [taxRegions[1], taxRegions[0]])
+    const asc = await api("GET", `/admin/tax-regions?id=${taxRegions[0]}&id=${taxRegions[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.tax_regions), [taxRegions[0], taxRegions[1]])
+
+    const byCountry = await api("GET", `/admin/tax-regions?country_code=${taxCountries[1].toUpperCase()}&limit=100`, undefined, token)
+    assert.equal(byCountry.status, 200)
+    assert.deepEqual(ids(byCountry.json.tax_regions), [taxRegions[1]])
+    const byProvider = await api("GET", `/admin/tax-regions?provider_id=system&id=${taxRegions[0]}&id=${taxRegions[1]}`, undefined, token)
+    assert.equal(byProvider.json.count, 2)
+    const byProvince = await api("GET", `/admin/tax-regions?province_code=&id=${taxRegions[0]}&id=${taxRegions[1]}`, undefined, token)
+    assert.equal(byProvince.status, 200)
+    assert.equal((await api("GET", `/admin/tax-regions?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("tax-rates: q, is_default/is_combinable split, created_at and order", async () => {
+    const body = await baseline(`/admin/tax-rates?tax_region_id=${taxRegions[0]}`, "tax_rates", taxRates)
+    assert.equal(body.count, 2)
+
+    const q = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&q=${encodeURIComponent(`${P}rateA`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.tax_rates), [taxRates[0]])
+    assert.equal(q.json.count, 1)
+    const byCode = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&code=lct${T}rb`, undefined, token)
+    assert.deepEqual(ids(byCode.json.tax_rates), [taxRates[1]])
+
+    // boolean split: ?is_default=false must not be coerced to true
+    const def = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&is_default=true`, undefined, token)
+    assert.equal(def.status, 200)
+    assert.deepEqual(ids(def.json.tax_rates), [taxRates[0]])
+    const notDef = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&is_default=false`, undefined, token)
+    assert.equal(notDef.status, 200)
+    assert.deepEqual(ids(notDef.json.tax_rates), [taxRates[1]])
+    const combinable = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&is_combinable=false`, undefined, token)
+    assert.equal(combinable.json.count, 2)
+    const combinableYes = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&is_combinable=true`, undefined, token)
+    assert.equal(combinableYes.json.count, 0)
+
+    const two = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.tax_rates), [taxRates[1], taxRates[0]])
+    const asc = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.tax_rates), [taxRates[0], taxRates[1]])
+    assert.equal(
+      (await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&created_at_from=${inDays(1)}`, undefined, token)).json.count,
+      0
+    )
+  })
+
+  it("every retrofitted endpoint tolerates an unknown query param (never 400)", async () => {
+    for (const path of [
+      "/admin/products",
+      "/admin/product-variants",
+      "/admin/product-options",
+      `/admin/product-options/${options[0]}/values`,
+      "/admin/product-types",
+      "/admin/product-tags",
+      "/admin/product-categories",
+      "/admin/collections",
+      "/admin/promotions",
+      "/admin/campaigns",
+      "/admin/price-lists",
+      "/admin/inventory-items",
+      `/admin/inventory-items/${items[0]}/location-levels`,
+      "/admin/reservations",
+      "/admin/stock-locations",
+      "/admin/shipping-profiles",
+      "/admin/tax-regions",
+      "/admin/tax-rates",
+    ]) {
+      const r = await api("GET", `${path}?totally_unknown=1`, undefined, token)
+      assert.equal(r.status, 200, `${path} answered ${r.status} for an unknown query param`)
+    }
+  })
+
+  it("bad paging and bad sort keys degrade instead of throwing", async () => {
+    // sort keys outside the allow-list fall back to the endpoint default
+    for (const path of ["/admin/products", "/admin/tax-regions", "/admin/promotions"]) {
+      const r = await api("GET", `${path}?order=;DROP%20TABLE%20product--`, undefined, token)
+      assert.equal(r.status, 200, `${path} answered ${r.status} for a hostile sort key`)
+      assert.equal(typeof r.json.count, "number")
+    }
+    const capped = await api("GET", "/admin/products?limit=100000", undefined, token)
+    assert.equal(capped.status, 200)
+    assert.equal(capped.json.limit, 100)
+  })
+})
