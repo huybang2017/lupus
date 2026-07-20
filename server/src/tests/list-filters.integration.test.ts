@@ -243,3 +243,247 @@ describe("admin list filters (list-query retrofit)", () => {
     assert.deepEqual(ids(r.json.draft_orders), [drafts[0]])
     assert.equal(r.json.count, 1)
   })
+
+  it("draft-orders: ?status=open matches, an out-of-whitelist status is ignored", async () => {
+    const open = await api("GET", `/admin/draft-orders?status=open&id=${drafts[0]}`, undefined, token)
+    assert.equal(open.status, 200)
+    assert.deepEqual(ids(open.json.draft_orders), [drafts[0]])
+
+    const baseline = await api("GET", "/admin/draft-orders?limit=100", undefined, token)
+    const bogus = await api("GET", "/admin/draft-orders?limit=100&status=bogus", undefined, token)
+    assert.equal(bogus.status, 200, "an unknown status must be ignored, not rejected")
+    assert.equal(bogus.json.count, baseline.json.count)
+    assert.deepEqual(ids(bogus.json.draft_orders), ids(baseline.json.draft_orders))
+  })
+
+  it("draft-orders: created_at range and order", async () => {
+    const future = await api("GET", `/admin/draft-orders?created_at_from=${inDays(1)}`, undefined, token)
+    assert.equal(future.status, 200)
+    assert.equal(future.json.count, 0)
+    assert.deepEqual(future.json.draft_orders, [])
+
+    const past = await api("GET", "/admin/draft-orders?created_at_to=2000-01-01", undefined, token)
+    assert.equal(past.json.count, 0)
+
+    const desc = await api("GET", `/admin/draft-orders?id=${drafts[0]}&id=${drafts[1]}&order=-created_at`, undefined, token)
+    assert.equal(desc.status, 200)
+    assert.deepEqual(ids(desc.json.draft_orders), [drafts[1], drafts[0]])
+    const asc = await api("GET", `/admin/draft-orders?id=${drafts[0]}&id=${drafts[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.draft_orders), [drafts[0], drafts[1]])
+    // repeatable ids return exactly the two requested rows
+    assert.equal(desc.json.count, 2)
+  })
+
+  it("draft-orders: unknown params never 400", async () => {
+    const r = await api("GET", "/admin/draft-orders?totally_unknown=1", undefined, token)
+    assert.equal(r.status, 200)
+  })
+
+  it("orders: filters, q, order and repeatable ids", async () => {
+    const baseline = await api("GET", "/admin/orders?limit=100", undefined, token)
+    assert.equal(baseline.status, 200)
+    assert.ok(Array.isArray(baseline.json.orders))
+    // the response shape the dashboard relies on is preserved
+    const row = baseline.json.orders[0]
+    for (const field of ["id", "display_id", "email", "status", "total", "sales_channel_id", "payment_status"]) {
+      assert.ok(field in row, `order row is missing ${field}`)
+    }
+
+    const q = await api("GET", `/admin/orders?q=${encodeURIComponent(orderEmailB)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.orders), [orders[1]])
+    assert.equal(q.json.count, 1)
+
+    const two = await api("GET", `/admin/orders?id=${orders[0]}&id=${orders[1]}`, undefined, token)
+    assert.equal(two.status, 200)
+    assert.equal(two.json.count, 2)
+
+    const desc = await api("GET", `/admin/orders?id=${orders[0]}&id=${orders[1]}&order=-created_at`, undefined, token)
+    assert.deepEqual(ids(desc.json.orders), [orders[1], orders[0]])
+
+    const status = await api("GET", `/admin/orders?status=pending&id=${orders[0]}`, undefined, token)
+    assert.deepEqual(ids(status.json.orders), [orders[0]])
+
+    const bogus = await api("GET", "/admin/orders?status=bogus&limit=100", undefined, token)
+    assert.equal(bogus.status, 200)
+    assert.equal(bogus.json.count, baseline.json.count, "the COUNT must follow the filters and stay unfiltered for a bogus status")
+
+    const future = await api("GET", "/admin/orders?created_at_from=" + inDays(1), undefined, token)
+    assert.equal(future.json.count, 0)
+
+    const range = await api("GET", `/admin/orders?id=${orders[0]}&id=${orders[1]}&total_from=0&total_to=100000000`, undefined, token)
+    assert.equal(range.json.count, 2)
+
+    // fulfillment_status is a derived EXISTS (there is no such column)
+    const notFulfilled = await api("GET", `/admin/orders?id=${orders[0]}&id=${orders[1]}&fulfillment_status=not_fulfilled`, undefined, token)
+    assert.equal(notFulfilled.status, 200)
+    assert.equal(notFulfilled.json.count, 2)
+    const shipped = await api("GET", `/admin/orders?id=${orders[0]}&id=${orders[1]}&fulfillment_status=shipped`, undefined, token)
+    assert.equal(shipped.status, 200)
+    assert.equal(shipped.json.count, 0)
+
+    const unknown = await api("GET", "/admin/orders?totally_unknown=1", undefined, token)
+    assert.equal(unknown.status, 200)
+  })
+
+  it("customers: new ?q, has_orders, order and repeatable ids", async () => {
+    const q = await api("GET", `/admin/customers?q=${encodeURIComponent(`listfilt-ca-${T}`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.customers), [customers[0]])
+
+    // first_name/last_name are part of the q columns too. Scoped to the two
+    // fixtures: every earlier run of this suite also seeded a "Filt Ester", so
+    // a bare `?q=Filt` page has to win all of them from the shared database.
+    const byName = await api("GET", `/admin/customers?q=Filt&id=${customers[0]}&id=${customers[1]}&limit=100`, undefined, token)
+    assert.equal(byName.status, 200)
+    assert.equal(byName.json.count, 2)
+    for (const id of customers) {
+      assert.ok(ids(byName.json.customers).includes(id))
+    }
+
+    const two = await api("GET", `/admin/customers?id=${customers[0]}&id=${customers[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.status, 200)
+    assert.deepEqual(ids(two.json.customers), [customers[1], customers[0]])
+    assert.equal(two.json.count, 2)
+
+    // has_orders is an EXISTS on "order": the orders belong to no customer
+    const withOrders = await api("GET", `/admin/customers?id=${customers[0]}&id=${customers[1]}&has_orders=true`, undefined, token)
+    assert.equal(withOrders.status, 200)
+    assert.equal(withOrders.json.count, 0)
+    const withoutOrders = await api("GET", `/admin/customers?id=${customers[0]}&id=${customers[1]}&has_orders=false`, undefined, token)
+    assert.equal(withoutOrders.json.count, 2)
+
+    const future = await api("GET", `/admin/customers?id=${customers[0]}&created_at_from=${inDays(1)}`, undefined, token)
+    assert.equal(future.json.count, 0)
+
+    const email = await api("GET", `/admin/customers?id=${customers[1]}&email=${encodeURIComponent(`listfilt-cb-${T}`)}`, undefined, token)
+    assert.deepEqual(ids(email.json.customers), [customers[1]])
+
+    const unknown = await api("GET", "/admin/customers?totally_unknown=1", undefined, token)
+    assert.equal(unknown.status, 200)
+  })
+
+  it("sales-channels: new ?q, is_disabled, order and repeatable ids", async () => {
+    const q = await api("GET", `/admin/sales-channels?q=${encodeURIComponent(`ChannelA ${T}`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.sales_channels), [channels[0]])
+
+    const disabled = await api("GET", `/admin/sales-channels?id=${channels[0]}&id=${channels[1]}&is_disabled=true`, undefined, token)
+    assert.equal(disabled.status, 200)
+    assert.deepEqual(ids(disabled.json.sales_channels), [channels[0]])
+
+    const desc = await api("GET", `/admin/sales-channels?id=${channels[0]}&id=${channels[1]}&order=-created_at`, undefined, token)
+    assert.deepEqual(ids(desc.json.sales_channels), [channels[1], channels[0]])
+
+    const future = await api("GET", "/admin/sales-channels?created_at_from=" + inDays(1), undefined, token)
+    assert.equal(future.json.count, 0)
+
+    const unknown = await api("GET", "/admin/sales-channels?totally_unknown=1", undefined, token)
+    assert.equal(unknown.status, 200)
+  })
+
+  it("regions: new ?q, currency_code, country_code and countries hydration", async () => {
+    // Scoped to the two fixtures: the shared database already holds more regions
+    // than one page, so the countries hydration is asserted on the fixtures
+    // themselves instead of on whichever rows happen to be newest.
+    const baseline = await api("GET", `/admin/regions?id=${regions[0]}&id=${regions[1]}&limit=100`, undefined, token)
+    assert.equal(baseline.status, 200)
+    assert.equal(baseline.json.count, 2)
+    const mine = baseline.json.regions
+    assert.equal(mine.length, 2)
+    // an unfiltered page still answers with a numeric count and a non-empty array
+    const unfiltered = await api("GET", "/admin/regions?limit=100", undefined, token)
+    assert.equal(unfiltered.status, 200)
+    assert.equal(typeof unfiltered.json.count, "number")
+    assert.ok(Array.isArray(unfiltered.json.regions))
+    assert.ok(unfiltered.json.regions.length > 0)
+    const regionA = mine.find((r: any) => r.id === regions[0])
+    const regionB = mine.find((r: any) => r.id === regions[1])
+    // countries hydration is preserved
+    assert.deepEqual(regionA.countries.map((c: any) => c.iso_2), [freeCountries[0]])
+    assert.deepEqual(regionB.countries.map((c: any) => c.iso_2), [freeCountries[1]])
+
+    const q = await api("GET", `/admin/regions?q=${encodeURIComponent(`RegionA ${T}`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.regions), [regions[0]])
+
+    const two = await api("GET", `/admin/regions?id=${regions[0]}&id=${regions[1]}&order=-created_at`, undefined, token)
+    assert.deepEqual(ids(two.json.regions), [regions[1], regions[0]])
+    assert.deepEqual(two.json.regions[0].countries.map((c: any) => c.iso_2), [freeCountries[1]])
+
+    // uppercase currency is coerced to lower case (scoped to the two fixtures
+    // because the shared test database has other usd regions)
+    const currency = await api("GET", `/admin/regions?id=${regions[0]}&id=${regions[1]}&currency_code=USD`, undefined, token)
+    assert.equal(currency.status, 200)
+    assert.deepEqual(ids(currency.json.regions), [regions[0]])
+    assert.equal(currency.json.count, 1)
+
+    // country_code resolves through region_country
+    const country = await api("GET", `/admin/regions?country_code=${freeCountries[1].toUpperCase()}&limit=100`, undefined, token)
+    assert.equal(country.status, 200)
+    assert.ok(ids(country.json.regions).includes(regions[1]))
+    assert.ok(!ids(country.json.regions).includes(regions[0]))
+    const none = await api("GET", "/admin/regions?country_code=zz", undefined, token)
+    assert.equal(none.json.count, 0)
+
+    const future = await api("GET", "/admin/regions?created_at_from=" + inDays(1), undefined, token)
+    assert.equal(future.json.count, 0)
+
+    const unknown = await api("GET", "/admin/regions?totally_unknown=1", undefined, token)
+    assert.equal(unknown.status, 200)
+  })
+
+  it("every listed endpoint tolerates an unknown query param", async () => {
+    for (const path of [
+      "/admin/draft-orders",
+      "/admin/orders",
+      "/admin/customers",
+      "/admin/users",
+      "/admin/customer-groups",
+      "/admin/invites",
+      "/admin/sales-channels",
+      "/admin/regions",
+      "/admin/payment-collections",
+      "/admin/returns",
+      "/admin/claims",
+      "/admin/exchanges",
+    ]) {
+      const r = await api("GET", `${path}?totally_unknown=1`, undefined, token)
+      assert.equal(r.status, 200, `${path} answered ${r.status} for an unknown query param`)
+    }
+  })
+
+  it("users / customer-groups keep ?q and gain created_at + order", async () => {
+    const users = await api("GET", `/admin/users?q=${encodeURIComponent(adminEmail)}`, undefined, token)
+    assert.equal(users.status, 200)
+    assert.ok(users.json.users.length >= 1)
+
+    const groups = await api("POST", "/admin/customer-groups", { name: `ListFiltGroup ${T}` }, token)
+    assert.equal(groups.status, 201)
+    const groupId = groups.json.customer_group?.id ?? groups.json.customer_group_id
+    // q + created_at range, scoped to the group just created: `q=ListFiltGroup`
+    // alone also matches every group earlier runs of this suite seeded, and the
+    // default page is 50 rows, so an unscoped assertion would eventually fall
+    // off the end of the page.
+    const list = await api("GET", `/admin/customer-groups?q=ListFiltGroup&id=${groupId}&created_at_from=2000-01-01`, undefined, token)
+    assert.equal(list.status, 200)
+    assert.deepEqual(ids(list.json.customer_groups), [groupId])
+    assert.equal(list.json.count, 1)
+    const empty = await api("GET", "/admin/customer-groups?created_at_from=" + inDays(1), undefined, token)
+    assert.equal(empty.json.count, 0)
+  })
+
+  it("returns / claims / exchanges accept status and created_at", async () => {
+    const returns = await api("GET", "/admin/returns?status=requested&created_at_from=2000-01-01&limit=100", undefined, token)
+    assert.equal(returns.status, 200)
+    assert.ok(Array.isArray(returns.json.returns))
+    const claims = await api("GET", "/admin/claims?status=requested&created_at_to=" + inDays(1), undefined, token)
+    assert.equal(claims.status, 200)
+    assert.ok(Array.isArray(claims.json.claims))
+    const exchanges = await api("GET", "/admin/exchanges?status=requested", undefined, token)
+    assert.equal(exchanges.status, 200)
+    assert.ok(Array.isArray(exchanges.json.exchanges))
+    const bogus = await api("GET", "/admin/claims?status=bogus", undefined, token)
+    assert.equal(bogus.status, 200)
+  })
+})
