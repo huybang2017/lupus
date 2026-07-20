@@ -202,3 +202,206 @@ describe("draft shipping methods + draft metadata", () => {
     assert.equal(del.json.draft_order.summary.shipping_total, 0)
     assert.equal(del.json.draft_order.summary.total, 2000)
   })
+
+  it("rejects an unknown shipping option and a method owned by another order", async () => {
+    const missing = await api("POST", `/admin/draft-orders/${draftId}/shipping-methods`, { shipping_option_id: `so_missing_${T}` }, token)
+    assert.equal(missing.status, 404)
+    const add = await api("POST", `/admin/draft-orders/${draftId}/shipping-methods`, { shipping_option_id: optionId }, token)
+    assert.equal(add.status, 200)
+    const smId = add.json.shipping_method.id
+    const foreignUpdate = await api("POST", `/admin/draft-orders/${otherDraftId}/shipping-methods/${smId}`, { amount: 10 }, token)
+    assert.equal(foreignUpdate.status, 404)
+    const foreignDelete = await api("DELETE", `/admin/draft-orders/${otherDraftId}/shipping-methods/${smId}`, undefined, token)
+    assert.equal(foreignDelete.status, 404)
+    assert.equal(foreignDelete.json.draft_order, undefined)
+    const still = await api("GET", `/admin/draft-orders/${draftId}`, undefined, token)
+    assert.equal(still.json.draft_order.shipping_methods.length, 1)
+    assert.equal(still.json.draft_order.shipping_methods[0].amount, 250)
+    const del = await api("DELETE", `/admin/draft-orders/${draftId}/shipping-methods/${smId}`, undefined, token)
+    assert.equal(del.status, 200)
+  })
+
+  it("exposes the shipping methods on the admin order read after conversion", async () => {
+    const created = await api("POST", "/admin/draft-orders", { email: `draftship-v-${T}@example.com`, currency_code: "usd", items: [{ title: "Convert Widget", quantity: 1, unit_price: 1500 }] }, token)
+    assert.equal(created.status, 201)
+    const id = created.json.draft_order.id
+    const add = await api("POST", `/admin/draft-orders/${id}/shipping-methods`, { shipping_option_id: optionId }, token)
+    assert.equal(add.status, 200)
+    const conv = await api("POST", `/admin/draft-orders/${id}/convert-to-order`, {}, token)
+    assert.equal(conv.status, 200)
+    const orderId = conv.json.order.id
+    const got = await api("GET", `/admin/orders/${orderId}`, undefined, token)
+    assert.equal(got.status, 200)
+    assert.equal(got.json.order.shipping_methods.length, 1)
+    assert.equal(got.json.order.shipping_methods[0].amount, 250)
+    assert.equal(got.json.order.shipping_total, 250)
+    assert.equal(got.json.order.total, 1750)
+  })
+
+  it("404s shipping-options for a missing id and for an order that is not a draft", async () => {
+    const missing = await api("GET", `/admin/draft-orders/draft_missing_${T}/shipping-options`, undefined, token)
+    assert.equal(missing.status, 404)
+    const created = await api("POST", "/admin/draft-orders", { email: `draftship-n-${T}@example.com`, currency_code: "usd" }, token)
+    assert.equal(created.status, 201)
+    const conv = await api("POST", `/admin/draft-orders/${created.json.draft_order.id}/convert-to-order`, {}, token)
+    assert.equal(conv.status, 200)
+    const notDraft = await api("GET", `/admin/draft-orders/${conv.json.order.id}/shipping-options`, undefined, token)
+    assert.equal(notDraft.status, 404)
+  })
+
+  it("merges metadata, deletes keys set to null and keeps promo_codes", async () => {
+    const created = await api("POST", "/admin/draft-orders", { email: `meta-${T}@example.com`, currency_code: "usd", items: [{ title: "Meta Widget", quantity: 1, unit_price: 2000 }] }, token)
+    assert.equal(created.status, 201)
+    const id = created.json.draft_order.id
+    assert.deepEqual(created.json.draft_order.metadata, {})
+    const first = await api("POST", `/admin/draft-orders/${id}`, { metadata: { a: "1", b: "2" } }, token)
+    assert.equal(first.status, 200)
+    assert.deepEqual(first.json.draft_order.metadata, { a: "1", b: "2" })
+    const second = await api("POST", `/admin/draft-orders/${id}`, { metadata: { b: null, c: "3" } }, token)
+    assert.equal(second.status, 200)
+    assert.deepEqual(second.json.draft_order.metadata, { a: "1", c: "3" })
+    const blank = await api("POST", `/admin/draft-orders/${id}`, { metadata: { "   ": "x" } }, token)
+    assert.equal(blank.status, 400)
+    assert.match(blank.json.message, /whitespace/)
+    const empty = await api("POST", `/admin/draft-orders/${id}`, { metadata: {} }, token)
+    assert.equal(empty.status, 200)
+    assert.deepEqual(empty.json.draft_order.metadata, { a: "1", c: "3" })
+    const promo = await api("POST", `/admin/draft-orders/${id}`, { promo_codes: [promoCode] }, token)
+    assert.equal(promo.status, 200)
+    assert.ok((promo.json.draft_order.promo_codes ?? []).includes(promoCode))
+    const afterPromo = await api("POST", `/admin/draft-orders/${id}`, { metadata: { a: "9" } }, token)
+    assert.equal(afterPromo.status, 200)
+    assert.ok((afterPromo.json.draft_order.promo_codes ?? []).includes(promoCode))
+    assert.equal(afterPromo.json.draft_order.metadata.a, "9")
+    assert.deepEqual(afterPromo.json.draft_order.metadata.promo_codes, [promoCode])
+    const got = await api("GET", `/admin/draft-orders/${id}`, undefined, token)
+    assert.equal(got.status, 200)
+    assert.equal(got.json.draft_order.metadata.a, "9")
+    assert.equal(got.json.draft_order.metadata.c, "3")
+  })
+
+  it("keeps the promo discount sign stable when a shipping method is added and removed", async () => {
+    const created = await api(
+      "POST",
+      "/admin/draft-orders",
+      { email: `shipdisc-${T}@example.com`, currency_code: "usd", items: [{ title: "Disc Widget", quantity: 1, unit_price: 2000 }] },
+      token
+    )
+    assert.equal(created.status, 201)
+    const id = created.json.draft_order.id
+    const promo = await api("POST", `/admin/draft-orders/${id}`, { promo_codes: [promoCode] }, token)
+    assert.equal(promo.status, 200)
+    const before = promo.json.draft_order.summary
+    assert.equal(before.subtotal, 2000)
+    assert.equal(before.discount_total, -200)
+    assert.equal(before.total, 1800)
+    const add = await api("POST", `/admin/draft-orders/${id}/shipping-methods`, { shipping_option_id: optionId }, token)
+    assert.equal(add.status, 200)
+    const after = add.json.draft_order.summary
+    assert.equal(after.discount_total, before.discount_total)
+    assert.equal(after.discount_total, -200)
+    assert.equal(after.shipping_total, 250)
+    assert.equal(after.total, before.total + 250)
+    assert.equal(after.total, 2050)
+    assert.equal(Number(add.json.draft_order.total), 2050)
+    const pc = await pool.query(`SELECT amount FROM payment_collection WHERE id=(SELECT payment_collection_id FROM "order" WHERE id=$1)`, [id])
+    assert.equal(Number(pc.rows[0].amount), 2050)
+    const lines = await pool.query(`SELECT quantity, unit_price, discount_total FROM order_line_item WHERE order_id=$1`, [id])
+    const lineSubtotal = lines.rows.reduce((s: number, l: any) => s + Number(l.quantity) * Number(l.unit_price), 0)
+    const lineDiscount = lines.rows.reduce((s: number, l: any) => s + Number(l.discount_total ?? 0), 0)
+    assert.equal(lineSubtotal, 2000)
+    assert.equal(lineDiscount, 200)
+    assert.equal(after.subtotal, lineSubtotal)
+    assert.equal(after.total, lineSubtotal - lineDiscount + after.shipping_total)
+    const del = await api("DELETE", `/admin/draft-orders/${id}/shipping-methods/${add.json.shipping_method.id}`, undefined, token)
+    assert.equal(del.status, 200)
+    const restored = del.json.draft_order.summary
+    assert.equal(restored.subtotal, 2000)
+    assert.equal(restored.discount_total, -200)
+    assert.equal(restored.shipping_total, 0)
+    assert.equal(restored.total, 1800)
+    const got = await api("GET", `/admin/draft-orders/${id}`, undefined, token)
+    assert.equal(got.status, 200)
+    assert.equal(got.json.draft_order.summary.discount_total, -200)
+    assert.equal(got.json.draft_order.summary.total, 1800)
+  })
+
+  it("creates a fully custom shipping method with no shipping option", async () => {
+    const created = await api(
+      "POST",
+      "/admin/draft-orders",
+      { email: `customship-${T}@example.com`, currency_code: "usd", items: [{ title: "Cust Widget", quantity: 1, unit_price: 1000 }] },
+      token
+    )
+    assert.equal(created.status, 201)
+    const id = created.json.draft_order.id
+    const add = await api(
+      "POST",
+      `/admin/draft-orders/${id}/shipping-methods`,
+      { shipping_option_id: "", name: "  Courier  ", custom_amount: 500, data: { note: "rush" } },
+      token
+    )
+    assert.equal(add.status, 200)
+    const sm = add.json.shipping_method
+    assert.equal(sm.name, "Courier")
+    assert.equal(sm.amount, 500)
+    assert.equal(sm.shipping_option_id, null)
+    assert.equal(sm.order_id, id)
+    assert.deepEqual(sm.data, { note: "rush" })
+    assert.equal(add.json.draft_order.shipping_methods.length, 1)
+    assert.equal(add.json.draft_order.shipping_methods[0].id, sm.id)
+    assert.equal(add.json.draft_order.summary.shipping_total, 500)
+    assert.equal(add.json.draft_order.summary.total, 1500)
+    const row = await pool.query(`SELECT shipping_option_id, name, amount FROM order_shipping_method WHERE id=$1`, [sm.id])
+    assert.equal(row.rows[0].shipping_option_id, null)
+    assert.equal(row.rows[0].name, "Courier")
+    assert.equal(Number(row.rows[0].amount), 500)
+    const del = await api("DELETE", `/admin/draft-orders/${id}/shipping-methods/${sm.id}`, undefined, token)
+    assert.equal(del.status, 200)
+    assert.equal(del.json.draft_order.summary.shipping_total, 0)
+    assert.equal(del.json.draft_order.summary.total, 1000)
+  })
+
+  it("accepts amount as an alias, rejects a nameless custom method and an unknown option", async () => {
+    const created = await api(
+      "POST",
+      "/admin/draft-orders",
+      { email: `customship2-${T}@example.com`, currency_code: "usd", items: [{ title: "Cust Widget 2", quantity: 1, unit_price: 1000 }] },
+      token
+    )
+    assert.equal(created.status, 201)
+    const id = created.json.draft_order.id
+    const noName = await api("POST", `/admin/draft-orders/${id}/shipping-methods`, { shipping_option_id: "", name: "   ", custom_amount: 100 }, token)
+    assert.equal(noName.status, 400)
+    assert.match(noName.json.message, /name/)
+    const missingName = await api("POST", `/admin/draft-orders/${id}/shipping-methods`, { custom_amount: 100 }, token)
+    assert.equal(missingName.status, 400)
+    assert.match(missingName.json.message, /name/)
+    const unknown = await api("POST", `/admin/draft-orders/${id}/shipping-methods`, { shipping_option_id: `so_missing_${T}`, name: "Whatever" }, token)
+    assert.equal(unknown.status, 404)
+    assert.equal(unknown.json.message, "Shipping option not found")
+    const still = await api("GET", `/admin/draft-orders/${id}`, undefined, token)
+    assert.equal(still.json.draft_order.shipping_methods.length, 0)
+    const alias = await api("POST", `/admin/draft-orders/${id}/shipping-methods`, { name: "Alias", amount: 300 }, token)
+    assert.equal(alias.status, 200)
+    assert.equal(alias.json.shipping_method.amount, 300)
+    assert.equal(alias.json.shipping_method.shipping_option_id, null)
+    assert.equal(alias.json.draft_order.summary.total, 1300)
+    const renamed = await api(
+      "POST",
+      `/admin/draft-orders/${id}/shipping-methods/${alias.json.shipping_method.id}`,
+      { name: "Alias renamed", data: { x: "1" } },
+      token
+    )
+    assert.equal(renamed.status, 200)
+    assert.equal(renamed.json.shipping_method.id, alias.json.shipping_method.id)
+    assert.equal(renamed.json.shipping_method.name, "Alias renamed")
+    assert.equal(renamed.json.shipping_method.amount, 300)
+    assert.deepEqual(renamed.json.shipping_method.data, { x: "1" })
+    assert.equal(renamed.json.draft_order.summary.shipping_total, 300)
+    assert.equal(renamed.json.draft_order.summary.total, 1300)
+    const del = await api("DELETE", `/admin/draft-orders/${id}/shipping-methods/${alias.json.shipping_method.id}`, undefined, token)
+    assert.equal(del.status, 200)
+    assert.equal(del.json.draft_order.summary.total, 1000)
+  })
+})
