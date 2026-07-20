@@ -454,3 +454,231 @@ describe("admin list filters (catalog / promo / pricing / inventory / tax)", () 
     const byCollection = await api("GET", `/admin/products?collection_id=${collections[1]}&limit=100`, undefined, token)
     assert.deepEqual(ids(byCollection.json.products), [products[1]])
     const byType = await api("GET", `/admin/products?type_id=${types[0]}&limit=100`, undefined, token)
+    assert.deepEqual(ids(byType.json.products), [products[0]])
+    const byHandle = await api("GET", `/admin/products?handle=${encodeURIComponent(`${P}prodb`.toLowerCase())}&limit=100`, undefined, token)
+    assert.deepEqual(ids(byHandle.json.products), [products[1]])
+  })
+
+  it("product-variants: q, sku, product_id, created_at and order", async () => {
+    await baseline("/admin/product-variants", "variants", variants)
+
+    const q = await api("GET", `/admin/product-variants?q=${encodeURIComponent(`${P}varA`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.variants), [variants[0]])
+    assert.equal(q.json.count, 1)
+
+    const sku = await api("GET", `/admin/product-variants?sku=${encodeURIComponent(`${P}pskuB`)}`, undefined, token)
+    assert.deepEqual(ids(sku.json.variants), [variants[1]])
+
+    const byProduct = await api("GET", `/admin/product-variants?product_id=${products[0]}`, undefined, token)
+    assert.deepEqual(ids(byProduct.json.variants), [variants[0]])
+
+    const two = await api("GET", `/admin/product-variants?id=${variants[0]}&id=${variants[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.variants), [variants[1], variants[0]])
+    const asc = await api("GET", `/admin/product-variants?id=${variants[0]}&id=${variants[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.variants), [variants[0], variants[1]])
+
+    const future = await api("GET", `/admin/product-variants?created_at_from=${inDays(1)}`, undefined, token)
+    assert.equal(future.json.count, 0)
+    // the per-variant enrichment the dashboard needs is preserved: prices list,
+    // option keymap, linked inventory items, images
+    const row = (await api("GET", `/admin/product-variants?id=${variants[0]}`, undefined, token)).json.variants[0]
+    assert.ok(Array.isArray(row.prices))
+    assert.equal(row.prices[0].currency_code, "usd")
+    assert.equal(typeof row.options, "object")
+    assert.ok(Object.keys(row.options).length > 0)
+    assert.ok(Array.isArray(row.inventory_items))
+    assert.ok(Array.isArray(row.images))
+  })
+
+  it("product-options and option values: q, created_at and order", async () => {
+    await baseline("/admin/product-options", "product_options", options)
+
+    const q = await api("GET", `/admin/product-options?q=${encodeURIComponent(`${P}optB`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.product_options), [options[1]])
+    assert.equal(q.json.count, 1)
+
+    const byTitle = await api("GET", `/admin/product-options?title=${encodeURIComponent(`${P}optA`)}`, undefined, token)
+    assert.deepEqual(ids(byTitle.json.product_options), [options[0]])
+    // the json_agg `values` hydration is preserved
+    assert.equal(byTitle.json.product_options[0].values.length, 2)
+
+    const desc = await api("GET", `/admin/product-options?id=${options[0]}&id=${options[1]}&order=-created_at`, undefined, token)
+    assert.equal(desc.json.count, 2)
+    assert.deepEqual(ids(desc.json.product_options), [options[1], options[0]])
+    const future = await api("GET", `/admin/product-options?created_at_from=${inDays(1)}`, undefined, token)
+    assert.equal(future.json.count, 0)
+
+    const values = await api("GET", `/admin/product-options/${options[0]}/values?limit=100&order=-created_at`, undefined, token)
+    assert.equal(values.status, 200)
+    assert.equal(values.json.count, 2)
+    assert.deepEqual(ids(values.json.product_option_values), [optionValues[1], optionValues[0]])
+    const valueQ = await api("GET", `/admin/product-options/${options[0]}/values?q=${encodeURIComponent(`${P}valAOne`)}`, undefined, token)
+    assert.deepEqual(ids(valueQ.json.product_option_values), [optionValues[0]])
+    const other = await api("GET", `/admin/product-options/${options[1]}/values?id=${optionValues[0]}&id=${optionValues[1]}`, undefined, token)
+    assert.equal(other.json.count, 0, "values are scoped to the option in the path")
+  })
+
+  it("product-types and product-tags: q, created_at and order", async () => {
+    await baseline("/admin/product-types", "product_types", types)
+    await baseline("/admin/product-tags", "product_tags", tags)
+
+    const typeQ = await api("GET", `/admin/product-types?q=${encodeURIComponent(`${P}typeA`)}`, undefined, token)
+    assert.equal(typeQ.status, 200)
+    assert.deepEqual(ids(typeQ.json.product_types), [types[0]])
+    assert.equal(typeQ.json.count, 1)
+    const typeOrder = await api("GET", `/admin/product-types?id=${types[0]}&id=${types[1]}&order=-created_at`, undefined, token)
+    assert.equal(typeOrder.json.count, 2)
+    assert.deepEqual(ids(typeOrder.json.product_types), [types[1], types[0]])
+    const typeValue = await api("GET", `/admin/product-types?value=${encodeURIComponent(`${P}typeB`)}`, undefined, token)
+    assert.deepEqual(ids(typeValue.json.product_types), [types[1]])
+    assert.equal((await api("GET", `/admin/product-types?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+
+    const tagQ = await api("GET", `/admin/product-tags?q=${encodeURIComponent(`${P}tagB`)}`, undefined, token)
+    assert.equal(tagQ.status, 200)
+    assert.deepEqual(ids(tagQ.json.product_tags), [tags[1]])
+    assert.equal(tagQ.json.count, 1)
+    const tagOrder = await api("GET", `/admin/product-tags?id=${tags[0]}&id=${tags[1]}&order=-created_at`, undefined, token)
+    assert.equal(tagOrder.json.count, 2)
+    assert.deepEqual(ids(tagOrder.json.product_tags), [tags[1], tags[0]])
+    assert.equal((await api("GET", `/admin/product-tags?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("collections: q, created_at and order", async () => {
+    await baseline("/admin/collections", "collections", collections)
+
+    const q = await api("GET", `/admin/collections?q=${encodeURIComponent(`${P}colA`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.collections), [collections[0]])
+    assert.equal(q.json.count, 1)
+
+    const two = await api("GET", `/admin/collections?id=${collections[0]}&id=${collections[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.collections), [collections[1], collections[0]])
+    const asc = await api("GET", `/admin/collections?id=${collections[0]}&id=${collections[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.collections), [collections[0], collections[1]])
+    assert.equal((await api("GET", `/admin/collections?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("product-categories: q, parent_id, real paging and the rank ASC organize default", async () => {
+    await baseline("/admin/product-categories", "product_categories", categories)
+
+    const q = await api("GET", `/admin/product-categories?q=${encodeURIComponent(`${P}catB`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.product_categories), [categories[1]])
+    assert.equal(q.json.count, 1)
+
+    // the organize page contract: rank ASC by default (rank 2 before rank 9)
+    const ranked = await api("GET", `/admin/product-categories?id=${categories[0]}&id=${categories[1]}`, undefined, token)
+    assert.equal(ranked.status, 200)
+    assert.equal(ranked.json.count, 2)
+    assert.deepEqual(ids(ranked.json.product_categories), [categories[1], categories[0]])
+    const desc = await api("GET", `/admin/product-categories?id=${categories[0]}&id=${categories[1]}&order=-rank`, undefined, token)
+    assert.deepEqual(ids(desc.json.product_categories), [categories[0], categories[1]])
+    const byCreated = await api("GET", `/admin/product-categories?id=${categories[0]}&id=${categories[1]}&order=-created_at`, undefined, token)
+    assert.deepEqual(ids(byCreated.json.product_categories), [categories[1], categories[0]])
+
+    // the default page is still rank-ordered end to end
+    const page = await api("GET", "/admin/product-categories?limit=100", undefined, token)
+    assert.equal(page.status, 200)
+    const ranks = page.json.product_categories.map((c: any) => Number(c.rank))
+    assert.deepEqual(ranks, [...ranks].sort((x: number, y: number) => x - y), "the default order must be rank ASC")
+
+    // paging is real: limit/offset window the result and count stays total
+    const windowed = await api("GET", "/admin/product-categories?limit=3&offset=1", undefined, token)
+    assert.equal(windowed.status, 200)
+    assert.equal(windowed.json.product_categories.length, 3)
+    assert.equal(windowed.json.offset, 1)
+    assert.equal(windowed.json.limit, 3)
+    assert.equal(windowed.json.count, page.json.count)
+    assert.deepEqual(windowed.json.product_categories.map((c: any) => c.id), page.json.product_categories.slice(1, 4).map((c: any) => c.id))
+
+    // parent_id is an in-filter over the self-referencing parent
+    await api("POST", `/admin/product-categories/${categories[1]}`, { parent_category_id: categories[0] }, token)
+    const byParent = await api("GET", `/admin/product-categories?parent_id=${categories[0]}`, undefined, token)
+    assert.equal(byParent.status, 200)
+    assert.deepEqual(ids(byParent.json.product_categories), [categories[1]])
+    assert.equal((await api("GET", `/admin/product-categories?parent_id=${P}no-such-parent`, undefined, token)).json.count, 0)
+    assert.equal((await api("GET", `/admin/product-categories?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  // ------------------------------------------- promotions / campaigns / pricing ---
+
+  it("promotions: q, status/type whitelists, is_automatic, campaign_id and order", async () => {
+    await baseline("/admin/promotions", "promotions", promotions)
+
+    const q = await api("GET", `/admin/promotions?q=${encodeURIComponent(`${P}-promA`.toLowerCase())}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.promotions), [promotions[0]])
+    assert.equal(q.json.count, 1)
+
+    const two = await api("GET", `/admin/promotions?id=${promotions[0]}&id=${promotions[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.promotions), [promotions[1], promotions[0]])
+    const asc = await api("GET", `/admin/promotions?id=${promotions[0]}&id=${promotions[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.promotions), [promotions[0], promotions[1]])
+
+    const draft = await api("GET", `/admin/promotions?status=draft&id=${promotions[0]}&id=${promotions[1]}`, undefined, token)
+    assert.deepEqual(ids(draft.json.promotions), [promotions[0]])
+    const bogus = await api("GET", "/admin/promotions?status=bogus&limit=100", undefined, token)
+    assert.equal(bogus.status, 200, "an unknown promotion status must be ignored")
+    const clean = await api("GET", "/admin/promotions?limit=100", undefined, token)
+    assert.equal(bogus.json.count, clean.json.count)
+
+    const fixed = await api("GET", `/admin/promotions?type=fixed&id=${promotions[0]}&id=${promotions[1]}`, undefined, token)
+    assert.deepEqual(ids(fixed.json.promotions), [promotions[1]])
+    const bogusType = await api("GET", `/admin/promotions?type=bogus&limit=100`, undefined, token)
+    assert.equal(bogusType.status, 200)
+    assert.equal(bogusType.json.count, clean.json.count)
+
+    const automatic = await api("GET", `/admin/promotions?is_automatic=true&id=${promotions[0]}&id=${promotions[1]}`, undefined, token)
+    assert.deepEqual(ids(automatic.json.promotions), [promotions[1]])
+    const manual = await api("GET", `/admin/promotions?is_automatic=false&id=${promotions[0]}&id=${promotions[1]}`, undefined, token)
+    assert.deepEqual(ids(manual.json.promotions), [promotions[0]])
+
+    const byCampaign = await api("GET", `/admin/promotions?campaign_id=${campaigns[0]}&limit=100`, undefined, token)
+    assert.deepEqual(ids(byCampaign.json.promotions), [promotions[0]])
+    assert.equal((await api("GET", `/admin/promotions?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("campaigns: q over identifier, created_at and order", async () => {
+    await baseline("/admin/campaigns", "campaigns", campaigns)
+
+    const q = await api("GET", `/admin/campaigns?q=${encodeURIComponent(`${P}-campB`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.campaigns), [campaigns[1]])
+    assert.equal(q.json.count, 1)
+
+    const two = await api("GET", `/admin/campaigns?id=${campaigns[0]}&id=${campaigns[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.campaigns), [campaigns[1], campaigns[0]])
+    const byIdentifier = await api("GET", `/admin/campaigns?identifier=${encodeURIComponent(`${P}-campA`)}`, undefined, token)
+    assert.deepEqual(ids(byIdentifier.json.campaigns), [campaigns[0]])
+    const asc = await api("GET", `/admin/campaigns?id=${campaigns[0]}&id=${campaigns[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.campaigns), [campaigns[0], campaigns[1]])
+    assert.equal((await api("GET", `/admin/campaigns?created_at_from=${inDays(1)}`, undefined, token)).json.count, 0)
+  })
+
+  it("price-lists: q over title/description, status whitelist, created_at and order", async () => {
+    await baseline("/admin/price-lists", "price_lists", priceLists)
+
+    const q = await api("GET", `/admin/price-lists?q=${encodeURIComponent(`${P}plB`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.price_lists), [priceLists[1]])
+    assert.equal(q.json.count, 1)
+    // the description is part of the free-text search
+    const byDesc = await api("GET", `/admin/price-lists?q=${encodeURIComponent(`${P}pldesca`)}`, undefined, token)
+    assert.deepEqual(ids(byDesc.json.price_lists), [priceLists[0]])
+
+    const two = await api("GET", `/admin/price-lists?id=${priceLists[0]}&id=${priceLists[1]}&order=-created_at`, undefined, token)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.price_lists), [priceLists[1], priceLists[0]])
+    const asc = await api("GET", `/admin/price-lists?id=${priceLists[0]}&id=${priceLists[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.price_lists), [priceLists[0], priceLists[1]])
+
+    const status = await api("GET", `/admin/price-lists?id=${priceLists[0]}&id=${priceLists[1]}&status=draft`, undefined, token)
+    assert.equal(status.status, 200)
+    assert.equal(status.json.count, 1, "only the seeded draft price list matches status=draft")
+    assert.deepEqual(ids(status.json.price_lists), [priceLists[0]])
