@@ -226,3 +226,231 @@ describe("admin list filters (catalog / promo / pricing / inventory / tax)", () 
         {
           sku: `${P}isku${suffix}`,
           title: `${P}ititle${suffix}`,
+          hs_code: `${P}hsc${suffix}`,
+          levels: [{ location_id: loc.json.stock_location.id, stocked_quantity: 9 }],
+        },
+        token
+      )
+      assert.equal(item.status, 201, `inventory item ${suffix}`)
+      items.push(item.json.inventory_item.id)
+
+      const profile = await api("POST", "/admin/shipping-profiles", { name: `${P}sp${suffix}` }, token)
+      assert.equal(profile.status, 201, `shipping profile ${suffix}`)
+      profiles.push(profile.json.shipping_profile.id)
+
+      const camp = await api("POST", "/admin/campaigns", { name: `${P}camp${suffix}`, identifier: `${P}-camp${suffix}` }, token)
+      assert.equal(camp.status, 201, `campaign ${suffix}`)
+      campaigns.push(camp.json.campaign.id)
+
+      const pl = await api(
+        "POST",
+        "/admin/price-lists",
+        {
+          title: `${P}pl${suffix}`,
+          type: "sale",
+          status: index === 0 ? "draft" : "active",
+          description: `${P}pldesc${suffix}`,
+          prices: [],
+        },
+        token
+      )
+      assert.equal(pl.status, 201, `price list ${suffix}`)
+      priceLists.push(pl.json.price_list_id)
+    }
+
+    // promotions: one draft/percentage/linked, one active/fixed/unlinked
+    for (const [index, suffix] of ["A", "B"].entries()) {
+      const promo = await api(
+        "POST",
+        "/admin/promotions",
+        {
+          code: `${P}-prom${suffix}`.toLowerCase(),
+          status: index === 0 ? "draft" : "active",
+          campaign_id: index === 0 ? campaigns[0] : null,
+          application_type: index === 0 ? "percentage" : "fixed",
+          application_target: "order",
+          application_value: 10,
+          ...(index === 1 ? { application_currency: "usd" } : {}),
+          is_automatic: index === 1,
+        },
+        token
+      )
+      assert.equal(promo.status, 201, `promotion ${suffix}`)
+      promotions.push(promo.json.promotion.id)
+    }
+    // is_automatic is only settable through the update route, so flip B there
+    const automatic = await api("POST", `/admin/promotions/${promotions[1]}`, { is_automatic: true }, token)
+    assert.equal(automatic.status, 200)
+    assert.equal(automatic.json.promotion.is_automatic, true)
+
+    // products: A is published + linked to the collection/type/channel, B is draft
+    for (const [index, suffix] of ["A", "B"].entries()) {
+      const created = await api(
+        "POST",
+        "/admin/products",
+        {
+          title: `${P}prod${suffix}`,
+          description: `${P}proddesc${suffix}`,
+          status: index === 0 ? "published" : "draft",
+          collection_id: collections[index],
+          type_id: types[index],
+          tags: [{ id: tags[index] }],
+          categories: [{ id: categories[index] }],
+          sales_channels: index === 0 ? [{ id: salesChannel }] : [],
+          options: [{ title: `${P}opt${suffix}`, values: [`${P}val${suffix}One`, `${P}val${suffix}Two`] }],
+          variants: [
+            {
+              title: `${P}var${suffix}`,
+              sku: `${P}psku${suffix}`,
+              // every variant must answer every declared option
+              options: { [`${P}opt${suffix}`]: `${P}val${suffix}One` },
+              prices: [{ currency_code: "usd", amount: 1000 + index }],
+            },
+          ],
+        },
+        token
+      )
+      assert.equal(created.status, 201, `product ${suffix}`)
+      products.push(created.json.product.id)
+      variants.push(created.json.product.variants[0].id)
+
+      const opts = await api("GET", `/admin/products/${created.json.product.id}/options`, undefined, token)
+      assert.equal(opts.status, 200)
+      options.push(opts.json.options[0].id)
+    }
+
+    // reservations: one per seeded (item, location) pair
+    for (const index of [0, 1]) {
+      const res = await api(
+        "POST",
+        "/admin/reservations",
+        { inventory_item_id: items[index], location_id: locations[index], quantity: 1, description: `${P}res${index}` },
+        token
+      )
+      assert.equal(res.status, 201, `reservation ${index}`)
+      reservations.push(res.json.reservation.id)
+    }
+
+    // the two option values of product A's option, in a deterministic order
+    const values = await api("GET", `/admin/product-options/${options[0]}/values?limit=100&order=value`, undefined, token)
+    assert.equal(values.status, 200)
+    for (const v of values.json.product_option_values) {
+      optionValues.push(v.id)
+    }
+    assert.equal(optionValues.length, 2)
+
+    // tax regions: two countries nobody has a region for yet; region A owns the only
+    // default rate plus a plain one, region B a single plain rate
+    taxCountries = (
+      await pool.query(`SELECT c FROM unnest($1::text[]) c WHERE c NOT IN (SELECT country_code FROM tax_region WHERE deleted_at IS NULL) ORDER BY random() LIMIT 2`, [COUNTRY_CODES])
+    ).rows.map((r: any) => r.c as string)
+    assert.equal(taxCountries.length, 2)
+    for (const [index, suffix] of ["a", "b"].entries()) {
+      const region = await api(
+        "POST",
+        "/admin/tax-regions",
+        {
+          country_code: taxCountries[index],
+          provider_id: "system",
+          ...(index === 0 ? { default_tax_rate: { code: `lct${T}ra`, name: `${P}rateA`, rate: 5 } } : {}),
+        },
+        token
+      )
+      assert.equal(region.status, 201, `tax region ${suffix}`)
+      taxRegions.push(region.json.tax_region.id)
+      const extra = index === 0 ? { code: `lct${T}rb`, name: `${P}rateB`, rate: 7 } : { code: `lct${T}rc`, name: `${P}rateC`, rate: 9 }
+      const rate = await api("POST", "/admin/tax-rates", { tax_region_id: region.json.tax_region.id, ...extra }, token)
+      assert.equal(rate.status, 201, `tax rate ${suffix}`)
+    }
+    const regionA = await api("GET", `/admin/tax-rates?tax_region_id=${taxRegions[0]}&limit=100&order=created_at`, undefined, token)
+    assert.equal(regionA.status, 200)
+    for (const rate of regionA.json.tax_rates) {
+      taxRates.push(rate.id)
+    }
+    assert.equal(taxRates.length, 2)
+
+    // explicit ranks so the product-categories default order is observable
+    await api("POST", `/admin/product-categories/${categories[0]}`, { rank: 9 }, token)
+    await api("POST", `/admin/product-categories/${categories[1]}`, { rank: 2 }, token)
+
+    // oldest -> newest, one second apart at the newest end (see `stagger`)
+    await stagger("product_collection", "created_at", collections)
+    await stagger("product_type", "created_at", types)
+    await stagger("product_tag", "created_at", tags)
+    await stagger("product_category", "created_at", categories)
+    await stagger("product", "created_at", products)
+    await stagger("product_variant", "created_at", variants)
+    await stagger("product_option", "created_at", options)
+    await stagger("product_option_value", "created_at", optionValues)
+    await stagger("stock_location", "created_at", locations)
+    await stagger("inventory_item", "created_at", items)
+    await stagger("reservation_item", "created_at", reservations)
+    await stagger("shipping_profile", "created_at", profiles)
+    await stagger("campaign", "created_at", campaigns)
+    await stagger("promotion", "created_at", promotions)
+    await stagger("price_list", "created_at", priceLists)
+    await stagger("tax_region", "created_at", taxRegions)
+    await stagger("tax_rate", "created_at", taxRates)
+  })
+
+  after(async () => {
+    // The `is_automatic` fixture applies itself to every later cart created on
+    // the shared test database, which would corrupt the fixed-amount discount
+    // assertions of the other suites. Soft-delete the fixture promotions on the
+    // way out (also clearing rows left behind by earlier runs of this file) so
+    // the fixture stays local.
+    await pool.query(`UPDATE promotion SET is_automatic = FALSE, deleted_at = NOW() WHERE code LIKE 'lc%-prom%'`)
+    // the fixture countries go back to having no tax region
+    if (taxRegions.length) await pool.query(`UPDATE tax_region SET deleted_at = NOW() WHERE id = ANY($1)`, [taxRegions])
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await pool.end().catch(() => undefined)
+  })
+
+  // ---------------------------------------------------------------- catalog ---
+
+  it("products: q, status whitelist, sales_channel_id EXISTS, repeatable ids and order", async () => {
+    const body = await baseline("/admin/products", "products", products)
+    assert.ok(body.count >= 2)
+    // the enriched dashboard shape is preserved
+    for (const field of ["id", "title", "handle", "status", "collection", "type", "variants", "options"]) {
+      assert.ok(field in body.products[0], `product row is missing ${field}`)
+    }
+
+    const q = await api("GET", `/admin/products?q=${encodeURIComponent(`${P}prodA`)}`, undefined, token)
+    assert.equal(q.status, 200)
+    assert.deepEqual(ids(q.json.products), [products[0]])
+    assert.equal(q.json.count, 1)
+
+    const two = await api("GET", `/admin/products?id=${products[0]}&id=${products[1]}`, undefined, token)
+    assert.equal(two.status, 200)
+    assert.equal(two.json.count, 2)
+    assert.deepEqual(ids(two.json.products), [products[1], products[0]], "default order is created_at DESC")
+
+    const asc = await api("GET", `/admin/products?id=${products[0]}&id=${products[1]}&order=created_at`, undefined, token)
+    assert.deepEqual(ids(asc.json.products), [products[0], products[1]])
+
+    const future = await api("GET", `/admin/products?created_at_from=${inDays(1)}`, undefined, token)
+    assert.equal(future.status, 200)
+    assert.equal(future.json.count, 0)
+
+    const past = await api("GET", `/admin/products?created_at_to=2000-01-01`, undefined, token)
+    assert.equal(past.json.count, 0)
+
+    // enum filters
+    const published = await api("GET", `/admin/products?status=published&id=${products[0]}&id=${products[1]}`, undefined, token)
+    assert.deepEqual(ids(published.json.products), [products[0]])
+    const bogus = await api("GET", `/admin/products?status=totally-bogus&limit=100`, undefined, token)
+    assert.equal(bogus.status, 200, "an unknown product status must be ignored, not rejected")
+    const clean = await api("GET", "/admin/products?limit=100", undefined, token)
+    assert.equal(bogus.json.count, clean.json.count)
+
+    // link-table EXISTS filters
+    const linked = await api("GET", `/admin/products?sales_channel_id=${salesChannel}&id=${products[0]}&id=${products[1]}`, undefined, token)
+    assert.equal(linked.status, 200)
+    assert.deepEqual(ids(linked.json.products), [products[0]])
+    const otherChannel = await api("GET", `/admin/products?sales_channel_id=${collections[0]}&limit=100`, undefined, token)
+    assert.equal(otherChannel.json.count, 0, "a sales channel id that links nothing must return nothing")
+
+    const byCollection = await api("GET", `/admin/products?collection_id=${collections[1]}&limit=100`, undefined, token)
+    assert.deepEqual(ids(byCollection.json.products), [products[1]])
+    const byType = await api("GET", `/admin/products?type_id=${types[0]}&limit=100`, undefined, token)
