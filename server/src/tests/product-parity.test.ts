@@ -257,3 +257,261 @@ describe("product domain parity", () => {
     const draft = await api("POST", "/admin/products", { title: `Draft Only ${T}`, status: "draft", variants: [{ title: "V", prices: [{ currency_code: "usd", amount: 100 }] }] }, token)
     assert.equal(draft.status, 201)
     const storeDraft = await api("GET", `/store/products/${draft.json.product.id}`)
+    assert.equal(storeDraft.status, 404)
+
+    const storeList = await api("GET", `/store/products?q=${encodeURIComponent(`Draft Only ${T}`)}`)
+    assert.equal(storeList.status, 200)
+    assert.equal(storeList.json.products.length, 0, "draft products must never appear on the store API")
+
+    const pub = await api(
+      "POST",
+      "/admin/products",
+      {
+        title: `Store Shown ${T}`,
+        status: "published",
+        options: [{ title: "Size", values: ["S"] }],
+        images: [{ url: "https://example.com/s.png" }],
+        variants: [{ title: "S", prices: [{ currency_code: "usd", amount: 777 }], options: { Size: "S" } }],
+      },
+      token
+    )
+    assert.equal(pub.status, 201)
+    const storePub = await api("GET", `/store/products/${pub.json.product.id}`)
+    assert.equal(storePub.status, 200)
+    assert.equal(storePub.json.product.options.length, 1)
+    assert.equal(storePub.json.product.images.length, 1)
+    assert.equal(storePub.json.product.variants[0].options[0].value, "S")
+    assert.equal(typeof storePub.json.product.variants[0].manage_inventory, "boolean")
+  })
+
+  it("stores product attributes, lists sales channels and sorts by title", async () => {
+    const sc = await api("POST", "/admin/sales-channels", { name: `Attr SC ${T}` }, token)
+    assert.equal(sc.status, 201)
+    const scId = sc.json.sales_channel.id
+    const a = await api(
+      "POST",
+      "/admin/products",
+      {
+        title: `AAA Attr ${T}`,
+        height: 10,
+        width: 20,
+        length: 30,
+        weight: 4,
+        mid_code: "MID",
+        hs_code: "HS1",
+        origin_country: "VN",
+        material: "cotton",
+        sales_channels: [{ id: scId }],
+        variants: [{ title: "V", prices: [{ currency_code: "usd", amount: 100 }] }],
+      },
+      token
+    )
+    assert.equal(a.status, 201)
+    const id = a.json.product.id
+    const upd = await api("POST", `/admin/products/${id}`, { height: 11, hs_code: null, metadata: { k: "v" } }, token)
+    assert.equal(upd.status, 200)
+    const got = (await api("GET", `/admin/products/${id}`, undefined, token)).json.product
+    assert.equal(Number(got.height), 11)
+    assert.equal(Number(got.width), 20)
+    assert.equal(got.hs_code, null)
+    assert.equal(got.material, "cotton")
+    assert.equal(got.origin_country, "VN")
+    assert.deepEqual(got.metadata, { k: "v" })
+    assert.deepEqual(got.sales_channels.map((c: any) => c.id), [scId])
+    const sorted = await api("GET", `/admin/products?order=title&q=${encodeURIComponent(`Attr ${T}`)}`, undefined, token)
+    assert.equal(sorted.status, 200)
+    assert.ok(sorted.json.products.some((p: any) => p.id === id))
+  })
+
+  it("batch-updates variants (title, sku, inventory flags, prices) in one call", async () => {
+    const created = await api(
+      "POST",
+      "/admin/products",
+      { title: `Batch Var ${T}`, variants: [{ title: "V1", prices: [{ currency_code: "usd", amount: 100 }] }] },
+      token
+    )
+    assert.equal(created.status, 201)
+    const pid = created.json.product.id
+    const vid = (await api("GET", `/admin/products/${pid}`, undefined, token)).json.product.variants[0].id
+    const res = await api(
+      "POST",
+      `/admin/products/${pid}/variants/batch`,
+      { update: [{ id: vid, title: "V1b", sku: `BV-${T}`, manage_inventory: false, allow_backorder: true, prices: [{ currency_code: "usd", amount: 250 }] }] },
+      token
+    )
+    assert.equal(res.status, 200)
+    const v = (await api("GET", `/admin/products/${pid}`, undefined, token)).json.product.variants[0]
+    assert.equal(v.title, "V1b")
+    assert.equal(v.sku, `BV-${T}`)
+    assert.equal(v.manage_inventory, false)
+    assert.equal(v.allow_backorder, true)
+    assert.equal(Number(v.prices[0].amount), 250)
+  })
+
+  it("persists variant<->image associations through the batch endpoint (previously a no-op stub)", async () => {
+    const created = await api(
+      "POST",
+      "/admin/products",
+      {
+        title: `Image Link ${T}`,
+        images: [{ url: "https://example.com/x.png" }],
+        variants: [{ title: "V", prices: [{ currency_code: "usd", amount: 100 }] }],
+      },
+      token
+    )
+    assert.equal(created.status, 201)
+    const product = (await api("GET", `/admin/products/${created.json.product.id}`, undefined, token)).json.product
+    const imageId = product.images[0].id
+    const variantId = product.variants[0].id
+
+    const link = await api(
+      "POST",
+      `/admin/products/${product.id}/images/${imageId}/variants/batch`,
+      { add: [variantId] },
+      token
+    )
+    assert.equal(link.status, 200)
+    assert.deepEqual(link.json.added, [variantId])
+
+    const row = await pool.query(`SELECT 1 FROM product_variant_image WHERE variant_id = $1 AND image_id = $2`, [variantId, imageId])
+    assert.equal(row.rows.length, 1, "the link must actually be persisted")
+
+    const refetched = await api("GET", `/admin/products/${product.id}`, undefined, token)
+    const refetchedVariant = refetched.json.product.variants.find((v: any) => v.id === variantId)
+    assert.equal(refetchedVariant.images.length, 1)
+  })
+
+  it("creates global (non-exclusive) options without a product and filters them by type", async () => {
+    const title = `Global ${T}`
+    const created = await api("POST", "/admin/product-options", { title, values: ["S", "M", "S"] }, token)
+    assert.equal(created.status, 201)
+    const opt = created.json.product_option
+    assert.equal(opt.product_id, null)
+    assert.equal(opt.is_exclusive, false)
+    assert.deepEqual(opt.values.map((v: any) => v.value).sort(), ["M", "S"], "duplicate values are collapsed")
+
+    const dup = await api("POST", "/admin/product-options", { title: title.toLowerCase(), values: ["X"] }, token)
+    assert.equal(dup.status, 409, "global option titles are unique (case-insensitive)")
+
+    const globals = await api("GET", `/admin/product-options?is_exclusive=false&q=${encodeURIComponent(title)}`, undefined, token)
+    assert.deepEqual(globals.json.product_options.map((o: any) => o.id), [opt.id])
+    const exclusive = await api("GET", `/admin/product-options?is_exclusive=true&q=${encodeURIComponent(title)}`, undefined, token)
+    assert.equal(exclusive.json.product_options.length, 0)
+
+    // an option created inside a product stays exclusive to it
+    const p = await api("POST", "/admin/products", { title: `Excl ${T}`, options: [{ title: `Excl ${T}`, values: ["a"] }], variants: [{ title: "a", options: { [`Excl ${T}`]: "a" }, prices: [{ currency_code: "usd", amount: 1 }] }] }, token)
+    assert.equal(p.status, 201)
+    const row = await pool.query(`SELECT is_exclusive FROM product_option WHERE product_id = $1`, [p.json.product.id])
+    assert.equal(row.rows[0].is_exclusive, true)
+  })
+
+  it("keeps option values in the order they are saved (rank), adding and removing as needed", async () => {
+    const created = await api("POST", "/admin/product-options", { title: `Ranked ${T}`, values: ["A", "B", "C"] }, token)
+    const id = created.json.product_option.id
+    assert.deepEqual(created.json.product_option.values.map((v: any) => v.value), ["A", "B", "C"])
+
+    const updated = await api("POST", `/admin/product-options/${id}`, { values: ["C", "A", "D"] }, token)
+    assert.equal(updated.status, 200)
+    assert.deepEqual(updated.json.product_option.values.map((v: any) => v.value), ["C", "A", "D"], "reordered, B removed, D added")
+
+    const list = await api("GET", `/admin/product-options?id=${id}`, undefined, token)
+    assert.deepEqual(list.json.product_options[0].values.map((v: any) => v.value), ["C", "A", "D"])
+    const values = await api("GET", `/admin/product-options/${id}/values`, undefined, token)
+    assert.deepEqual(values.json.product_option_values.map((v: any) => v.value), ["C", "A", "D"])
+  })
+
+  it("creates an inventory item with stock levels in one call and rejects unknown locations without leaving an item behind", async () => {
+    const loc = await api("POST", "/admin/stock-locations", { name: `Loc ${T}` }, token)
+    assert.equal(loc.status, 201)
+    const locationId = loc.json.stock_location.id
+
+    const ok = await api(
+      "POST",
+      "/admin/inventory-items",
+      { title: `Inv ${T}`, levels: [{ location_id: locationId, stocked_quantity: 7 }] },
+      token
+    )
+    assert.equal(ok.status, 201)
+    const lvl = await pool.query(`SELECT stocked_quantity FROM inventory_level_location WHERE inventory_item_id = $1`, [ok.json.inventory_item.id])
+    assert.equal(lvl.rows[0].stocked_quantity, 7)
+
+    const bad = await api(
+      "POST",
+      "/admin/inventory-items",
+      { title: `Inv bad ${T}`, levels: [{ location_id: "sloc_missing", stocked_quantity: 1 }] },
+      token
+    )
+    assert.equal(bad.status, 404)
+    const left = await pool.query(`SELECT 1 FROM inventory_item WHERE title = $1`, [`Inv bad ${T}`])
+    assert.equal(left.rows.length, 0, "the transaction must roll back the item")
+
+    const negative = await api("POST", "/admin/inventory-items", { title: `Inv neg ${T}`, levels: [{ location_id: locationId, stocked_quantity: -1 }] }, token)
+    assert.equal(negative.status, 400)
+  })
+
+  it("inventory item: null clears a field, levels expose available_quantity, and the batch endpoint links/unlinks locations", async () => {
+    const locA = (await api("POST", "/admin/stock-locations", { name: `LocA ${T}` }, token)).json.stock_location.id
+    const locB = (await api("POST", "/admin/stock-locations", { name: `LocB ${T}` }, token)).json.stock_location.id
+    const created = await api(
+      "POST",
+      "/admin/inventory-items",
+      { title: `Inv upd ${T}`, sku: `SKU-${T}`, mid_code: "MID1", levels: [{ location_id: locA, stocked_quantity: 10 }] },
+      token
+    )
+    const id = created.json.inventory_item.id
+
+    const cleared = await api("POST", `/admin/inventory-items/${id}`, { mid_code: null }, token)
+    assert.equal(cleared.status, 200)
+    assert.equal(cleared.json.inventory_item.mid_code, null, "an explicit null must clear the field")
+    assert.equal(cleared.json.inventory_item.sku, `SKU-${T}`, "fields that are not sent stay untouched")
+
+    const lvlA = cleared.json.inventory_item.location_levels.find((l: any) => l.location_id === locA)
+    assert.equal(lvlA.available_quantity, 10)
+
+    const linked = await api("POST", `/admin/inventory-items/${id}/location-levels/batch`, { create: [{ location_id: locB }] }, token)
+    assert.equal(linked.status, 200)
+    const afterLink = await api("GET", `/admin/inventory-items/${id}`, undefined, token)
+    assert.deepEqual(afterLink.json.inventory_item.location_levels.map((l: any) => l.location_id).sort(), [locA, locB].sort())
+
+    const levelB = afterLink.json.inventory_item.location_levels.find((l: any) => l.location_id === locB)
+    const unlinked = await api("POST", `/admin/inventory-items/${id}/location-levels/batch`, { delete: [levelB.id] }, token)
+    assert.equal(unlinked.status, 200)
+    const afterUnlink = await api("GET", `/admin/inventory-items/${id}`, undefined, token)
+    assert.deepEqual(afterUnlink.json.inventory_item.location_levels.map((l: any) => l.location_id), [locA])
+
+    const over = await api("POST", "/admin/reservations", { inventory_item_id: id, location_id: locA, quantity: 11 }, token)
+    assert.ok(over.status >= 400 && over.status < 500, "reserving more than available is rejected")
+    const ok = await api("POST", "/admin/reservations", { inventory_item_id: id, location_id: locA, quantity: 4 }, token)
+    assert.equal(ok.status, 201)
+    const after = await api("GET", `/admin/inventory-items/${id}`, undefined, token)
+    const lvl = after.json.inventory_item.location_levels.find((l: any) => l.location_id === locA)
+    assert.equal(lvl.available_quantity, 6)
+  })
+
+  it("promotion create validates value ranges, currency, dates and duplicate codes", async () => {
+    const code = `PV${T}`
+    const base = { code, application_type: "percentage", application_target: "order", application_value: 10 }
+
+    const over = await api("POST", "/admin/promotions", { ...base, application_value: 150 }, token)
+    assert.equal(over.status, 400, "a percentage above 100 is rejected")
+
+    const noValue = await api("POST", "/admin/promotions", { code: `${code}A`, application_type: "percentage", application_target: "order" }, token)
+    assert.equal(noValue.status, 400, "a percentage needs a value")
+
+    const noCurrency = await api("POST", "/admin/promotions", { code: `${code}B`, application_type: "fixed", application_target: "order", application_value: 500 }, token)
+    assert.equal(noCurrency.status, 400, "a fixed amount needs a currency")
+
+    const badDates = await api(
+      "POST",
+      "/admin/promotions",
+      { ...base, code: `${code}C`, starts_at: "2030-01-02T00:00:00.000Z", ends_at: "2030-01-01T00:00:00.000Z" },
+      token
+    )
+    assert.equal(badDates.status, 400, "ends_at must be after starts_at")
+
+    const ok = await api("POST", "/admin/promotions", base, token)
+    assert.equal(ok.status, 201)
+    const dup = await api("POST", "/admin/promotions", base, token)
+    assert.equal(dup.status, 409, "the same code cannot be created twice")
+  })
+})
