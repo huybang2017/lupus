@@ -202,3 +202,207 @@ describe("locations & shipping parity", () => {
     assert.equal((await call("POST", `/admin/stock-locations/${loc.id}/fulfillment-providers`, { add: ["nope"] })).status, 400)
     const linked = await call("POST", `/admin/stock-locations/${loc.id}/fulfillment-providers`, { add: ["manual"] })
     assert.deepEqual(linked.json.stock_location.fulfillment_providers, [{ id: "manual", is_enabled: true }])
+    const filtered = await call("GET", `/admin/fulfillment-providers?stock_location_id=${loc.id}`)
+    assert.equal(filtered.json.count, 1)
+    const none = await call("GET", `/admin/fulfillment-providers?stock_location_id=${(await makeLocation()).id}`)
+    assert.equal(none.json.count, 0, "a location with no providers connected lists none")
+    const options = await call("GET", "/admin/fulfillment-providers/manual/options")
+    assert.ok(options.json.fulfillment_options.some((o: any) => o.is_return), "the provider offers a return option")
+    assert.equal((await call("GET", "/admin/fulfillment-providers/zzz/options")).status, 404)
+  })
+
+  it("enables / disables shipping and pickup, manages service zones and their areas", async () => {
+    const loc = await makeLocation()
+    const mk = (type: string) => call("POST", `/admin/stock-locations/${loc.id}/fulfillment-sets`, { name: `${loc.name} ${type}`, type })
+    const first = await mk("shipping")
+    assert.equal(first.status, 201)
+    assert.equal((await mk("shipping")).status, 400, "only one shipping set per location")
+    assert.equal((await mk("pickup")).status, 201)
+    assert.equal((await call("POST", `/admin/stock-locations/${loc.id}/fulfillment-sets`, { name: "x", type: "air" })).status, 400)
+
+    const set = first.json.stock_location.fulfillment_sets[0]
+    const zoneName = label("zone")
+    const created = await call("POST", `/admin/fulfillment-sets/${set.id}/service-zones`, { name: zoneName, geo_zones: [{ type: "country", country_code: "dk" }, { type: "country", country_code: "se" }] })
+    assert.equal(created.status, 201)
+    const zone = created.json.service_zone
+    assert.equal(zone.geo_zones.length, 2)
+    assert.equal((await call("POST", `/admin/fulfillment-sets/${set.id}/service-zones`, { name: zoneName.toUpperCase() })).status, 400, "zone names are unique in a set")
+    assert.equal((await call("POST", `/admin/fulfillment-sets/${set.id}/service-zones`, { name: label("z"), geo_zones: [{ type: "province", country_code: "us" }] })).status, 400)
+
+    // replacing the areas: dk stays, se goes, no is added
+    const replaced = await call("POST", `/admin/fulfillment-sets/${set.id}/service-zones/${zone.id}`, { geo_zones: [{ type: "country", country_code: "dk" }, { type: "country", country_code: "no" }] })
+    assert.equal(replaced.status, 200)
+    const countries = replaced.json.fulfillment_set.service_zones[0].geo_zones.map((g: any) => g.country_code).sort()
+    assert.deepEqual(countries, ["dk", "no"])
+    const renamed = await call("POST", `/admin/fulfillment-sets/${set.id}/service-zones/${zone.id}`, { name: "Nordics" })
+    assert.equal(renamed.json.fulfillment_set.service_zones[0].name, "Nordics")
+
+    // the provider has to be connected to the location before an option can use it
+    assert.equal((await call("POST", "/admin/shipping-options", optionBody(zone.id))).status, 400)
+    await call("POST", `/admin/stock-locations/${loc.id}/fulfillment-providers`, { add: ["manual"] })
+    const ok = await call("POST", "/admin/shipping-options", optionBody(zone.id))
+    assert.equal(ok.status, 201)
+    assert.equal((await call("POST", `/admin/stock-locations/${loc.id}/fulfillment-providers`, { remove: ["manual"] })).status, 400, "a provider in use cannot be disconnected")
+
+    // disabling the set removes its zones and options
+    assert.equal((await call("DELETE", `/admin/fulfillment-sets/${set.id}`)).status, 200)
+    assert.equal((await call("GET", `/admin/shipping-options/${ok.json.shipping_option.id}`)).status, 404)
+    const after = await call("GET", `/admin/stock-locations/${loc.id}`)
+    assert.deepEqual(after.json.stock_location.fulfillment_sets.map((f: any) => f.type), ["pickup"])
+  })
+
+  it("creates shipping options the way Lupus's form does and validates them", async () => {
+    const { zone } = await setup()
+    const res = await call("POST", "/admin/shipping-options", optionBody(zone.id, {
+      prices: [
+        { currency_code: "usd", amount: 500 },
+        { currency_code: "usd", amount: 0, rules: [{ attribute: "item_total", operator: "gte", value: 5000 }] },
+      ],
+    }))
+    assert.equal(res.status, 201)
+    const o = res.json.shipping_option
+    assert.equal(o.service_zone_id, zone.id)
+    assert.equal(o.type.code, "standard", "the type was created with the option")
+    assert.equal(o.shipping_profile.id, profileId)
+    assert.equal(o.prices.length, 2)
+    assert.equal(o.is_return, false)
+    assert.equal(o.enabled_in_store, true)
+    assert.ok(o.rules.some((r: any) => r.attribute === "enabled_in_store" && r.value === "true"))
+
+    const bad = (extra: any) => call("POST", "/admin/shipping-options", optionBody(zone.id, extra))
+    assert.equal((await bad({ name: " " })).status, 400)
+    assert.equal((await bad({ price_type: "calculated", prices: [] })).status, 400, "manual cannot calculate prices")
+    assert.equal((await bad({ shipping_profile_id: "sp_missing" })).status, 404)
+    assert.equal((await bad({ service_zone_id: "serz_missing" })).status, 404)
+    assert.equal((await bad({ data: { id: "unknown-option" } })).status, 400)
+    assert.equal((await bad({ prices: [{ amount: 5 }] })).status, 400, "a price needs a currency or region")
+    assert.equal((await bad({ prices: [{ currency_code: "usd", amount: 1 }, { currency_code: "usd", amount: 2 }] })).status, 400, "duplicate price")
+    assert.equal((await bad({ prices: [{ currency_code: "usd", amount: 1, rules: [{ attribute: "item_total", operator: "gte", value: 9 }, { attribute: "item_total", operator: "lte", value: 2 }] }] })).status, 400)
+    assert.equal((await bad({ prices: [{ currency_code: "usd", amount: -5 }] })).status, 400)
+  })
+
+  it("edits a shipping option and its prices, and deleting a type detaches it", async () => {
+    const { zone } = await setup()
+    const made = await call("POST", "/admin/shipping-options", optionBody(zone.id))
+    const id = made.json.shipping_option.id
+    const typeId = made.json.shipping_option.type.id
+    const upd = await call("POST", `/admin/shipping-options/${id}`, {
+      name: "Renamed",
+      prices: [{ currency_code: "eur", amount: 700 }, { currency_code: "usd", amount: 800 }],
+      rules: [{ attribute: "enabled_in_store", operator: "eq", value: "false" }],
+    })
+    assert.equal(upd.status, 200)
+    const o = upd.json.shipping_option
+    assert.equal(o.name, "Renamed")
+    assert.deepEqual(o.prices.map((p: any) => [p.currency_code, p.amount]).sort(), [["eur", 700], ["usd", 800]])
+    assert.equal(o.enabled_in_store, false)
+    assert.equal(o.is_return, false, "an untouched flag stays")
+
+    const del = await call("DELETE", `/admin/shipping-option-types/${typeId}`)
+    assert.equal(del.status, 200)
+    assert.equal((await call("GET", `/admin/shipping-options/${id}`)).json.shipping_option.type, null)
+  })
+
+  it("only offers options that apply to the cart: zone, channel, pickup, enabled, price and conditions", async () => {
+    const { zone } = await setup(["dk"])
+    const mkOpt = async (extra: any) => (await call("POST", "/admin/shipping-options", optionBody(zone.id, extra))).json.shipping_option
+    const std = await mkOpt({ name: label("std") })
+    const free = await mkOpt({ name: label("free"), prices: [{ currency_code: "usd", amount: 0, rules: [{ attribute: "item_total", operator: "gte", value: 5000 }] }] })
+    const hidden = await mkOpt({ name: label("hidden"), rules: [{ attribute: "enabled_in_store", operator: "eq", value: "false" }] })
+    const ret = await mkOpt({ name: label("return"), rules: [{ attribute: "is_return", operator: "eq", value: "true" }] })
+    const eur = await mkOpt({ name: label("eur"), prices: [{ currency_code: "eur", amount: 100 }] })
+
+    // item total 1000: standard yes, the >=5000 free option not yet, hidden/return/eur never
+    const small = await makeCart("dk")
+    const smallNames = await names(small)
+    assert.ok(smallNames.includes(std.name))
+    assert.ok(!smallNames.includes(free.name), "conditional price needs a big enough cart")
+    assert.ok(!smallNames.includes(hidden.name), "not enabled in store")
+    assert.ok(!smallNames.includes(ret.name), "return options are never offered")
+    assert.ok(!smallNames.includes(eur.name), "no price in the cart's currency")
+    assert.equal((await fulfillmentService.optionsForCart(small)).find((o: any) => o.id === std.id).amount, 500)
+
+    const big = await makeCart("dk", { qty: 5 })
+    const bigOpts = await fulfillmentService.optionsForCart(big)
+    assert.equal(bigOpts.find((o: any) => o.id === free.id)?.amount, 0, "free shipping above the threshold")
+
+    assert.ok(!(await names(await makeCart("se"))).includes(std.name), "address outside the service zone")
+    assert.ok(!(await names(await makeCart("dk", { channel: otherChannelId }))).includes(std.name), "location not connected to the cart's sales channel")
+
+    // a zone in a pickup set never ships
+    const pickupLoc = await makeLocation()
+    await call("POST", `/admin/stock-locations/${pickupLoc.id}/fulfillment-providers`, { add: ["manual"] })
+    await call("POST", `/admin/stock-locations/${pickupLoc.id}/sales-channels`, { add: [channelId] })
+    const ps = (await call("POST", `/admin/stock-locations/${pickupLoc.id}/fulfillment-sets`, { name: label("pickup"), type: "pickup" })).json.stock_location.fulfillment_sets[0]
+    const pz = (await call("POST", `/admin/fulfillment-sets/${ps.id}/service-zones`, { name: label("pz"), geo_zones: [{ type: "country", country_code: "dk" }] })).json.service_zone
+    const pickup = (await call("POST", "/admin/shipping-options", optionBody(pz.id, { name: label("pickup-opt") }))).json.shipping_option
+    assert.ok(!(await names(await makeCart("dk"))).includes(pickup.name), "pickup options are not shipping options")
+  })
+
+  it("prefers a region price over a currency price and honours province / postal areas", async () => {
+    if (regionId) {
+      const regionCurrency = (await pool.query(`SELECT currency_code FROM region WHERE id=$1`, [regionId])).rows[0].currency_code
+      const { zone } = await setup(["dk"])
+      const opt = (await call("POST", "/admin/shipping-options", optionBody(zone.id, {
+        name: label("regional"),
+        prices: [{ currency_code: regionCurrency, amount: 900 }, { region_id: regionId, amount: 400 }],
+      }))).json.shipping_option
+      const cart = await cartService.create({ currency_code: regionCurrency, region_id: regionId, sales_channel_id: channelId } as any)
+      await cartService.setAddress(cart.id, "shipping", { country_code: "dk" } as any)
+      const found = (await fulfillmentService.optionsForCart(cart.id)).find((o: any) => o.id === opt.id)
+      assert.equal(found?.amount, 400, "the region's price wins")
+    }
+
+    const { zone: pz, set } = await setup(["dk"])
+    await call("POST", `/admin/fulfillment-sets/${set.id}/service-zones/${pz.id}`, {
+      geo_zones: [{ type: "province", country_code: "us", province_code: "us-ca" }, { type: "postal", country_code: "gb", postal_expression: ["SW1"] }],
+    })
+    const o2 = (await call("POST", "/admin/shipping-options", optionBody(pz.id, { name: label("areas") }))).json.shipping_option
+    const cartIn = async (address: any) => {
+      const c = await cartService.create({ currency_code: "usd", sales_channel_id: channelId } as any)
+      await cartService.addItem(c.id, { variant_id: variantId, quantity: 1 })
+      await cartService.setAddress(c.id, "shipping", address)
+      return (await names(c.id)).includes(o2.name)
+    }
+    assert.equal(await cartIn({ country_code: "us", province: "CA" }), true)
+    assert.equal(await cartIn({ country_code: "us", province: "NY" }), false)
+    assert.equal(await cartIn({ country_code: "gb", postal_code: "SW1A 1AA" }), true)
+    assert.equal(await cartIn({ country_code: "gb", postal_code: "EC1A 1BB" }), false)
+  })
+
+  it("manages shipping option types and shipping profiles", async () => {
+    const t = await call("POST", "/admin/shipping-option-types", { label: label("Express"), code: "express", description: "Fast" })
+    assert.equal(t.status, 201)
+    const id = t.json.shipping_option_type.id
+    assert.equal((await call("POST", "/admin/shipping-option-types", { label: "", code: "x" })).status, 400)
+    assert.equal((await call("POST", "/admin/shipping-option-types", { label: "x", code: " " })).status, 400)
+    const upd = await call("POST", `/admin/shipping-option-types/${id}`, { label: "Overnight", description: null })
+    assert.equal(upd.json.shipping_option_type.label, "Overnight")
+    assert.equal(upd.json.shipping_option_type.description, null)
+    const list = await call("GET", "/admin/shipping-option-types?q=overnight")
+    assert.ok(list.json.shipping_option_types.some((x: any) => x.id === id))
+    assert.equal((await call("DELETE", `/admin/shipping-option-types/${id}`)).status, 200)
+    assert.equal((await call("GET", `/admin/shipping-option-types/${id}`)).status, 404)
+
+    const name = label("Heavy")
+    const p = await call("POST", "/admin/shipping-profiles", { name, type: "heavy" })
+    assert.equal(p.status, 201)
+    assert.equal((await call("POST", "/admin/shipping-profiles", { name: name.toUpperCase(), type: "x" })).status, 400, "profile names are unique")
+    assert.equal((await call("POST", "/admin/shipping-profiles", { name: "", type: "x" })).status, 400)
+    const pid = p.json.shipping_profile.id
+    const edited = await call("POST", `/admin/shipping-profiles/${pid}`, { type: "oversized", metadata: { a: "b" } })
+    assert.equal(edited.json.shipping_profile.type, "oversized")
+    assert.deepEqual(edited.json.shipping_profile.metadata, { a: "b" })
+    assert.equal((await call("DELETE", `/admin/shipping-profiles/${pid}`)).status, 200)
+    assert.equal((await call("GET", `/admin/shipping-profiles/${pid}`)).status, 404)
+  })
+
+  it("deleting a location removes its sets, zones and options", async () => {
+    const { loc, zone } = await setup()
+    const o = (await call("POST", "/admin/shipping-options", optionBody(zone.id))).json.shipping_option
+    assert.equal((await call("DELETE", `/admin/stock-locations/${loc.id}`)).status, 200)
+    assert.equal((await call("GET", `/admin/stock-locations/${loc.id}`)).status, 404)
+    assert.equal((await call("GET", `/admin/shipping-options/${o.id}`)).status, 404)
+    assert.equal((await call("DELETE", `/admin/stock-locations/${loc.id}`)).status, 404)
+  })
+})
