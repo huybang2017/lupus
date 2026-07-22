@@ -221,3 +221,226 @@ describe("storefront parity", () => {
 
   it("translations: x-lupus-locale overlays product, collection and category text with a language fallback", async () => {
     await pool.query(`INSERT INTO translation_locale (code) VALUES ('vi') ON CONFLICT DO NOTHING`)
+    const put = (entity: string, id: string, field: string, text: string) =>
+      pool.query(
+        `INSERT INTO translation (locale_code, entity, entity_id, field, text) VALUES ('vi',$1,$2,$3,$4) ON CONFLICT (locale_code, entity, entity_id, field) DO UPDATE SET text=$4`,
+        [entity, id, field, text]
+      )
+    await put("product", productId, "title", `Ao thun ${T}`)
+    await put("product_collection", collectionId, "title", `Bo suu tap ${T}`)
+    await put("product_category", childCat, "name", `Ao so mi ${T}`)
+    try {
+      const vi = await api("GET", `/store/products?handle=${handle}`, undefined, undefined, { "x-lupus-locale": "vi-VN" })
+      assert.equal(vi.json.products[0].title, `Ao thun ${T}`, "vi-vn falls back to the vi translation")
+      assert.equal(vi.json.products[0].collection.title, `Bo suu tap ${T}`)
+      assert.equal(vi.json.products[0].categories[0].name, `Ao so mi ${T}`)
+      assert.equal(vi.json.products[0].handle, handle, "untranslated fields stay")
+      const cats = await api("GET", `/store/product-categories?handle=sf-child-${T}`, undefined, undefined, { "x-lupus-locale": "vi" })
+      assert.equal(cats.json.product_categories[0].name, `Ao so mi ${T}`)
+      const cols = await api("GET", `/store/collections?handle=sf-col-${T}`, undefined, undefined, { "x-lupus-locale": "vi" })
+      assert.equal(cols.json.collections[0].title, `Bo suu tap ${T}`)
+      const plain = await api("GET", `/store/products?handle=${handle}`)
+      assert.equal(plain.json.products[0].title, `SF Shirt ${T}`)
+      const other = await api("GET", `/store/products?handle=${handle}`, undefined, undefined, { "x-lupus-locale": "de" })
+      assert.equal(other.json.products[0].title, `SF Shirt ${T}`)
+    } finally {
+      await pool.query(`DELETE FROM translation WHERE entity_id = ANY($1)`, [[productId, collectionId, childCat]])
+    }
+  })
+
+  it("cart: region currency, Lupus totals, addresses, region move, shipping tamper guard", async () => {
+    const created1 = await api("POST", "/store/carts", { region_id: regionId })
+    assert.equal(created1.status, 201)
+    cartId = created1.json.cart.id
+    created.carts.push(cartId)
+    assert.equal(created1.json.cart.currency_code, cur)
+    assert.equal(created1.json.cart.region.id, regionId)
+
+    const add = await api("POST", `/store/carts/${cartId}/line-items`, { variant_id: variantId, quantity: 2 })
+    assert.equal(add.status, 201)
+    const item = add.json.cart.items[0]
+    assert.equal(item.product_title, `SF Shirt ${T}`)
+    assert.equal(item.product_handle, handle)
+    assert.equal(item.thumbnail, "http://example.com/t.png")
+    assert.equal(item.subtotal, 5000)
+    assert.equal(item.total, 5000)
+    assert.equal(add.json.cart.subtotal, 5000)
+    assert.equal(add.json.cart.total, 5000)
+    assert.equal(add.json.cart.totals.total, 5000)
+    assert.equal(add.json.cart.shipping_total, 0)
+
+    const upd = await api("POST", `/store/carts/${cartId}`, {
+      email,
+      shipping_address: { first_name: "Sam", last_name: "Front", address_1: "1 Main", address_2: "Apt 2", company: "Acme", city: "Town", country_code: "dk", postal_code: "1000", province: "X", phone: "123" },
+      billing_address: { first_name: "Sam", last_name: "Front", address_1: "1 Main", city: "Town", country_code: "dk", postal_code: "1000" },
+    })
+    assert.equal(upd.status, 200)
+    assert.equal(upd.json.cart.email, email)
+    assert.equal(upd.json.cart.shipping_address.address_2, "Apt 2")
+    assert.equal(upd.json.cart.shipping_address.company, "Acme")
+    assert.equal(upd.json.cart.billing_address.city, "Town")
+
+    const options = await api("GET", `/store/shipping-options?cart_id=${cartId}`)
+    assert.equal(options.status, 200)
+    assert.ok(Array.isArray(options.json.shipping_options))
+    // the price is never taken from the request: an option the cart is not offered is refused
+    const forged = await api("POST", `/store/carts/${cartId}/shipping-methods`, { option_id: "so_forged", name: "Free", amount: 0 })
+    assert.equal(forged.status, 400)
+    const noOption = await api("POST", `/store/carts/${cartId}/shipping-methods`, { name: "Free", amount: 0 })
+    assert.equal(noOption.status, 400)
+
+    // moving to a region in another currency reprices the line (variant M has a price there)
+    const moved = await api("POST", `/store/carts/${cartId}`, { region_id: region2Id })
+    assert.equal(moved.status, 200)
+    assert.equal(moved.json.cart.currency_code, cur2)
+    assert.equal(moved.json.cart.items[0].unit_price, 900)
+    assert.equal(moved.json.cart.total, 1800)
+    const back = await api("POST", `/store/carts/${cartId}`, { region_id: regionId })
+    assert.equal(back.json.cart.items[0].unit_price, 2500)
+
+    // a variant without a price in the target currency blocks the move instead of silently dropping it
+    const l = await pool.query(`SELECT id FROM product_variant WHERE product_id=$1 AND title='L'`, [productId])
+    await api("POST", `/store/carts/${cartId}/line-items`, { variant_id: l.rows[0].id, quantity: 1 })
+    const blocked = await api("POST", `/store/carts/${cartId}`, { region_id: region2Id })
+    assert.equal(blocked.status, 400)
+    const still = await api("GET", `/store/carts/${cartId}`)
+    assert.equal(still.json.cart.currency_code, cur)
+    const line = still.json.cart.items.find((i: any) => i.variant_id === l.rows[0].id)
+    await api("DELETE", `/store/carts/${cartId}/line-items/${line.id}`)
+  })
+
+  it("payment: providers per region, one collection per cart, session replaced on re-init", async () => {
+    const providers = await api("GET", `/store/payment-providers?region_id=${regionId}`)
+    assert.ok(providers.json.payment_providers.some((p: any) => p.id === "pp_system_default"))
+    const a = await api("POST", "/store/payment-collections", { cart_id: cartId })
+    assert.equal(a.status, 201)
+    const b = await api("POST", "/store/payment-collections", { cart_id: cartId })
+    assert.equal(b.json.payment_collection.id, a.json.payment_collection.id)
+    const s1 = await api("POST", `/store/payment-collections/${a.json.payment_collection.id}/payment-sessions`, { provider_id: "pp_system_default" })
+    assert.equal(s1.status, 201)
+    assert.equal(s1.json.payment_collection.payment_sessions.length, 1)
+    const s2 = await api("POST", `/store/payment-collections/${a.json.payment_collection.id}/payment-sessions`, { provider_id: "pp_system_default" })
+    assert.equal(s2.json.payment_collection.payment_sessions.length, 1)
+    const cart = await api("GET", `/store/carts/${cartId}`)
+    assert.equal(cart.json.cart.payment_collection.payment_sessions[0].provider_id, "pp_system_default")
+  })
+
+  it("complete: order carries addresses, payment and Lupus totals", async () => {
+    const done = await api("POST", `/store/carts/${cartId}/complete`)
+    assert.equal(done.status, 201)
+    assert.equal(done.json.type, "order")
+    const order = done.json.order
+    orderId = order.id
+    assert.equal(order.email, email)
+    assert.equal(order.shipping_address.company, "Acme")
+    assert.equal(order.billing_address.first_name, "Sam")
+    assert.equal(order.payment_status, "authorized")
+    assert.equal(order.payment_collections[0].payments[0].provider_id, "pp_system_default")
+    assert.equal(order.items[0].product_title, `SF Shirt ${T}`)
+    assert.equal(order.items[0].variant_title, "M")
+    assert.equal(order.items[0].total, 5000)
+    assert.equal(order.fulfillment_status, "not_fulfilled")
+    const again = await api("GET", `/store/orders/${orderId}`)
+    assert.equal(again.json.order.id, orderId)
+    const dupe = await api("POST", `/store/carts/${cartId}/complete`)
+    assert.equal(dupe.status, 400)
+  })
+
+  it("customer: register, profile fill-in with the token, addresses and own orders", async () => {
+    const reg = await api("POST", "/auth/customer/emailpass/register", { email, password: "sf-pass-1234" })
+    assert.equal(reg.status, 200)
+    token = reg.json.token
+    const profile = await api("POST", "/store/customers", { email, first_name: "Sam", last_name: "Front", phone: "555" }, token)
+    assert.ok([200, 201].includes(profile.status))
+    assert.equal(profile.json.customer.first_name, "Sam")
+    const login = await api("POST", "/auth/customer/emailpass", { email, password: "sf-pass-1234" })
+    assert.equal(login.status, 200)
+    token = login.json.token
+    const me = await api("GET", "/store/customers/me", undefined, token)
+    assert.equal(me.json.customer.email, email)
+    assert.equal(me.json.customer.last_name, "Front")
+    assert.ok(Array.isArray(me.json.customer.addresses))
+    const addr = await api("POST", "/store/customers/me/addresses", { first_name: "Sam", last_name: "Front", address_1: "1 Main", city: "Town", country_code: "dk", postal_code: "1000", is_default_shipping: true }, token)
+    assert.equal(addr.status, 201)
+    const me2 = await api("GET", "/store/customers/me", undefined, token)
+    assert.equal(me2.json.customer.addresses.length, 1)
+    assert.equal(me2.json.customer.addresses[0].is_default_shipping, true)
+    const orders = await api("GET", "/store/orders?limit=10", undefined, token)
+    assert.equal(orders.status, 200)
+    assert.ok(orders.json.orders.some((o: any) => o.id === orderId))
+    assert.equal((await api("GET", "/store/orders")).status, 401)
+    const locales = await api("GET", "/store/locales")
+    assert.ok(locales.json.locales.every((l: any) => l.code && l.name))
+  })
+
+  it("cart: a cart created while signed in belongs to the customer and a guest cart can be transferred", async () => {
+    const mine = await api("POST", "/store/carts", { region_id: regionId }, token)
+    assert.equal(mine.status, 201)
+    created.carts.push(mine.json.cart.id)
+    assert.ok(mine.json.cart.customer_id, "the signed-in customer is attached")
+    assert.equal(mine.json.cart.email, email)
+    const guest = await api("POST", "/store/carts", { region_id: regionId })
+    created.carts.push(guest.json.cart.id)
+    assert.equal(guest.json.cart.customer_id, null)
+    assert.equal((await api("POST", `/store/carts/${guest.json.cart.id}/customer`, {})).status, 401, "transfer needs a token")
+    const moved = await api("POST", `/store/carts/${guest.json.cart.id}/customer`, {}, token)
+    assert.equal(moved.status, 200)
+    assert.equal(moved.json.cart.customer_id, mine.json.cart.customer_id)
+  })
+
+  it("order transfer: the requester asks, the current owner approves or refuses with the emailed token", async () => {
+    const emailB = `sf-b-${T}@example.com`
+    const regB = await api("POST", "/auth/customer/emailpass/register", { email: emailB, password: "sf-pass-1234", first_name: "Bea", last_name: "Taker" })
+    assert.equal(regB.status, 200)
+    const tokenB = regB.json.token
+    try {
+      // the owner cannot request their own order; an unknown order is a 404
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/request`, {}, token)).status, 400)
+      assert.equal((await api("POST", "/store/orders/order_missing/transfer/request", {}, tokenB)).status, 404)
+
+      const req = await api("POST", `/store/orders/${orderId}/transfer/request`, {}, tokenB)
+      assert.equal(req.status, 201)
+      assert.equal(req.json.order.id, orderId)
+      assert.equal(req.json.order.email, "s***@example.com", "the order email is masked for the requester")
+      assert.equal(Object.keys(req.json.order).length, 2, "nothing else about the order is returned")
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/request`, {}, tokenB)).status, 400, "one pending request at a time")
+
+      const mail = await pool.query(`SELECT data FROM notification WHERE to_address=$1 AND template='order-transfer-requested' ORDER BY created_at DESC LIMIT 1`, [email])
+      const transferToken = (typeof mail.rows[0].data === "string" ? JSON.parse(mail.rows[0].data) : mail.rows[0].data).token
+      assert.ok(transferToken)
+
+      // wrong token and wrong party are refused
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/accept`, { token: "nope" }, token)).status, 400)
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/accept`, { token: transferToken }, tokenB)).status, 404, "the requester cannot approve their own request")
+
+      const accepted = await api("POST", `/store/orders/${orderId}/transfer/accept`, { token: transferToken }, token)
+      assert.equal(accepted.status, 200)
+      assert.equal(accepted.json.order.email, emailB)
+      const mineB = await api("GET", "/store/orders", undefined, tokenB)
+      assert.ok(mineB.json.orders.some((o: any) => o.id === orderId))
+      const mineA = await api("GET", "/store/orders", undefined, token)
+      assert.ok(!mineA.json.orders.some((o: any) => o.id === orderId))
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/accept`, { token: transferToken }, token)).status, 404, "a token works once")
+
+      // the original owner asks to get it back; the new owner declines
+      const back = await api("POST", `/store/orders/${orderId}/transfer/request`, {}, token)
+      assert.equal(back.status, 201)
+      const mail2 = await pool.query(`SELECT data FROM notification WHERE to_address=$1 AND template='order-transfer-requested' ORDER BY created_at DESC LIMIT 1`, [emailB])
+      const token2 = (typeof mail2.rows[0].data === "string" ? JSON.parse(mail2.rows[0].data) : mail2.rows[0].data).token
+      const declined = await api("POST", `/store/orders/${orderId}/transfer/decline`, { token: token2 }, tokenB)
+      assert.equal(declined.status, 200)
+      assert.equal(declined.json.order.email, emailB, "a declined request leaves the owner unchanged")
+
+      // the requester can withdraw a request
+      const again = await api("POST", `/store/orders/${orderId}/transfer/request`, {}, token)
+      assert.equal(again.status, 201)
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/cancel`, {}, tokenB)).status, 404, "only the requester can cancel")
+      assert.equal((await api("POST", `/store/orders/${orderId}/transfer/cancel`, {}, token)).status, 200)
+    } finally {
+      await pool.query(`DELETE FROM "order" WHERE id=$1`, [orderId]).catch(() => undefined)
+      await pool.query(`DELETE FROM notification WHERE to_address = ANY($1)`, [[email, emailB]]).catch(() => undefined)
+      await pool.query(`DELETE FROM customer WHERE email=$1`, [emailB]).catch(() => undefined)
+      await pool.query(`DELETE FROM provider_identity WHERE entity_id=$1`, [emailB]).catch(() => undefined)
+    }
+  })
+})
