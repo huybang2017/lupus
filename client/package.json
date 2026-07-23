@@ -1,0 +1,55 @@
+{
+  "name": "@dtc/admin",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Plain React admin dashboard for the lupus backend. Zero framework dependencies.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.5.7",
+    "@radix-ui/react-avatar": "1.1",
+    "@radix-ui/react-dialog": "1.1",
+    "@radix-ui/react-dropdown-menu": "2.1",
+    "@radix-ui/react-popover": "1.1",
+    "@radix-ui/react-scroll-area": "1.1",
+    "@radix-ui/react-select": "2.1",
+    "@radix-ui/react-separator": "1.1",
+    "@radix-ui/react-slot": "1.1",
+    "@radix-ui/react-tabs": "1.1",
+    "@radix-ui/react-toast": "1.2",
+    "@radix-ui/react-tooltip": "1.1",
+    "@tanstack/react-query": "5.64",
+    "@tanstack/react-table": "8.20",
+    "autoprefixer": "10.4",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "11.15",
+    "i18next": "23.7",
+    "i18next-browser-languagedetector": "7.2",
+    "lucide-react": "^0.460.0",
+    "postcss": "8.4",
+    "qrcode-generator": "^2.0.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "7.83",
+    "react-i18next": "13.5",
+    "react-router-dom": "^7.18.2",
+    "tailwind-merge": "2.5",
+    "tailwindcss": "^3.4.1",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.5",
+    "@types/react-dom": "^19.0.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.6.2",
+    "vite": "^7.3.6"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}
