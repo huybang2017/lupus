@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lupus Admin</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#f6f7f9;color:#111}
+header{background:#111;color:#fff;padding:12px 20px;display:flex;gap:12px;align-items:center}
+main{padding:20px;max-width:1100px;margin:0 auto}
+nav{display:flex;gap:8px;margin:16px 0}
+nav button{padding:8px 14px;cursor:pointer}
+table{width:100%;border-collapse:collapse;background:#fff}
+th,td{border:1px solid #e2e2e2;padding:8px;text-align:left;font-size:13px}
+#login{display:flex;gap:8px;margin:16px 0}
+input{padding:8px}
+pre{background:#111;color:#0f0;padding:12px;overflow:auto}
+</style>
+</head>
+<body>
+<header><strong>Lupus Admin</strong><span id="who"></span></header>
+<main>
+<div id="login">
+<input id="email" placeholder="admin email" />
+<input id="password" type="password" placeholder="password" />
+<button onclick="login()">Login / Register admin</button>
+</div>
+<nav>
+<button onclick="show('products')">Products</button>
+<button onclick="show('orders')">Orders</button>
+<button onclick="show('customers')">Customers</button>
+<button onclick="show('promotions')">Promotions</button>
+<button onclick="show('events')">Events</button>
+</nav>
+<div id="out"></div>
+</main>
+<script src="/app/app.js"></script>
+</body>
+</html>
