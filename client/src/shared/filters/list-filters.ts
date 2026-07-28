@@ -207,3 +207,212 @@ function appendValue(
       const raw = toScalar(value);
       if (raw === "true" || raw === "false") params.set(def.key, raw);
     }
+    return;
+  }
+  const scalar = toScalar(value);
+  if (!isBlank(scalar)) params.set(def.key, String(scalar));
+}
+
+/** Inverse of parseFilters. Never emits empty or unknown params. */
+export function serializeFilters(
+  active: ActiveFilter[],
+  defs: FilterDef[],
+): URLSearchParams {
+  const params = new URLSearchParams();
+  const byKey = new Map(defs.map((d) => [d.key, d]));
+  for (const entry of active) {
+    if (!hasFilterValue(entry.value)) continue;
+    const def = byKey.get(entry.key);
+    if (!def) continue;
+    appendValue(params, def, entry.value);
+  }
+  return params;
+}
+
+/** Compact query string for useResourceList (includes a leading "?" or ""). */
+export function filterQueryString(
+  active: ActiveFilter[],
+  defs: FilterDef[],
+): string {
+  const qs = serializeFilters(active, defs).toString();
+  return qs === "" ? "" : `?${qs}`;
+}
+
+/** True when `active` contains a non-empty entry for `key`. */
+export function isFilterActive(active: ActiveFilter[], key: string): boolean {
+  return active.some((f) => f.key === key && hasFilterValue(f.value));
+}
+
+/** Add or replace one filter value. Undefined / empty values REMOVE the entry. */
+export function setFilterValue(
+  active: ActiveFilter[],
+  def: FilterDef,
+  value: FilterValue,
+): ActiveFilter[] {
+  if (!hasFilterValue(value)) return removeFilter(active, def.key);
+  return [...removeFilter(active, def.key), { key: def.key, value }];
+}
+
+/** Toggle a filter on/off (used by the "Add filter" menu). */
+export function toggleFilter(
+  active: ActiveFilter[],
+  def: FilterDef,
+): ActiveFilter[] {
+  if (isFilterActive(active, def.key)) return removeFilter(active, def.key);
+  return [...active, { key: def.key, value: emptyFilterValue(def) }];
+}
+
+export function removeFilter(
+  active: ActiveFilter[],
+  key: string,
+): ActiveFilter[] {
+  return active.filter((f) => f.key !== key);
+}
+
+export function clearFilters(): ActiveFilter[] {
+  return [];
+}
+
+/** Default/empty value for a def, used when a filter is first turned on. */
+export function emptyFilterValue(def: FilterDef): FilterValue {
+  if (isMulti(def)) return [];
+  if (isRange(def)) return {};
+  if (def.type === "boolean") return false;
+  return "";
+}
+
+/**
+ * Just the value half of a filter, e.g. "pending" / "2 selected" /
+ * "after 2026-01-01". Empty string when nothing usable is set. The chip renders
+ * this next to its own label, so it must never repeat the label or the
+ * "Label: " prefix.
+ */
+export function filterValueText(def: FilterDef, value: FilterValue): string {
+  const labels = new Map<string, string>(
+    (def.options ?? []).map((o): [string, string] => [o.value, o.label ?? o.value]),
+  );
+  const labelOf = (v: string) => labels.get(v) ?? v;
+
+  let body: string;
+  if (Array.isArray(value)) {
+    const items = value.filter((v) => v !== "");
+    body =
+      items.length === 0
+        ? ""
+        : items.length <= 2
+          ? items.map(labelOf).join(" or ")
+          : `${items.length} selected`;
+  } else if (typeof value === "boolean") {
+    body = value ? "Yes" : "No";
+  } else if (value && typeof value === "object") {
+    const range = toRange(value);
+    const parts: string[] = [];
+    const isNumber = def.type === "number";
+    if (!isBlank(range.from)) parts.push(`${isNumber ? "at least" : "after"} ${range.from}`);
+    if (!isBlank(range.to)) parts.push(`${isNumber ? "at most" : "before"} ${range.to}`);
+    body = parts.join(" and ");
+  } else {
+    // Scalar values still go through the option labels: "pending" reads as
+    // "Pending" in the chip, and types without options pass through untouched.
+    body = labelOf(toScalar(value) ?? "");
+  }
+
+  return body;
+}
+
+/**
+ * Human-readable chip text, e.g. "Status: pending" / "Created at: after
+ * 2026-01-01". Falls back to the bare label when the filter has no value yet,
+ * which is what a freshly toggled-on chip shows.
+ */
+export function formatFilterValue(def: FilterDef, value: FilterValue): string {
+  const text = filterValueText(def, value);
+  return text === "" ? def.label : `${def.label}: ${text}`;
+}
+
+function matchCell(
+  def: FilterDef,
+  cell: unknown,
+  value: FilterValue,
+): boolean {
+  switch (def.type) {
+    case "text": {
+      const needle = (toScalar(value) ?? "").trim().toLowerCase();
+      if (needle === "") return true;
+      return cellKey(cell).toLowerCase().includes(needle);
+    }
+    case "select": {
+      const wanted = Array.isArray(value)
+        ? value.map((v) => String(v))
+        : [toScalar(value) ?? ""];
+      return wanted.includes(cellKey(cell));
+    }
+    case "multiselect": {
+      return toArray(value).includes(cellKey(cell));
+    }
+    case "boolean": {
+      return toBoolean(cell) === toBoolean(value);
+    }
+    case "date": {
+      const day = dayOf(cell);
+      // Unreadable cell: keep the row rather than hiding it behind a filter.
+      if (day === "") return true;
+      const range = toRange(value);
+      const from = isBlank(range.from) ? undefined : String(range.from);
+      const to = isBlank(range.to) ? undefined : String(range.to);
+      if (from !== undefined && day < from) return false;
+      if (to !== undefined && day > to) return false;
+      return true;
+    }
+    case "number": {
+      const n = toNumber(cell);
+      if (n === undefined) return true;
+      const range = toRange(value);
+      const from = toNumber(range.from);
+      const to = toNumber(range.to);
+      if (from !== undefined && n < from) return false;
+      if (to !== undefined && n > to) return false;
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
+/**
+ * Client-side predicate. Returns true when the row passes every active filter.
+ * Missing accessor or unreadable value => the filter is skipped (no crash).
+ */
+export function matchesFilters<T>(
+  row: T,
+  active: ActiveFilter[],
+  defs: FilterDef[],
+): boolean {
+  if (active.length === 0) return true;
+  const byKey = new Map(defs.map((d) => [d.key, d]));
+  for (const entry of active) {
+    if (!hasFilterValue(entry.value)) continue;
+    const def = byKey.get(entry.key);
+    if (!def || typeof def.accessor !== "function") continue;
+    let cell: unknown;
+    try {
+      cell = def.accessor(row);
+    } catch {
+      continue;
+    }
+    if (!matchCell(def, cell, entry.value)) return false;
+  }
+  return true;
+}
+
+/** Stable, order-independent signature for react-query keys. */
+export function filterSignature(
+  active: ActiveFilter[],
+  defs: FilterDef[],
+): string {
+  const entries = Array.from(serializeFilters(active, defs).entries());
+  entries.sort(([ak, av], [bk, bv]) =>
+    ak === bk ? (av === bv ? 0 : av < bv ? -1 : 1) : ak < bk ? -1 : 1,
+  );
+  return entries.map(([k, v]) => `${k}=${v}`).join("&");
+}
