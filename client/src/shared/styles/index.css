@@ -1,0 +1,265 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Lupus-parity design tokens. Light is default; .dark on <html> flips them. */
+@layer base {
+  /* Thin, theme-aware scrollbars app-wide */
+  * { scrollbar-width: thin; scrollbar-color: var(--field-border) transparent; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: var(--field-border); border-radius: 4px; }
+  *::-webkit-scrollbar-thumb:hover { background: var(--fg-base); }
+  *::-webkit-scrollbar-corner { background: transparent; }
+  .table-wrap > div::-webkit-scrollbar-thumb { background: var(--fg-muted); border-radius: 4px; }
+  .table-wrap > div::-webkit-scrollbar-thumb:hover { background: var(--fg-base); }
+  :root {
+    --shell-bg: #f4f5f7;
+    --shell-sidebar: #ffffff;
+    --shell-sidebar-fg: #4b5563;
+    --nav-active-bg: #eef2ff;
+    --nav-active-fg: #1d4ed8;
+    --card-bg: #ffffff;
+    --card-border: #e2e5ea;
+    --fg-base: #1a1d21;
+    --fg-subtle: #4b5563;
+    --fg-muted: #9ca3af;
+    --fg-interactive: #1d4ed8;
+    --field-bg: #ffffff;
+    --field-border: #c9ced6;
+    --hover-bg: #f3f4f6;
+    --overlay: rgba(0, 0, 0, 0.4);
+    --radius: 0.5rem;
+  }
+  .dark {
+    --shell-bg: #151515;
+    --shell-sidebar: #1c1c1c;
+    --shell-sidebar-fg: #b3b3b3;
+    --nav-active-bg: #242424;
+    --nav-active-fg: #ededed;
+    --card-bg: #242424;
+    --card-border: #383838;
+    --fg-base: #ededed;
+    --fg-subtle: #a3a3a3;
+    --fg-muted: #737373;
+    --fg-interactive: #7aa2f7;
+    --field-bg: #333333;
+    --field-border: #5c5c5c;
+    --hover-bg: #2e2e2e;
+    --overlay: rgba(0, 0, 0, 0.6);
+  }
+  * { border-color: var(--card-border); }
+  html, body, #root { height: 100%; }
+  body {
+    background: var(--shell-bg);
+    color: var(--fg-base);
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+  }
+}
+
+@layer components {
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .field > label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-subtle);
+  }
+  .field-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-subtle);
+  }
+  .input {
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    border-radius: 8px;
+    color: var(--fg-base);
+    font-size: 14px;
+    padding: 9px 12px;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .input:focus { border-color: var(--fg-interactive); }
+  .input::placeholder { color: var(--fg-muted); }
+  .vgrid { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: 13px; }
+  .vgrid th, .vgrid td { border-right: 1px solid var(--card-border); border-bottom: 1px solid var(--card-border); padding: 0; }
+  .vgrid th:last-child, .vgrid td:last-child { border-right: none; }
+  .vgrid td { height: 40px; background: var(--field-bg); }
+  .vgrid-label { padding: 0 16px !important; color: var(--fg-base); white-space: nowrap; z-index: 1; }
+  .vgrid input:not([type=checkbox]) { width: 100%; height: 40px; box-sizing: border-box; padding: 0 16px; background: transparent; border: none; outline: none; color: var(--fg-base); font-size: 13px; }
+  .vgrid input:not([type=checkbox]):focus { outline: 2px solid var(--fg-interactive); outline-offset: -2px; }
+  .vgrid input[type=number]::-webkit-inner-spin-button { display: none; }
+  .vgrid-sym { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--fg-muted); pointer-events: none; }
+  .input-group { display: flex; align-items: stretch; background: var(--field-bg); border: 1px solid var(--field-border); border-radius: 8px; overflow: hidden; }
+  .input-group:focus-within { border-color: var(--fg-interactive); }
+  .input-group-prefix { display: flex; align-items: center; padding: 0 12px; color: var(--fg-muted); font-size: 14px; border-right: 1px solid var(--field-border); background: var(--hover-bg); }
+  .input-group .input { border: none; border-radius: 0; flex: 1; min-width: 0; background: transparent; }
+  .input-group .input:focus { border: none; }
+  .field-optional { font-weight: 500; color: var(--fg-muted); font-size: 12px; }
+  .hint { font-size: 12px; color: var(--fg-subtle); margin-top: 4px; }
+  .checkrow { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; font-size: 13px; cursor: pointer; }
+  .field-error { font-size: 12px; color: #dc2626; margin-top: 4px; }
+  .dark .field-error { color: #f87171; }
+  .input[aria-invalid="true"] { border-color: #dc2626; }
+  .dark .input[aria-invalid="true"] { border-color: #f87171; }
+  .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .btn {
+    /* Layout, not just looks: a bare button wraps its icon above its label
+       inside a narrow flex/grid cell ("Add filter" did exactly that). */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn-primary { background: var(--fg-base); color: var(--shell-bg); border-color: transparent; }
+  .btn-primary:hover:not(:disabled) { opacity: 0.85; }
+  .btn-secondary {
+    background: var(--card-bg);
+    color: var(--fg-base);
+    border-color: var(--field-border);
+  }
+  .btn-secondary:hover:not(:disabled) { background: var(--hover-bg); }
+  .btn-danger { background: none; color: #dc2626; border: none; padding: 0; font-weight: 500; }
+  .dark .btn-danger { color: #f87171; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  .badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .badge-green { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+  .badge-red { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+  .badge-gray { background: var(--hover-bg); color: var(--fg-subtle); }
+  .badge-amber { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+  .badge-blue { background: rgba(99, 102, 241, 0.12); color: #818cf8; }
+  html:not(.dark) .badge-green { color: #047857; }
+  html:not(.dark) .badge-red { color: #b91c1c; }
+  html:not(.dark) .badge-amber { color: #b45309; }
+  html:not(.dark) .badge-blue { color: #4f46e5; }
+  .dtable thead th { color: #4b5563; }
+  html:not(.dark) .dtable thead th { background: #f9fafb; }
+  .dtable thead th:first-child { border-top-left-radius: 12px; }
+  .dtable thead th:last-child { border-top-right-radius: 12px; }
+  .mono { font-family: "Roboto Mono", monospace; font-size: 12px; }
+  .table-wrap {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .dtable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  .dtable thead th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg-subtle);
+    border-bottom: 1px solid var(--card-border);
+    white-space: nowrap;
+  }
+  .dtable tbody td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--card-border);
+    vertical-align: middle;
+  }
+  .dtable tbody td.mono, .dtable tbody td .mono { overflow-wrap: anywhere; }
+  .dtable tbody tr:last-child td { border-bottom: none; }
+  .dtable tbody tr:hover { background: var(--hover-bg); }
+  .dtable-sticky-left { position: sticky; left: 0; z-index: 1; background: var(--card-bg); }
+  .dtable-sticky-right { position: sticky; right: 0; z-index: 1; background: var(--card-bg); }
+  .table-x .dtable-sticky-left { border-right: 1px solid var(--card-border); }
+  .table-x .dtable-sticky-right { border-left: 1px solid var(--card-border); }
+  .dtable tbody tr:hover .dtable-sticky-left, .dtable tbody tr:hover .dtable-sticky-right { background: var(--hover-bg); }
+  thead .dtable-sticky-left, thead .dtable-sticky-right { z-index: 2; }
+  .modal-back {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay);
+    z-index: 60;
+  }
+  .drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(560px, 100vw);
+    background: var(--card-bg);
+    border-left: 1px solid var(--card-border);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.25);
+    z-index: 61;
+    display: flex;
+    flex-direction: column;
+  }
+  .kbd {
+    border: 1px solid var(--field-border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    font-size: 11px;
+    padding: 1px 5px;
+    color: var(--fg-subtle);
+    background: var(--field-bg);
+    font-family: inherit;
+  }
+  .ui-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    text-align: left;
+    padding-right: 10px;
+  }
+  .ui-select-trigger[data-disabled] { opacity: 0.5; cursor: default; }
+  .ui-select-value {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ui-select-value[data-placeholder] { color: var(--fg-muted); }
+  .ui-select-sub { color: var(--fg-muted); font-weight: 400; }
+  .ui-select-chevron { color: var(--fg-muted); flex-shrink: 0; display: inline-flex; }
+  .ui-select-trigger[data-state="open"] .ui-select-chevron { color: var(--fg-base); }
+  .ui-select-content {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+    z-index: 80;
+    overflow: hidden;
+    min-width: var(--radix-select-trigger-width);
