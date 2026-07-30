@@ -215,3 +215,220 @@ export interface Resource {
   /** Dedicated create page (wizard). When set, the list Create button navigates here instead of the drawer. */
   createPage?: string;
   /** Extra buttons shown before Export in the list header (e.g. Edit ranking). */
+  headerLinks?: { label: string; to: string }[];
+  /** Custom label for the list Create button (default "Create"). */
+  createLabel?: string;
+  /** One line under the list heading (Lupus shows one on its simpler lists). */
+  subtitle?: string;
+  /** Hide the CSV Export / Import buttons. */
+  noTransfer?: boolean;
+  /** Hide the row checkboxes (and with them bulk delete). */
+  noSelect?: boolean;
+  /** Hide the "View" row action; the title already links to the detail page. */
+  hideView?: boolean;
+  /** Replaces the generic edit drawer opened by the row "Edit" action. */
+  renderEdit?: (row: any, close: () => void, saved: () => void) => ReactNode;
+  /** Replaces the generic "Delete <label> <id>?" confirmation. */
+  deleteConfirm?: (row: any) => { title: string; description: string; verifyText?: string };
+  updatePath?: (id: string) => string;
+  deletePath?: (id: string) => string;
+  columns: ColumnDef[];
+  fields: FieldDef[];
+  search?: boolean;
+  /**
+   * Declarative filter definitions for the list view (Add filter menu + chips).
+   * Only declare a filter the list endpoint actually accepts as a query param:
+   * unknown params are dropped by the backend, so an unsupported filter is a chip
+   * that silently does nothing.
+   */
+  filters?: FilterDef[];
+  actions?: ActionDef[];
+  customDetail?:
+    | "product"
+    | "order"
+    | "option"
+    | "draft-order"
+    | "category"
+    | "product-option"
+    | "inventory"
+    | "reservation"
+    | "customer-group"
+    | "promotion"
+    | "campaign"
+    | "price-list"
+    | "stock-location"
+    | "shipping-profile"
+    | "shipping-option-type"
+    | "workflow-execution";
+}
+
+export const RESOURCES: Resource[] = [
+  {
+    slug: "products",
+    label: "Products",
+    group: "Catalog",
+    listKey: "products",
+    listPath: "/admin/products",
+    detailKey: "product",
+    detailPath: (id) => `/admin/products/${id}`,
+    createPath: "/admin/products",
+    createPage: "/r/products/create",
+    updatePath: (id) => `/admin/products/${id}`,
+    deletePath: (id) => `/admin/products/${id}`,
+    columns: [
+      {
+        key: "title",
+        label: "Product",
+        sortKey: "title",
+        render: (row, ctx) =>
+          ctx.to ? <ProductTitleCell row={row} to={ctx.to} /> : <span>{row.title}</span>,
+      },
+      {
+        key: "collection",
+        label: "Collection",
+        sortKey: "collection",
+        render: (row) => <CollectionCell row={row} />,
+      },
+      {
+        key: "sales_channels",
+        label: "Sales channels",
+        render: (row) => <SalesChannelsCell row={row} />,
+      },
+      {
+        key: "variants",
+        label: "Variants",
+        render: (row) => <VariantsCell row={row} />,
+      },
+      {
+        key: "status",
+        label: "Status",
+        sortKey: "status",
+        render: (row) => <StatusDot status={row.status} />,
+      },
+    ],
+    fields: [
+      { key: "title", label: "Title", type: "text", required: true },
+      { key: "handle", label: "Handle", type: "text" },
+      {
+        key: "status",
+        label: "Status",
+        type: "select",
+        options: [
+          { value: "draft", label: "draft" },
+          { value: "published", label: "published" },
+        ],
+      },
+    ],
+    search: true,
+    filters: [
+      selectFilter(
+        "status",
+        "Status",
+        csvOptions("draft,proposed,published,rejected"),
+      ),
+      textFilter("handle", "Handle", { help: "Exact match" }),
+      // The server compares collection_id / type_id with `=`, so these are
+      // single-valued selects even though the ids are the only useful filter.
+      selectFilter("collection_id", "Collection", [], {
+        loadOptions: remoteFilter("/admin/collections"),
+      }),
+      selectFilter("type_id", "Product type", [], {
+        loadOptions: remoteFilter("/admin/product-types", (row) => ({
+          value: String(row.id ?? ""),
+          label: String(row?.value ?? row?.id ?? ""),
+        })),
+      }),
+      multiSelectFilter("tag_id", "Tag", [], {
+        loadOptions: remoteFilter("/admin/product-tags", (row) => ({ value: String(row.id ?? ""), label: String(row?.value ?? row?.id ?? "") })),
+      }),
+      multiSelectFilter("category_id", "Category", [], {
+        loadOptions: remoteFilter("/admin/product-categories", (row) => ({ value: String(row.id ?? ""), label: String(row?.name ?? row?.id ?? "") })),
+      }),
+      textFilter("title", "Title"),
+      dateFilter("created_at"),
+      dateFilter("updated_at"),
+      // Not a product column: the route resolves it through the
+      // product_sales_channel pivot with a bound array, so it repeats.
+      multiSelectFilter("sales_channel_id", "Sales channel", [], {
+        loadOptions: SALES_CHANNEL_OPTIONS,
+      }),
+    ],
+    customDetail: "product",
+  },
+  {
+    slug: "product-variants",
+    label: "Variants",
+    group: "Catalog",
+    listKey: "variants",
+    listPath: "/admin/product-variants",
+    detailKey: "variant",
+    detailPath: (id) => `/admin/product-variants/${id}`,
+    columns: [
+      { key: "title", label: "Title" },
+      { key: "sku", label: "SKU" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [
+      { key: "title", label: "Title", type: "text" },
+      { key: "sku", label: "SKU", type: "text" },
+    ],
+    filters: [
+      textFilter("sku", "SKU", { help: "Exact match" }),
+      // product_id accepts a repeated param, so this one is a real multi-select.
+      multiSelectFilter("product_id", "Product", [], {
+        loadOptions: remoteFilter("/admin/products"),
+      }),
+      dateFilter("created_at"),
+    ],
+  },
+  {
+    slug: "product-options",
+    label: "Options",
+    group: "Catalog",
+    listKey: "product_options",
+    listPath: "/admin/product-options",
+    detailKey: "product_option",
+    detailPath: (id) => `/admin/product-options/${id}`,
+    createPage: "/r/product-options/create",
+    columns: [
+      { key: "title", label: "Title", sortKey: "title" },
+      {
+        key: "values",
+        label: "Values",
+        render: (row) => {
+          const n = (row.values ?? []).length;
+          return n === 0 ? "-" : `${n} ${n === 1 ? "value" : "values"}`;
+        },
+      },
+      {
+        key: "is_exclusive",
+        label: "Status",
+        render: (row) => (
+          <span
+            style={{
+              display: "inline-block",
+              padding: "1px 8px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              border: "1px solid var(--card-border)",
+              color: row.is_exclusive === false ? "#60a5fa" : "var(--fg-subtle)",
+              background: row.is_exclusive === false ? "rgba(59,130,246,0.12)" : "var(--hover-bg)",
+            }}
+          >
+            {row.is_exclusive === false ? "Global" : "Exclusive"}
+          </span>
+        ),
+      },
+    ],
+    fields: [{ key: "title", label: "Title", type: "text", required: true }],
+    filters: [
+      selectFilter(
+        "is_exclusive",
+        "Type",
+        [
+          { value: "false", label: "Global" },
+          { value: "true", label: "Exclusive" },
+        ],
+      ),
+      textFilter("title", "Title", { help: "Exact match" }),
