@@ -1517,3 +1517,216 @@ export const RESOURCES: Resource[] = [
       { key: "currency_code", label: "Currency", type: "text", required: true },
       { key: "amount", label: "Amount", type: "number", required: true },
     ],
+    filters: [
+      selectFilter(
+        "status",
+        "Status",
+        PAYMENT_STATUSES,
+      ),
+      textFilter("currency_code", "Currency", { help: "ISO code, e.g. usd" }),
+      dateFilter("created_at"),
+    ],
+  },
+  {
+    slug: "payments",
+    label: "Payments",
+    group: "Payments",
+    listKey: "payments",
+    listPath: "/admin/payments",
+    columns: [
+      { key: "provider_id", label: "Provider" },
+      { key: "amount", label: "Amount" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [],
+  },
+  {
+    slug: "uploads",
+    label: "Files",
+    group: "Settings",
+    listKey: "files",
+    listPath: "/admin/uploads",
+    detailKey: "file",
+    detailPath: (id) => `/admin/uploads/${id}`,
+    createPath: "/admin/uploads",
+    deletePath: (id) => `/admin/uploads/${id}`,
+    columns: [
+      { key: "filename", label: "Filename" },
+      { key: "url", label: "URL" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [{ key: "file", label: "File", type: "file", required: true }],
+  },
+  {
+    slug: "api-keys",
+    label: "API Keys",
+    group: "Settings",
+    listKey: "api_keys",
+    listPath: "/admin/api-keys",
+    detailKey: "api_key",
+    detailPath: (id) => `/admin/api-keys/${id}`,
+    createPath: "/admin/api-keys",
+    updatePath: (id) => `/admin/api-keys/${id}`,
+    deletePath: (id) => `/admin/api-keys/${id}`,
+    columns: [
+      { key: "title", label: "Title" },
+      { key: "type", label: "Type" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [
+      { key: "title", label: "Title", type: "text", required: true },
+      {
+        key: "type",
+        label: "Type",
+        type: "select",
+        options: [
+          { value: "publishable", label: "publishable" },
+          { value: "secret", label: "secret" },
+        ],
+      },
+    ],
+    // `type` is the one non-paging param the list route reads; the vocabulary
+    // comes from the create schema (z.enum(["publishable","secret"])).
+    filters: [selectFilter("type", "Type", options("publishable", "secret"))],
+  },
+  {
+    slug: "notifications",
+    label: "Notifications",
+    group: "Settings",
+    listKey: "notifications",
+    listPath: "/admin/notifications",
+    columns: [
+      { key: "to_address", label: "To" },
+      { key: "channel", label: "Channel" },
+      { key: "status", label: "Status" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [],
+  },
+  {
+    slug: "workflows",
+    label: "Workflows",
+    group: "System",
+    listKey: "workflow_executions",
+    listPath: "/admin/workflows-executions",
+    detailKey: "workflow_execution",
+    detailPath: (id) => `/admin/workflows-executions/${id}`,
+    subtitle: "View and manage the workflow executions of your store.",
+    noTransfer: true,
+    noSelect: true,
+    hideView: true,
+    search: true,
+    columns: [
+      { key: "workflow_id", label: "Workflow ID", render: (row, ctx) => (ctx.to ? <Link to={ctx.to} style={{ textDecoration: "none" }}><IdBadge value={row.workflow_id} /></Link> : <IdBadge value={row.workflow_id} />) },
+      { key: "transaction_id", label: "Transaction ID", render: (row) => <IdBadge value={row.transaction_id} /> },
+      { key: "state", label: "State", render: (row) => <WorkflowStateCell row={row} /> },
+      { key: "progress", label: "Progress", render: (row) => <ProgressCell row={row} /> },
+      { key: "created_at", label: "Created", sortKey: "created_at", render: (row) => fmtDate(row.created_at) },
+    ],
+    fields: [],
+    filters: [
+      textFilter("workflow_id", "Workflow ID", { help: "Exact workflow id" }),
+      multiSelectFilter("state", "State", csvOptions("not_started,invoking,waiting_to_compensate,compensating,done,reverted,failed")),
+      dateFilter("created_at"),
+    ],
+    customDetail: "workflow-execution",
+  },
+  {
+    slug: "events",
+    label: "Events",
+    group: "System",
+    listKey: "events",
+    listPath: "/admin/events",
+    columns: [
+      { key: "name", label: "Event" },
+      { key: "created_at", label: "At" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [],
+  },
+  {
+    slug: "property-labels",
+    label: "Property Labels",
+    group: "Settings",
+    listKey: "property_labels",
+    listPath: "/admin/property-labels",
+    columns: [
+      { key: "entity", label: "Entity" },
+      { key: "property", label: "Property" },
+      { key: "label", label: "Label" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [
+      { key: "entity", label: "Entity", type: "text" },
+      { key: "property", label: "Property", type: "text" },
+    ],
+  },
+  {
+    slug: "translations",
+    label: "Translations",
+    group: "Settings",
+    listKey: "translations",
+    listPath: "/admin/translations",
+    columns: [
+      { key: "reference", label: "Reference" },
+      { key: "reference_id", label: "Ref ID" },
+      { key: "locale_code", label: "Locale" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [],
+    // `reference_id` is deliberately absent: it is the id of whichever entity
+    // `reference` names, so there is no single endpoint to load options from.
+    // Both of these are matched with `= ANY($1)`, but a typed value is honest
+    // here: /admin/locales accepts no `q`, so a remote picker could not search.
+    filters: [
+      textFilter("reference", "Reference", { help: "Exact entity, e.g. product" }),
+      textFilter("locale_code", "Locale", { help: "ISO code, e.g. en" }),
+    ],
+  },
+  {
+    slug: "views",
+    label: "Views",
+    group: "Settings",
+    listKey: "views",
+    listPath: "/admin/views",
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [],
+  },
+];
+
+export const RESOURCE_GROUPS = [
+  "Catalog",
+  "Catalog",
+  "Settings",
+  "Customers",
+  "Orders",
+  "RMA",
+  "Promotions",
+  "Pricing",
+  "Inventory",
+  "Fulfillment",
+  "Tax",
+  "Channels",
+  "Team",
+  "Payments",
+  "System",
+] as string[];
+
+// Lupus settings URLs differ from some resource slugs; both resolve to the same resource.
+const SLUG_ALIASES: Record<string, string> = {
+  tags: "product-tags",
+  "workflow-executions": "workflows",
+  roles: "rbac-roles",
+  policies: "rbac-policies",
+  locations: "stock-locations",
+};
+
+export function getResource(slug: string): Resource | undefined {
+  const wanted = SLUG_ALIASES[slug] ?? slug;
+  return RESOURCES.find((r) => r.slug === wanted);
+}
+
+export const RESOURCE_GROUPS_SET = [...new Set(RESOURCE_GROUPS)];
