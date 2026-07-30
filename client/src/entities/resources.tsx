@@ -866,3 +866,220 @@ export const RESOURCES: Resource[] = [
     filters: [
       selectFilter("status", "Status", DRAFT_ORDER_STATUSES),
       textFilter("email", "Email"),
+      selectFilter("customer_id", "Customer", [], {
+        loadOptions: CUSTOMER_OPTIONS,
+      }),
+      selectFilter("sales_channel_id", "Sales channel", [], {
+        loadOptions: SALES_CHANNEL_OPTIONS,
+      }),
+      selectFilter("region_id", "Region", [], { loadOptions: REGION_OPTIONS }),
+      dateFilter("created_at"),
+      numberFilter("total"),
+    ],
+    customDetail: "draft-order",
+  },
+  {
+    slug: "promotions",
+    label: "Promotions",
+    group: "Promotions",
+    listKey: "promotions",
+    listPath: "/admin/promotions",
+    detailKey: "promotion",
+    detailPath: (id) => `/admin/promotions/${id}`,
+    createPath: "/admin/promotions",
+    createPage: "/r/promotions/create",
+    updatePath: (id) => `/admin/promotions/${id}`,
+    deletePath: (id) => `/admin/promotions/${id}`,
+    columns: [
+      { key: "code", label: "Code" },
+      { key: "status", label: "Status" },
+      { key: "id", label: "ID" },
+    ],
+    fields: [
+      { key: "code", label: "Code", type: "text", required: true },
+      {
+        key: "status",
+        label: "Status",
+        type: "select",
+        options: [
+          { value: "active", label: "active" },
+          { value: "draft", label: "draft" },
+        ],
+      },
+    ],
+    filters: [
+      textFilter("code", "Code", { help: "Exact match" }),
+      selectFilter("status", "Status", PROMOTION_STATUSES),
+      // `type` is the dashboard's name for promotion.application_type.
+      selectFilter("type", "Type", PROMOTION_TYPES),
+      selectFilter("application_target", "Target", PROMOTION_TARGETS),
+      boolFilter("is_automatic", "Automatic"),
+      selectFilter("campaign_id", "Campaign", [], {
+        loadOptions: CAMPAIGN_OPTIONS,
+      }),
+      dateFilter("created_at"),
+    ],
+    customDetail: "promotion",
+  },
+  {
+    slug: "campaigns",
+    label: "Campaigns",
+    group: "Promotions",
+    listKey: "campaigns",
+    listPath: "/admin/campaigns",
+    detailKey: "campaign",
+    detailPath: (id) => `/admin/campaigns/${id}`,
+    createPath: "/admin/campaigns",
+    createPage: "/r/campaigns/create",
+    updatePath: (id) => `/admin/campaigns/${id}`,
+    deletePath: (id) => `/admin/campaigns/${id}`,
+    hideView: true,
+    columns: [
+      { key: "name", label: "Name", sortKey: "name", render: (row, ctx) => (ctx.to ? <Link to={ctx.to} style={{ color: "var(--fg-interactive)", textDecoration: "none", fontWeight: 600 }}>{row.name}</Link> : <span>{row.name}</span>) },
+      { key: "identifier", label: "Identifier", render: (row) => row.identifier || <span style={{ color: "var(--fg-muted)" }}>-</span> },
+      { key: "description", label: "Description", render: (row) => row.description || <span style={{ color: "var(--fg-muted)" }}>-</span> },
+      { key: "starts_at", label: "Start date", sortKey: "starts_at", render: (row) => (row.starts_at ? fmtDate(row.starts_at) : <span style={{ color: "var(--fg-muted)" }}>-</span>) },
+      { key: "ends_at", label: "End date", sortKey: "ends_at", render: (row) => (row.ends_at ? fmtDate(row.ends_at) : <span style={{ color: "var(--fg-muted)" }}>-</span>) },
+    ],
+    fields: [{ key: "name", label: "Name", type: "text" }],
+    filters: [
+      textFilter("identifier", "Identifier", { help: "Exact match" }),
+      textFilter("name", "Name", { help: "Exact match" }),
+      dateFilter("created_at"),
+    ],
+    customDetail: "campaign",
+  },
+  {
+    slug: "price-lists",
+    label: "Price Lists",
+    group: "Pricing",
+    listKey: "price_lists",
+    listPath: "/admin/price-lists",
+    detailKey: "price_list",
+    detailPath: (id) => `/admin/price-lists/${id}`,
+    createPath: "/admin/price-lists",
+    createPage: "/r/price-lists/create",
+    updatePath: (id) => `/admin/price-lists/${id}`,
+    deletePath: (id) => `/admin/price-lists/${id}`,
+    subtitle: "Create sales or override prices for specific conditions.",
+    noTransfer: true,
+    noSelect: true,
+    hideView: true,
+    search: true,
+    columns: [
+      { key: "title", label: "Title", sortKey: "title" },
+      {
+        key: "status",
+        label: "Status",
+        sortKey: "status",
+        render: (row) => <PriceListStatusCell row={row} />,
+      },
+      {
+        key: "price_overrides",
+        label: "Price Overrides",
+        render: (row) => <PriceCountCell row={row} />,
+      },
+    ],
+    renderEdit: (row, close, saved) => (
+      <EditPriceListDrawer list={row} onClose={close} onSaved={saved} />
+    ),
+    deleteConfirm: (row) => ({
+      title: "Are you sure?",
+      description: `You are about to delete the price list ${row.title}. This action cannot be undone.`,
+    }),
+    fields: [
+      { key: "name", label: "Name", type: "text" },
+      {
+        key: "status",
+        label: "Status",
+        type: "select",
+        options: [
+          { value: "active", label: "active" },
+          { value: "draft", label: "draft" },
+        ],
+      },
+    ],
+    // The list endpoint keys the row on `title`, not `name`.
+    filters: [
+      textFilter("title", "Title", { help: "Exact match" }),
+      selectFilter("status", "Status", PROMOTION_STATUSES),
+      selectFilter("type", "Type", PRICE_LIST_TYPES),
+      dateFilter("created_at"),
+      dateFilter("updated_at"),
+    ],
+    customDetail: "price-list",
+  },
+  {
+    slug: "inventory-items",
+    label: "Inventory",
+    group: "Inventory",
+    listKey: "inventory_items",
+    listPath: "/admin/inventory-items",
+    detailKey: "inventory_item",
+    detailPath: (id) => `/admin/inventory-items/${id}`,
+    createPath: "/admin/inventory-items",
+    createPage: "/r/inventory-items/create",
+    updatePath: (id) => `/admin/inventory-items/${id}`,
+    deletePath: (id) => `/admin/inventory-items/${id}`,
+    hideView: true,
+    columns: [
+      { key: "title", label: "Title", render: (row, ctx) => (ctx.to ? <Link to={ctx.to} style={{ color: "var(--fg-interactive)", textDecoration: "none", fontWeight: 600 }}>{row.title || row.sku}</Link> : <span>{row.title || row.sku}</span>) },
+      { key: "sku", label: "SKU", render: (row) => row.sku || <span style={{ color: "var(--fg-muted)" }}>-</span> },
+      { key: "reserved", label: "Reserved", render: (row) => String((row.location_levels ?? []).reduce((n: number, l: any) => n + Number(l.reserved_quantity ?? 0), 0)) },
+      { key: "in_stock", label: "In stock", render: (row) => String((row.location_levels ?? []).reduce((n: number, l: any) => n + Number(l.stocked_quantity ?? 0), 0)) },
+    ],
+    fields: [
+      { key: "sku", label: "SKU", type: "text", required: true },
+      { key: "title", label: "Title", type: "text" },
+    ],
+    search: true,
+    // Level quantities live on a nested endpoint, so the level row itself is not
+    // filterable here; these are the columns inventory_item actually has.
+    filters: [
+      textFilter("sku", "SKU", { help: "Exact match" }),
+      textFilter("hs_code", "HS code", { help: "Exact match" }),
+      // The route lowercases this before comparing, so `US` still works.
+      textFilter("origin_country", "Origin country", { help: "ISO-2, e.g. us" }),
+      boolFilter("requires_shipping", "Requires shipping"),
+      dateFilter("created_at"),
+      // Not an inventory_item column: the route resolves it through the
+      // inventory_level_location pivot with `= ANY(...)`, so it is a real
+      // multi-select ("every item stocked at these two locations").
+      multiSelectFilter("location_id", "Location", [], {
+        loadOptions: LOCATION_OPTIONS,
+      }),
+    ],
+    customDetail: "inventory",
+  },
+  {
+    slug: "reservations",
+    label: "Reservations",
+    group: "Inventory",
+    listKey: "reservations",
+    listPath: "/admin/reservations",
+    detailKey: "reservation",
+    detailPath: (id) => `/admin/reservations/${id}`,
+    createPage: "/r/reservations/create",
+    hideView: true,
+    columns: [
+      { key: "item", label: "Item", render: (row, ctx) => (ctx.to ? <Link to={ctx.to} style={{ color: "var(--fg-interactive)", textDecoration: "none", fontWeight: 600 }}>{row.inventory_item_sku || row.inventory_item_id}</Link> : <span>{row.inventory_item_sku || row.inventory_item_id}</span>) },
+      { key: "description", label: "Description", render: (row) => row.description || <span style={{ color: "var(--fg-muted)" }}>-</span> },
+      { key: "created_at", label: "Created", sortKey: "created_at", render: (row) => fmtDate(row.created_at) },
+      { key: "quantity", label: "Quantity", render: (row) => String(row.quantity ?? 0) },
+    ],
+    fields: [
+      { key: "inventory_item_id", label: "Item ID", type: "text" },
+      { key: "location_id", label: "Location ID", type: "text" },
+      { key: "quantity", label: "Quantity", type: "number" },
+    ],
+    filters: [
+      selectFilter("location_id", "Location", [], {
+        loadOptions: LOCATION_OPTIONS,
+      }),
+      selectFilter("inventory_item_id", "Inventory item", [], {
+        loadOptions: remoteFilter("/admin/inventory-items"),
+      }),
+      // RESERVATION_FILTERS compares line_item_id with `=`, so a repeated param
+      // would be an array where the route reads a single value.
+      textFilter("line_item_id", "Line item", { help: "Exact line item id" }),
+      dateFilter("created_at"),
