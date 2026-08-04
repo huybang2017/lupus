@@ -394,3 +394,201 @@ export function ToggleField(props: {
           justifyContent: switchSide === "right" ? "space-between" : undefined,
           alignItems: switchSide === "right" ? "center" : "flex-start",
           gap: 10,
+        }}
+      >
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={title}
+          aria-invalid={error ? true : undefined}
+          disabled={disabled}
+          onClick={() => onChange(!checked)}
+          style={{
+            width: 28,
+            height: 16,
+            borderRadius: 999,
+            background: checked
+              ? "var(--fg-interactive)"
+              : "var(--field-border)",
+            position: "relative",
+            border: "none",
+            cursor: "pointer",
+            flexShrink: 0,
+            padding: 0,
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: 2,
+              left: checked ? 14 : 2,
+              width: 12,
+              height: 12,
+              borderRadius: "50%",
+              background: "var(--card-bg)",
+              transition: "left .12s",
+            }}
+          />
+        </button>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+          {hint ? (
+            <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>{hint}</div>
+          ) : null}
+        </div>
+      </div>
+      {error ? (
+        <div className="field-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export interface CheckOption {
+  id: string;
+  label: string;
+  sub?: string;
+  disabled?: boolean;
+}
+
+export function CheckListField(props: {
+  label?: string;
+  options: CheckOption[];
+  checked: string[];
+  onToggle: (id: string) => void;
+  hint?: string;
+  error?: string;
+  required?: boolean;
+  emptyHint?: string;
+  maxHeight?: number;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  labelWidth?: number;
+}): JSX.Element {
+  const {
+    label,
+    options,
+    checked,
+    onToggle,
+    hint,
+    error,
+    required,
+    emptyHint,
+    maxHeight,
+    searchable,
+    searchPlaceholder,
+    labelWidth,
+  } = props;
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? options.filter((o) =>
+        `${o.label} ${o.sub ?? ""}`.toLowerCase().includes(needle),
+      )
+    : options;
+  const searchBox = searchable ? (
+    <input
+      className="input"
+      value={query}
+      onChange={(e) => setQuery(e.target.value)}
+      placeholder={searchPlaceholder ?? "Search…"}
+      aria-label={label ?? searchPlaceholder ?? "Search options"}
+      style={{ width: "100%", marginBottom: 8 }}
+    />
+  ) : null;
+  const box = (
+    <div
+      style={{
+        maxHeight: maxHeight ?? 180,
+        overflowY: "auto",
+        border: "1px solid var(--card-border)",
+        borderRadius: 8,
+        padding: 8,
+      }}
+    >
+      {shown.length === 0 ? (
+        <div className="hint" style={{ marginTop: 0 }}>
+          {emptyHint ?? "None available"}
+        </div>
+      ) : (
+        shown.map((o) => (
+          <label className="checkrow" key={o.id}>
+            <input
+              type="checkbox"
+              checked={checked.includes(o.id)}
+              disabled={o.disabled}
+              onChange={() => onToggle(o.id)}
+            />
+            <span>{o.label}</span>
+            {o.sub ? (
+              <span style={{ color: "var(--fg-muted)", fontSize: 12 }}>
+                {o.sub}
+              </span>
+            ) : null}
+          </label>
+        ))
+      )}
+    </div>
+  );
+  const body =
+    labelWidth != null && label ? (
+      <div style={{ display: "flex", gap: 12 }}>
+        <div
+          style={{
+            width: labelWidth,
+            flexShrink: 0,
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          {label}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {searchBox}
+          {box}
+        </div>
+      </div>
+    ) : (
+      <>
+        {searchBox}
+        {box}
+      </>
+    );
+  if (!label && !hint && !error && !required)
+    return <div style={{ marginBottom: 12 }}>{body}</div>;
+  return (
+    <FormField
+      label={labelWidth != null ? undefined : label}
+      required={required}
+      hint={hint}
+      error={error}
+    >
+      {body}
+    </FormField>
+  );
+}
+
+export interface RadioCardOption {
+  id: string;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+}
+
+export function RadioCardField(props: {
+  option: RadioCardOption;
+  selected: boolean;
+  onSelect: () => void;
+  style?: CSSProperties;
+}): JSX.Element {
+  const { option, selected, onSelect, style } = props;
+  return (
+    <button
+      type="button"
+      id={`radio-${option.id}`}
+      role="radio"
+      aria-checked={selected}
+      disabled={option.disabled}
