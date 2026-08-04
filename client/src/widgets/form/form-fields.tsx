@@ -592,3 +592,199 @@ export function RadioCardField(props: {
       role="radio"
       aria-checked={selected}
       disabled={option.disabled}
+      onClick={onSelect}
+      style={{
+        display: "flex",
+        gap: 10,
+        width: "100%",
+        textAlign: "left",
+        cursor: option.disabled ? "default" : "pointer",
+        padding: "12px 14px",
+        borderRadius: 10,
+        border: `1px solid ${selected ? "var(--fg-interactive)" : "var(--card-border)"}`,
+        background: selected ? "var(--hover-bg)" : "var(--card-bg)",
+        color: "var(--fg-base)",
+        marginBottom: 8,
+        boxSizing: "border-box",
+        opacity: option.disabled ? 0.5 : undefined,
+        ...style,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          border: `2px solid ${selected ? "var(--fg-interactive)" : "var(--field-border)"}`,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+          marginTop: 1,
+        }}
+      >
+        {selected ? (
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "var(--fg-interactive)",
+            }}
+          />
+        ) : null}
+      </span>
+      <span>
+        <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>
+          {option.label}
+        </span>
+        {option.hint ? (
+          <span
+            style={{
+              display: "block",
+              fontSize: 12,
+              color: "var(--fg-subtle)",
+              marginTop: 2,
+            }}
+          >
+            {option.hint}
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
+export function RadioGroupField(props: {
+  label?: string;
+  value: string;
+  onChange: (id: string) => void;
+  options: RadioCardOption[];
+  hint?: string;
+  error?: string;
+  required?: boolean;
+  cols?: 1 | 2 | 3;
+}): JSX.Element {
+  const {
+    label,
+    value,
+    onChange,
+    options,
+    hint,
+    error,
+    required,
+    cols = 1,
+  } = props;
+  const enabled = options.filter((o) => !o.disabled);
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
+    const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
+    if (!forward && !backward) return;
+    e.preventDefault();
+    if (enabled.length === 0) return;
+    const current = enabled.findIndex((o) => o.id === value);
+    const step = forward ? 1 : -1;
+    const start =
+      current === -1
+        ? forward
+          ? 0
+          : enabled.length - 1
+        : current;
+    const next = enabled[(start + step + enabled.length) % enabled.length];
+    onChange(next.id);
+    document.getElementById(`radio-${next.id}`)?.focus();
+  };
+  const group = (
+    <div
+      role="radiogroup"
+      aria-label={label ?? undefined}
+      aria-required={required || undefined}
+      onKeyDown={handleKeyDown}
+      style={
+        cols > 1
+          ? { display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 8 }
+          : { display: "flex", flexDirection: "column" }
+      }
+    >
+      {options.map((o) => (
+        <RadioCardField
+          key={o.id}
+          option={o}
+          selected={o.id === value}
+          onSelect={() => onChange(o.id)}
+          style={cols > 1 ? { marginBottom: 0 } : undefined}
+        />
+      ))}
+    </div>
+  );
+  if (!label && !hint && !error && !required) return group;
+  return (
+    <FormField label={label} required={required} hint={hint} error={error}>
+      {group}
+    </FormField>
+  );
+}
+
+export function SearchField(props: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit?: () => void;
+  placeholder?: string;
+  width?: number;
+  autoFocus?: boolean;
+  ariaLabel?: string;
+  /** Optional node pinned over the left edge, e.g. a magnifier icon. */
+  leading?: ReactNode;
+}): JSX.Element {
+  const {
+    value,
+    onChange,
+    onSubmit,
+    // A search box with no placeholder reads as an empty, broken box, so the
+    // default is part of the component rather than every call site's job.
+    placeholder = "Search",
+    width = 220,
+    autoFocus,
+    ariaLabel,
+    leading,
+  } = props;
+  const input = (
+    <input
+      className="input"
+      type="search"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        onSubmit?.();
+      }}
+      placeholder={placeholder}
+      aria-label={ariaLabel ?? placeholder}
+      style={leading ? { width, paddingLeft: 34 } : { width }}
+      autoFocus={autoFocus}
+    />
+  );
+  if (!leading) return input;
+  return (
+    <span style={{ position: "relative", display: "inline-flex", width }}>
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          display: "inline-flex",
+          color: "var(--fg-muted)",
+          // The icon is decoration: clicks belong to the input underneath.
+          pointerEvents: "none",
+        }}
+      >
+        {leading}
+      </span>
+      {input}
+    </span>
+  );
+}
