@@ -259,3 +259,264 @@ function StoreHeader() {
               setOpen(false);
               logout();
               navigate("/login", { replace: true });
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: 8,
+              fontSize: 13,
+              borderRadius: 6,
+              color: "var(--fg-base)",
+            }}
+          >
+            <LogOut size={15} color="var(--fg-subtle)" /> Log out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------- User section (dashed divider + user row w/ menu) ----------
+export function UserSection() {
+  const { user, logout } = useAuth();
+  const { theme, toggle } = useTheme();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          width: "100%",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          padding: "6px 8px",
+          borderRadius: 8,
+        }}
+      >
+        <span
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: "50%",
+            background: "#6366f1",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontSize: 11,
+            fontWeight: 700,
+          }}
+        >
+          {(user?.email?.charAt(0) ?? "U").toUpperCase()}
+        </span>
+        <span
+          style={{
+            fontSize: 13,
+            color: "var(--fg-subtle)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            textAlign: "left",
+          }}
+        >
+          {user?.email}
+        </span>
+      </button>
+      {open ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: "calc(100% + 4px)",
+            background: "var(--card-bg)",
+            border: "1px solid var(--card-border)",
+            borderRadius: 10,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+            zIndex: 50,
+            padding: 6,
+          }}
+        >
+          <button
+            onClick={() => {
+              setOpen(false);
+              navigate("/settings/profile");
+            }}
+            style={menuBtn}
+          >
+            Profile
+          </button>
+          <button onClick={toggle} style={menuBtn}>
+            {theme === "dark" ? "☀ Light mode" : "☾ Dark mode"}
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false);
+              logout();
+              navigate("/login", { replace: true });
+            }}
+            style={menuBtn}
+          >
+            Log out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const menuBtn: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  textAlign: "left",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: "8px 10px",
+  fontSize: 13,
+  borderRadius: 6,
+  color: "var(--fg-base)",
+};
+
+// ---------- Core sidebar ----------
+export function Sidebar({ onOpenPalette }: { onOpenPalette: () => void }) {
+  const { pathname } = useLocation();
+
+  return (
+    <aside
+      style={{
+        width: 248,
+        background: "var(--shell-sidebar)",
+        color: "var(--shell-sidebar-fg)",
+        flexShrink: 0,
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        borderRight: "1px solid var(--card-border)",
+      }}
+    >
+      <div
+        style={{
+          padding: 12,
+          position: "sticky",
+          top: 0,
+          background: "var(--shell-sidebar)",
+          zIndex: 1,
+        }}
+      >
+        <StoreHeader />
+        <div
+          style={{
+            borderTop: "1px dashed var(--card-border)",
+            margin: "10px 0 0",
+          }}
+        />
+      </div>
+      <nav style={{ flex: 1, overflowY: "auto", minHeight: 0, padding: "4px 12px 12px" }}>
+        <button
+          onClick={onOpenPalette}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            width: "100%",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "5px 8px 5px 2px",
+            borderRadius: 8,
+            color: "var(--fg-subtle)",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <Search size={16} />{" "}
+          <span style={{ flex: 1, textAlign: "left" }}>Search</span>{" "}
+          <span className="kbd">⌘K</span>
+        </button>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            marginTop: 4,
+          }}
+        >
+          {NAV.map((entry) => {
+            const open = entryOpen(entry, pathname);
+            return (
+              <div key={entry.label}>
+                <NavLink
+                  to={entry.to}
+                  style={() => itemStyle(isPathActive(pathname, entry.to))}
+                >
+                  {entry.label}
+                </NavLink>
+                {entry.children && open
+                  ? entry.children.map((c) => {
+                      if (!getResource(c.slug)) return null;
+                      return (
+                        <NavLink
+                          key={c.slug}
+                          to={c.slug === "product-options" ? `/r/${c.slug}?is_exclusive=false` : `/r/${c.slug}`}
+                          end
+                          style={({ isActive }) => itemStyle(isActive, true)}
+                        >
+                          {c.label}
+                        </NavLink>
+                      );
+                    })
+                  : null}
+              </div>
+            );
+          })}
+        </div>
+      </nav>
+      <div
+        style={{
+          padding: "12px",
+          position: "sticky",
+          bottom: 0,
+          background: "var(--shell-sidebar)",
+        }}
+      >
+        <NavLink
+          to="/settings"
+          state={{ from: pathname }}
+          style={() => itemStyle(isPathActive(pathname, "/settings"))}
+        >
+          Settings
+        </NavLink>
+        <div
+          style={{
+            borderTop: "1px dashed var(--card-border)",
+            margin: "10px 0",
+          }}
+        />
+        <UserSection />
+      </div>
+    </aside>
+  );
+}
