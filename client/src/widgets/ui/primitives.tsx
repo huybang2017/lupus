@@ -226,3 +226,230 @@ export function PaginationFooter({
       onClick={onClick}
       style={{ padding: "5px 12px", fontWeight: 500 }}
     >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "12px 16px",
+        borderTop: "1px solid var(--card-border)",
+        fontSize: 13,
+        color: "var(--fg-subtle)",
+      }}
+    >
+      <div>
+        {count === null
+          ? `Page ${page}`
+          : `${from} – ${to} of ${count} results`}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span>
+          {totalPages === null
+            ? `Page ${page}`
+            : `${page} of ${totalPages} pages`}
+        </span>
+        {btn("Prev", !canPrev, () => onPage(page - 1))}
+        {btn("Next", !canNext, () => onPage(page + 1))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- RowMenu ("..." dropdown) ----------
+export interface RowMenuItem {
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+  divider?: boolean;
+  /** Shown greyed out and not clickable; `hint` explains why. */
+  disabled?: boolean;
+  hint?: string;
+}
+
+export function RowMenu({ items }: { items: RowMenuItem[] }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(false);
+
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (document.querySelector('[role="listbox"]')) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClose = () => setOpen(false);
+    document.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose, { capture: true });
+    return () => {
+      document.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose, { capture: true });
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !menuRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const mH = menuRef.current.offsetHeight;
+    const mW = menuRef.current.offsetWidth;
+    const gap = 4;
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let top = rect.bottom + gap;
+    let left = rect.right - mW;
+    left = Math.max(margin, Math.min(left, vw - mW - margin));
+    const spaceBelow = vh - rect.bottom - gap;
+    if (mH > spaceBelow) {
+      top = rect.top - gap - mH;
+    }
+    top = Math.max(margin, top);
+    setPlacement({ top, left });
+    const first = menuRef.current.querySelector(
+      '[role="menuitem"]',
+    ) as HTMLElement;
+    first?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open && wasOpen.current) {
+      triggerRef.current?.focus();
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  // Forget the last position so the next open measures the menu again.
+  useEffect(() => {
+    if (!open) setPlacement(null);
+  }, [open]);
+
+  return (
+    <div ref={wrapperRef} style={{ display: "inline-block" }}>
+      <button
+        ref={triggerRef}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          color: "var(--fg-subtle)",
+          fontSize: 16,
+          padding: "2px 8px",
+          borderRadius: 6,
+          letterSpacing: 1,
+        }}
+        aria-label="Row actions"
+      >
+        ···
+      </button>
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{
+                position: "fixed",
+                top: placement?.top ?? 0,
+                left: placement?.left ?? 0,
+                visibility: placement ? "visible" : "hidden",
+                minWidth: 140,
+                maxHeight: "80vh",
+                overflowY: "auto",
+                background: "var(--card-bg)",
+                border: "1px solid var(--card-border)",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                zIndex: 50,
+                padding: 4,
+              }}
+            >
+              {items.map((it, idx) => (
+                <Fragment key={`${idx}-${it.label}`}>
+                  {it.divider && idx > 0 ? (
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        height: 1,
+                        background: "var(--card-border)",
+                        margin: "4px 0",
+                        width: "100%",
+                      }}
+                    />
+                  ) : null}
+                  <button
+                    role="menuitem"
+                    disabled={it.disabled}
+                    aria-disabled={it.disabled || undefined}
+                    title={it.disabled ? it.hint : undefined}
+                    onClick={() => {
+                      if (it.disabled) return;
+                      it.onClick();
+                      close();
+                    }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      background: "none",
+                      border: "none",
+                      cursor: it.disabled ? "not-allowed" : "pointer",
+                      opacity: it.disabled ? 0.45 : 1,
+                      padding: "8px 12px",
+                      fontSize: 13,
+                      borderRadius: 6,
+                      color: it.danger ? "#ef4444" : "var(--fg-base)",
+                    }}
+                    onMouseOver={(e) =>
+                      (e.currentTarget.style.background = it.disabled ? "none" : "var(--hover-bg)")
+                    }
+                    onMouseOut={(e) =>
+                      (e.currentTarget.style.background = "none")
+                    }
+                  >
+                    {it.label}
+                  </button>
+                </Fragment>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
