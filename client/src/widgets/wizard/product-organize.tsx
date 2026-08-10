@@ -244,3 +244,249 @@ export function SalesChannelPicker(props: {
             type="button"
             aria-label="Sort by name"
             title={sortDir ? `Name ${sortDir === "asc" ? "A-Z" : "Z-A"}` : "Sort"}
+            style={{ ...iconBtn, color: sortDir ? "var(--fg-interactive)" : undefined }}
+            onClick={() => setSortDir((d) => (d === null ? "asc" : d === "asc" ? "desc" : null))}
+          >
+            ⇅
+          </button>
+          <div style={{ position: "relative" }}>
+            <span
+              style={{
+                position: "absolute",
+                left: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "var(--fg-muted)",
+                pointerEvents: "none",
+              }}
+            >
+              ⌕
+            </span>
+            <input
+              className="input"
+              placeholder="Search"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(0);
+              }}
+              style={{ width: 220, height: 32, paddingLeft: 30 }}
+              autoFocus
+            />
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, width: 56 }}>
+                  <input
+                    type="checkbox"
+                    checked={allVisible}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisible && !allVisible;
+                    }}
+                    onChange={toggleAll}
+                    aria-label="Select all"
+                  />
+                </th>
+                <th style={th}>Name</th>
+                <th style={th}>Description</th>
+                <th style={th}>Status</th>
+                <th style={th}>Created</th>
+                <th style={th}>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr
+                  key={r.id}
+                  onClick={() => toggle(r.id)}
+                  style={{ cursor: "pointer" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover-bg)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <td style={td}>
+                    <input
+                      type="checkbox"
+                      checked={staged.includes(r.id)}
+                      onChange={() => toggle(r.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${r.name}`}
+                    />
+                  </td>
+                  <td style={td}>{r.name}</td>
+                  <td style={{ ...td, color: "var(--fg-subtle)" }}>{r.description || "-"}</td>
+                  <td style={td}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <span
+                        style={{
+                          width: 7,
+                          height: 7,
+                          borderRadius: 2,
+                          background: r.is_disabled ? "#9ca3af" : "#22c55e",
+                        }}
+                      />
+                      {r.is_disabled ? "Disabled" : "Enabled"}
+                    </span>
+                  </td>
+                  <td style={td}>{fmtDate(r.created_at)}</td>
+                  <td style={td}>{fmtDate(r.updated_at)}</td>
+                </tr>
+              ))}
+              {visible.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ ...td, textAlign: "center", color: "var(--fg-muted)", height: 120 }}>
+                    No sales channels found
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "14px 24px",
+            borderTop: "1px solid var(--card-border)",
+            fontSize: 13,
+            color: "var(--fg-subtle)",
+          }}
+        >
+          <span>
+            {filtered.length === 0 ? 0 : cur * PAGE_SIZE + 1} —{" "}
+            {Math.min((cur + 1) * PAGE_SIZE, filtered.length)} of {filtered.length} results
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 16 }}>
+            <span>
+              {cur + 1} of {pages} pages
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={cur === 0}
+              onClick={() => setPage(cur - 1)}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={cur >= pages - 1}
+              onClick={() => setPage(cur + 1)}
+            >
+              Next
+            </button>
+          </span>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+            padding: "14px 24px",
+            borderTop: "1px solid var(--card-border)",
+          }}
+        >
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => onSave(staged)}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+export function SalesChannelsField(props: {
+  rows: ChannelRow[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const { rows, selected, onChange } = props;
+  const [open, setOpen] = useState(false);
+  const label = (id: string) => rows.find((c) => c.id === id)?.name ?? id;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg-base)" }}>
+            Sales channels{" "}
+            <span style={{ fontWeight: 400, color: "var(--fg-muted)" }}>(Optional)</span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginTop: 2 }}>
+            This product will only be available in the default sales channel if left untouched.
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ alignSelf: "flex-start" }}
+          onClick={() => setOpen(true)}
+        >
+          Add
+        </button>
+      </div>
+
+      {selected.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 14 }}>
+          {selected.map((id) => (
+            <span
+              key={id}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 10px",
+                fontSize: 13,
+                fontWeight: 500,
+                color: "var(--fg-base)",
+                background: "var(--field-bg)",
+                border: "1px solid var(--card-border)",
+                borderRadius: 6,
+              }}
+            >
+              {label(id)}
+              <button
+                type="button"
+                aria-label={`Remove ${label(id)}`}
+                onClick={() => onChange(selected.filter((x) => x !== id))}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)", padding: 0 }}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)", fontSize: 13 }}
+          >
+            Clear all
+          </button>
+        </div>
+      ) : null}
+
+      {open ? (
+        <SalesChannelPicker
+          rows={rows}
+          selected={selected}
+          onCancel={() => setOpen(false)}
+          onSave={(ids) => {
+            onChange(ids);
+            setOpen(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
