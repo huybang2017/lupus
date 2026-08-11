@@ -227,3 +227,231 @@ export function CategoryDetailPage() {
                 rows={pageRows}
                 rowActions={(p: any) => [
                   {
+                    label: "Remove",
+                    danger: true,
+                    onClick: () => removeProduct(id, p.id, load, setErr),
+                  },
+                ]}
+                emptyTitle={
+                  draft || products.count > 0 ? "No results found" : "No records"
+                }
+                emptyHint={
+                  draft || products.count > 0
+                    ? "No products match your filter criteria."
+                    : "There are no records to show"
+                }
+              />
+              {products.rows.length > 0 ? (
+                <TablePager
+                  page={safePage}
+                  limit={limit}
+                  count={products.rows.length}
+                  onPage={setPage}
+                />
+              ) : null}
+            </DetailSection>
+
+            <EditableMetadata metadata={cat.metadata} path={`/admin/product-categories/${id}`} onSaved={load} />
+
+            <JsonSection data={cat} />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title="Organize"
+              action={
+                <RowMenu
+                  items={[
+                    {
+                      label: "Edit",
+                      onClick: () => navigate("/r/categories/organize"),
+                    },
+                  ]}
+                />
+              }
+            >
+              <KV
+                rows={[
+                  ["Path", fmtCell(path)],
+                  [
+                    "Children",
+                    children.length > 0
+                      ? children.map((c: any) => c.name).join(", ")
+                      : "–",
+                  ],
+                ]}
+              />
+            </DetailSection>
+          </div>
+        </div>
+      ) : null}
+
+      {drawer === "edit" ? (
+        <CategoryEditForm
+          cat={cat}
+          siblings={siblings}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+async function removeProduct(
+  categoryId: string,
+  productId: string,
+  reload: () => void,
+  setErr: (e: string | null) => void,
+) {
+  if (
+    !(await requestConfirm({
+      description: "Remove this product from the category?",
+    }))
+  )
+    return;
+  await api(`/admin/product-categories/${categoryId}/products`, {
+    method: "POST",
+    body: { remove: [productId] },
+  })
+    .then(reload)
+    .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+}
+
+function CategoryEditForm({
+  cat,
+  siblings,
+  onClose,
+  onSaved,
+}: {
+  cat: any;
+  siblings: any[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: cat.name ?? "",
+    handle: cat.handle ?? "",
+    description: cat.description ?? "",
+    status: cat.is_active === false ? "inactive" : "active",
+    visibility: cat.is_internal ? "private" : "public",
+    parent_category_id: cat.parent_category_id ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: string, v: any) => setForm((s) => ({ ...s, [k]: v }));
+
+  async function save() {
+    if (!form.name.trim()) {
+      setErr("Title is required.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/product-categories/${cat.id}`, {
+        method: "POST",
+        body: {
+          name: form.name.trim(),
+          ...(form.handle.trim() ? { handle: form.handle.trim() } : {}),
+          description: form.description.trim() || null,
+          is_active: form.status === "active",
+          is_internal: form.visibility === "private",
+          parent_category_id: form.parent_category_id || null,
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit Category"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField
+        label="Title"
+        value={form.name}
+        onChange={(v) => set("name", v)}
+      />
+      <div className="field">
+        <label className="field-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          Handle
+          <span
+            title="The handle is the URL-friendly version of the category. If not specified, it is generated from the title."
+            style={{ color: "var(--fg-muted)", cursor: "help", fontSize: 12 }}
+          >
+            ⓘ
+          </span>
+          <span className="field-optional">(Optional)</span>
+        </label>
+        <div className="input-group">
+          <span className="input-group-prefix">/</span>
+          <input
+            className="input"
+            value={form.handle}
+            onChange={(e) => set("handle", e.target.value)}
+            aria-label="Handle"
+          />
+        </div>
+      </div>
+      <TextAreaField
+        label="Description"
+        optional
+        rows={3}
+        value={form.description}
+        onChange={(v) => set("description", v)}
+      />
+      <FormGrid cols={2}>
+        <SelectField
+          label="Status"
+          value={form.status}
+          onChange={(v) => set("status", v)}
+          options={[
+            { value: "active", label: "Active" },
+            { value: "inactive", label: "Inactive" },
+          ]}
+        />
+        <SelectField
+          label="Visibility"
+          value={form.visibility}
+          onChange={(v) => set("visibility", v)}
+          options={[
+            { value: "public", label: "Public" },
+            { value: "private", label: "Private" },
+          ]}
+        />
+      </FormGrid>
+      <SelectField
+        label="Parent category"
+        optional
+        value={form.parent_category_id || NO_PARENT}
+        onChange={(v) => set("parent_category_id", v === NO_PARENT ? "" : v)}
+        options={[
+          { value: NO_PARENT, label: "None (top level)" },
+          ...siblings
+            .filter((c: any) => c.id !== cat.id)
+            .map((c: any) => ({ value: c.id, label: c.name })),
+        ]}
+      />
+    </FormDrawer>
+  );
+}
