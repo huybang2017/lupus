@@ -424,3 +424,215 @@ export function RegisterPage() {
     if (e.key !== "Enter") return;
     e.preventDefault();
     void runRegister();
+  }
+
+  return (
+    <AuthShell title="Create account" subtitle="Register your admin account">
+      {error ? <Alert>{error}</Alert> : null}
+      {success ? (
+        <Alert variant="success">Account created! Redirecting to login…</Alert>
+      ) : null}
+      <div
+        onKeyDown={onRegisterKeyDown}
+        style={{ display: "flex", flexDirection: "column", gap: 14 }}
+      >
+        <FormGrid cols={2}>
+          <TextField
+            label="First name"
+            value={firstName}
+            onChange={setFirstName}
+            required
+            placeholder="John"
+          />
+          <TextField
+            label="Last name"
+            value={lastName}
+            onChange={setLastName}
+            required
+            placeholder="Doe"
+          />
+        </FormGrid>
+        <TextField
+          label="Email"
+          type="email"
+          value={email}
+          onChange={setEmail}
+          required
+          autoComplete="email"
+        />
+        <TextField
+          label="Password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          required
+          autoComplete="new-password"
+        />
+        <TextField
+          label="Confirm password"
+          type="password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          required
+          autoComplete="new-password"
+        />
+        <FormActions
+          onCancel={() => navigate("/login", { replace: true })}
+          cancelLabel="Back"
+          onSubmit={runRegister}
+          busy={busy}
+          submitLabel="Create account"
+          busyLabel="Creating…"
+        />
+      </div>
+      <p
+        style={{
+          textAlign: "center",
+          marginTop: 16,
+          fontSize: 13,
+          color: "var(--fg-subtle)",
+        }}
+      >
+        Already have an account?{" "}
+        <Link
+          to="/login"
+          style={{
+            color: "var(--fg-interactive)",
+            textDecoration: "none",
+            fontWeight: 600,
+          }}
+        >
+          Sign in
+        </Link>
+      </p>
+    </AuthShell>
+  );
+}
+
+// Lupus "Welcome to Lupus": the page an invite link opens (/invite?token=...). The email is
+// the invited address and cannot be changed; the rest creates the account.
+export function InviteAcceptPage() {
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const navigate = useNavigate();
+  const [invite, setInvite] = useState<{ email: string } | null>(null);
+  const [invalid, setInvalid] = useState(!token);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [password, setPassword] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    api<{ invite: { email: string } }>(`/admin/invites/lookup?token=${encodeURIComponent(token)}`)
+      .then((d) => setInvite(d.invite))
+      .catch(() => setInvalid(true));
+  }, [token]);
+
+  const pwError = password.length < 8 ? "Password must be at least 8 characters" : undefined;
+  const repeatError = repeat !== password ? "Passwords do not match" : undefined;
+
+  async function submit() {
+    setError(null);
+    if (!invite || pwError || repeatError || !firstName.trim() || !lastName.trim()) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/admin/invites/accept?token=${encodeURIComponent(token)}`, {
+        method: "POST",
+        body: { email: invite.email, password, first_name: firstName.trim(), last_name: lastName.trim() },
+      });
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (invalid) {
+    return (
+      <AuthShell title="Your invite token is invalid" subtitle="Try requesting a new invite link.">
+        <FormActions onCancel={() => navigate("/login")} cancelLabel="Back to login" onSubmit={() => navigate("/login")} submitLabel="Back to login" />
+      </AuthShell>
+    );
+  }
+  if (done) {
+    return (
+      <AuthShell title="Your account has been registered" subtitle="Get started with Lupus Admin right away.">
+        <FormActions onCancel={() => navigate("/login")} cancelLabel="Back to login" onSubmit={() => navigate("/login")} submitLabel="Start Lupus Admin" />
+      </AuthShell>
+    );
+  }
+  return (
+    <AuthShell title="Welcome to Lupus" subtitle="Create your account below">
+      {error ? <Alert>{error}</Alert> : null}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <TextField label="Email" value={invite?.email ?? ""} onChange={() => undefined} readOnly hint="Your email cannot be changed. If you would like to use another email, a new invite must be sent." />
+        <TextField label="First name" value={firstName} onChange={setFirstName} error={show && !firstName.trim() ? "Required" : undefined} />
+        <TextField label="Last name" value={lastName} onChange={setLastName} error={show && !lastName.trim() ? "Required" : undefined} />
+        <TextField label="Password" type="password" value={password} onChange={setPassword} autoComplete="new-password" error={show ? pwError : undefined} />
+        <TextField label="Repeat password" type="password" value={repeat} onChange={setRepeat} autoComplete="new-password" error={show ? repeatError : undefined} />
+        <FormActions onCancel={() => navigate("/login")} cancelLabel="Back to login" onSubmit={submit} busy={busy} submitLabel="Create account" busyLabel="Creating…" />
+      </div>
+    </AuthShell>
+  );
+}
+
+// The page a reset password link opens (/reset-password?token=...).
+export function ResetPasswordPage() {
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const navigate = useNavigate();
+  const [pw, setPw] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const pwError = pw.length < 8 ? "Password must be at least 8 characters" : undefined;
+  const repeatError = repeat !== pw ? "Passwords do not match" : undefined;
+
+  async function submit() {
+    setError(null);
+    if (pwError || repeatError) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api("/auth/user/emailpass/update", { method: "POST", body: { password: pw }, token });
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!token) {
+    return (
+      <AuthShell title="Your reset link is invalid" subtitle="Request a new one from the login page.">
+        <FormActions onCancel={() => navigate("/login")} cancelLabel="Back to login" onSubmit={() => navigate("/login")} submitLabel="Back to login" />
+      </AuthShell>
+    );
+  }
+  return (
+    <AuthShell title={done ? "Password updated" : "Reset password"} subtitle={done ? "You can sign in with your new password." : "Choose a new password"}>
+      {error ? <Alert>{error}</Alert> : null}
+      {done ? (
+        <FormActions onCancel={() => navigate("/login")} cancelLabel="Back to login" onSubmit={() => navigate("/login")} submitLabel="Sign in" />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <TextField label="New password" type="password" value={pw} onChange={setPw} autoComplete="new-password" error={show ? pwError : undefined} />
+          <TextField label="Repeat password" type="password" value={repeat} onChange={setRepeat} autoComplete="new-password" error={show ? repeatError : undefined} />
+          <FormActions onCancel={() => navigate("/login")} cancelLabel="Back to login" onSubmit={submit} busy={busy} submitLabel="Reset password" busyLabel="Saving…" />
+        </div>
+      )}
+    </AuthShell>
+  );
+}
