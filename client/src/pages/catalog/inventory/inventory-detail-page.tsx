@@ -446,3 +446,227 @@ export function InventoryDetailPage() {
             load();
           }}
         />
+      ) : null}
+      {drawer === "attributes" ? (
+        <InventoryAttributesForm
+          item={item}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "locations" ? (
+        <ManageLocationsForm
+          item={item}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "level" && levelTarget ? (
+        <LevelEditForm
+          itemId={id}
+          level={levelTarget}
+          locationName={locations[levelTarget.location_id]}
+          onClose={() => {
+            setDrawer(null);
+            setLevelTarget(null);
+          }}
+          onSaved={() => {
+            setDrawer(null);
+            setLevelTarget(null);
+            load();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// Lupus "Edit item details": only the title and the (required) SKU.
+function InventoryEditForm({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(item.title ?? "");
+  const [sku, setSku] = useState(item.sku ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const skuError = sku.trim() === "" ? "Too small: expected string to have >=1 characters" : undefined;
+  const [touched, setTouched] = useState(false);
+
+  async function save() {
+    if (skuError) {
+      setTouched(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/inventory-items/${item.id}`, {
+        method: "POST",
+        body: { title: title.trim() || null, sku: sku.trim() },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit item details"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField label="Title" value={title} onChange={setTitle} />
+      <TextField
+        label="SKU"
+        value={sku}
+        error={touched ? skuError : undefined}
+        onChange={(v) => {
+          setSku(v);
+          setTouched(true);
+        }}
+      />
+    </FormDrawer>
+  );
+}
+
+// Lupus "Edit attributes": dimensions, codes, origin, material (+ unit of measure).
+function InventoryAttributesForm({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const str = (v: any) => (v == null ? "" : String(v));
+  const [form, setForm] = useState({
+    height: str(item.height),
+    width: str(item.width),
+    length: str(item.length),
+    weight: str(item.weight),
+    mid_code: str(item.mid_code),
+    hs_code: str(item.hs_code),
+    origin_country: str(item.origin_country),
+    material: str(item.material),
+    unit_of_measure: str(item.metadata?.unit_of_measure),
+    requires_shipping: item.requires_shipping !== false,
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: string, v: any) => setForm((s) => ({ ...s, [k]: v }));
+  const bad = (v: string) => v.trim() !== "" && !(Number(v) >= 0);
+  const dims = ["height", "width", "length", "weight"] as const;
+  const invalid = dims.some((k) => bad(form[k]));
+
+  async function save() {
+    if (invalid) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const num = (v: string) => (v.trim() === "" ? null : Number(v));
+      const text = (v: string) => (v.trim() === "" ? null : v.trim());
+      const metadata = { ...(item.metadata ?? {}) };
+      if (form.unit_of_measure.trim()) metadata.unit_of_measure = form.unit_of_measure.trim();
+      else delete metadata.unit_of_measure;
+      await api(`/admin/inventory-items/${item.id}`, {
+        method: "POST",
+        body: {
+          height: num(form.height),
+          width: num(form.width),
+          length: num(form.length),
+          weight: num(form.weight),
+          mid_code: text(form.mid_code),
+          hs_code: text(form.hs_code),
+          origin_country: text(form.origin_country),
+          material: text(form.material),
+          requires_shipping: form.requires_shipping,
+          metadata,
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit attributes"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      disabled={invalid}
+      error={err}
+      submitLabel="Save"
+    >
+      <FormGrid>
+        {dims.map((k) => (
+          <NumberField
+            key={k}
+            label={k.slice(0, 1).toUpperCase() + k.slice(1)}
+            optional
+            min={0}
+            value={form[k]}
+            error={bad(form[k]) ? "Must be a number greater than or equal to 0" : undefined}
+            onChange={(v) => set(k, v)}
+          />
+        ))}
+        <TextField label="MID code" optional value={form.mid_code} onChange={(v) => set("mid_code", v)} />
+        <TextField label="HS code" optional value={form.hs_code} onChange={(v) => set("hs_code", v)} />
+        <SelectField
+          label="Country of origin"
+          optional
+          value={form.origin_country}
+          onChange={(v) => set("origin_country", v)}
+          options={COUNTRY_OPTIONS}
+          placeholder="Select country"
+          searchable
+          allowClear
+        />
+        <TextField label="Material" optional value={form.material} onChange={(v) => set("material", v)} />
+      </FormGrid>
+      <TextField
+        label="Unit of measure"
+        optional
+        placeholder="lb"
+        value={form.unit_of_measure}
+        onChange={(v) => set("unit_of_measure", v)}
+      />
+      <ToggleField
+        checked={form.requires_shipping}
+        onChange={(v) => set("requires_shipping", v)}
+        title="Requires shipping"
+        hint="Does the inventory item require shipping?"
+      />
+    </FormDrawer>
+  );
+}
+
+// Lupus "Manage locations": tick the stock locations that stock this item. Saving adds a
+// level (quantity 0) for newly ticked locations and removes the unticked ones.
+function ManageLocationsForm({
+  item,
+  onClose,
+  onSaved,
+}: {
