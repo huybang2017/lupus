@@ -222,3 +222,227 @@ export function InventoryDetailPage() {
           }}
         >
           <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title={`${title} Details`}
+              action={
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setDrawer("edit") },
+                    { label: "Delete", danger: true, onClick: del },
+                  ]}
+                />
+              }
+            >
+              <KV
+                rows={[
+                  [
+                    "SKU",
+                    <span key="s" className="mono">
+                      {fmtCell(item.sku)}
+                    </span>,
+                  ],
+                  [
+                    "In stock",
+                    `${stocked.toLocaleString()} across ${locCount} location${locCount === 1 ? "" : "s"}`,
+                  ],
+                  [
+                    "Reserved",
+                    `${reserved.toLocaleString()} across ${locCount} location${locCount === 1 ? "" : "s"}`,
+                  ],
+                  [
+                    "Available",
+                    `${(stocked - reserved).toLocaleString()} across ${locCount} location${locCount === 1 ? "" : "s"}`,
+                  ],
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection
+              title="Locations"
+              action={
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setDrawer("locations")}
+                >
+                  Manage locations
+                </button>
+              }
+            >
+              <DataTable
+                columns={locColumns}
+                rows={locRows}
+                rowKey={(l: any) => l.location_id}
+                emptyTitle="No records"
+                emptyHint="There are no records to show"
+                rowActions={(l: any) => [
+                  {
+                    label: "Edit quantity",
+                    onClick: () => {
+                      setLevelTarget(l);
+                      setDrawer("level");
+                    },
+                  },
+                  {
+                    label: "Delete",
+                    danger: true,
+                    onClick: () => delLevel(l.location_id),
+                  },
+                ]}
+              />
+              {levels.length === 0 ? null : (
+                <TablePager
+                  page={locPage}
+                  limit={locLimit}
+                  count={levels.length}
+                  onPage={setLocPage}
+                />
+              )}
+            </DetailSection>
+
+            <DetailSection
+              title="Reservations"
+              action={
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => navigate(`/r/reservations/create?item_id=${id}`)}
+                >
+                  Create
+                </button>
+              }
+            >
+              <DataTable
+                columns={resColumns}
+                rows={reservations}
+                rowKey={(r: any) => r.id}
+                emptyTitle="No records"
+                emptyHint="There are no records to show"
+                rowActions={(r: any) => [
+                  {
+                    label: "View",
+                    onClick: () => navigate(`/r/reservations/${r.id}`),
+                  },
+                ]}
+              />
+            </DetailSection>
+
+            <EditableMetadata metadata={item.metadata} path={`/admin/inventory-items/${id}`} onSaved={load} />
+
+            <JsonSection data={item} />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection title="Associated variants">
+              {variants.length === 0 ? (
+                <EmptyState
+                  title="No variants"
+                  hint="Link variants on the product page"
+                />
+              ) : (
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  {variants.slice(0, 10).map((v: any) => (
+                    <Link
+                      key={v.id}
+                      to={`/r/products/${v.product_id}`}
+                      style={{ textDecoration: "none", color: "inherit" }}
+                    >
+                      <div
+                        className="card"
+                        style={{
+                          padding: "10px 12px",
+                          display: "flex",
+                          gap: 10,
+                          alignItems: "center",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 6,
+                            background: "var(--hover-bg)",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 13,
+                          }}
+                        >
+                          ◈
+                        </span>
+                        <span>
+                          <span
+                            style={{
+                              display: "block",
+                              fontSize: 13,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {v.title ?? v.sku}
+                          </span>
+                          <span
+                            style={{
+                              display: "block",
+                              fontSize: 12,
+                              color: "var(--fg-subtle)",
+                            }}
+                          >
+                            {v.sku ?? ""}
+                          </span>
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </DetailSection>
+
+            <DetailSection
+              title="Attributes"
+              action={
+                <RowMenu
+                  items={[{ label: "Edit", onClick: () => setDrawer("attributes") }]}
+                />
+              }
+            >
+              <KV
+                rows={[
+                  ["Height", fmtCell(item.height)],
+                  ["Width", fmtCell(item.width)],
+                  ["Length", fmtCell(item.length)],
+                  ["Weight", fmtCell(item.weight)],
+                  ["Unit of measure", fmtCell(item.metadata?.unit_of_measure)],
+                  ["MID code", fmtCell(item.mid_code)],
+                  ["Material", fmtCell(item.material)],
+                  ["HS code", fmtCell(item.hs_code)],
+                  ["Country of origin", fmtCell(countryName(item.origin_country) ?? item.origin_country)],
+                ]}
+              />
+            </DetailSection>
+          </div>
+        </div>
+      ) : null}
+
+      {drawer === "edit" ? (
+        <InventoryEditForm
+          item={item}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
