@@ -188,3 +188,193 @@ export function CreateInventoryPage() {
   );
 
   return (
+    <WizardShell
+      tabs={[
+        { id: "details", label: "Details" },
+        { id: "availability", label: "Availability" },
+      ]}
+      tab={tab}
+      onTab={setTab}
+      disabledTabs={invalid || dimErrors.length > 0 ? ["availability"] : []}
+      closeTo="/r/inventory-items"
+      onRequestClose={() => void leave()}
+      footer={
+        <FormActions
+          onCancel={() => void leave()}
+          onSubmit={tab === "details" ? () => setTab("availability") : save}
+          submitLabel={tab === "details" ? "Continue" : "Save"}
+          busy={busy}
+          disabled={loading || hasErrors}
+        />
+      }
+    >
+      {err ? <Alert>{err}</Alert> : null}
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : (
+        <>
+          {tab === "details" ? (
+            <>
+              <FormSection title="Create Inventory Item">
+                <FormGrid cols={2} gap={12}>
+                  <TextField
+                    label="Title"
+                    placeholder="Title"
+                    value={title}
+                    error={titleError}
+                    onChange={(v) => {
+                      setTitle(v);
+                      setTitleTouched(true);
+                    }}
+                  />
+                  <TextField
+                    label="SKU"
+                    placeholder="sku-123"
+                    value={sku}
+                    onChange={setSku}
+                  />
+                </FormGrid>
+                <TextAreaField
+                  label="Description"
+                  optional
+                  rows={4}
+                  placeholder="The item description"
+                  value={description}
+                  onChange={setDescription}
+                />
+                <ToggleField
+                  checked={requiresShipping}
+                  onChange={setRequiresShipping}
+                  title="Requires shipping"
+                  hint="Does the inventory item require shipping?"
+                />
+              </FormSection>
+              <FormSection title="Attributes">
+                <FormGrid cols={2}>
+                  {numDim("width", "Width")} {numDim("length", "Length")}
+                  {numDim("height", "Height")} {numDim("weight", "Weight")}
+                  {dim("mid_code", "Mid code")} {dim("hs_code", "HS code")}
+                  <SelectField
+                    label="Country of origin"
+                    optional
+                    value={dims.country}
+                    onChange={(v) => setDims((s) => ({ ...s, country: v }))}
+                    options={COUNTRIES.map((c) => ({
+                      value: c.id,
+                      label: c.label,
+                    }))}
+                    placeholder="Select country"
+                    searchable
+                  />
+                  {dim("material", "Material")}
+                  <TextField
+                    label="Unit of measure"
+                    optional
+                    hint="The unit stock is held and counted in. Shown next to quantities across the Admin."
+                    placeholder="lb"
+                    value={dims.unit}
+                    onChange={(v) => setDims((s) => ({ ...s, unit: v }))}
+                  />
+                </FormGrid>
+              </FormSection>
+            </>
+          ) : (
+            <FormSection
+              title="Availability"
+              subtitle="Set stocked quantities per location. Locations left empty are skipped."
+            >
+              {locations.length === 0 ? (
+                <p style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+                  No stock locations yet.
+                </p>
+              ) : (
+                <div>
+                  {qtyErrors > 0 ? (
+                    <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 8 }}>
+                      {qtyErrors} {qtyErrors === 1 ? "error" : "errors"}: stock must be a whole number greater than or equal to 0
+                    </div>
+                  ) : null}
+                  <div
+                    style={{
+                      border: "1px solid var(--card-border)",
+                      borderRadius: 8,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) 180px",
+                        background: "var(--hover-bg)",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "var(--fg-subtle)",
+                      }}
+                    >
+                      <div style={{ padding: "8px 12px" }}>Locations</div>
+                      <div style={{ padding: "8px 12px", borderLeft: "1px solid var(--card-border)" }}>
+                        In stock
+                      </div>
+                    </div>
+                    {locations.map((l) => {
+                      const bad = badQty(levels[l.id] ?? "");
+                      return (
+                        <div
+                          key={l.id}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(0, 1fr) 180px",
+                            borderTop: "1px solid var(--card-border)",
+                            fontSize: 13,
+                          }}
+                        >
+                          <div
+                            title={l.label}
+                            style={{
+                              padding: "10px 12px",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {l.label}
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            placeholder="0"
+                            aria-label={`In stock at ${l.label}`}
+                            aria-invalid={bad}
+                            value={levels[l.id] ?? ""}
+                            onChange={(e) =>
+                              setLevels((s) => ({ ...s, [l.id]: e.target.value }))
+                            }
+                            style={{
+                              border: "none",
+                              borderLeft: "1px solid var(--card-border)",
+                              borderRadius: 0,
+                              background: bad ? "rgba(239,68,68,0.12)" : "transparent",
+                              padding: "10px 12px",
+                              fontSize: 13,
+                              color: "var(--fg-base)",
+                              outline: "none",
+                              width: "100%",
+                              boxSizing: "border-box",
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </FormSection>
+          )}
+        </>
+      )}
+    </WizardShell>
+  );
+}
