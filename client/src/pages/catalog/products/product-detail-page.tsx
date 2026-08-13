@@ -724,3 +724,244 @@ function MediaSection({
                   width: "100%",
                   height: "100%",
                   objectFit: "cover",
+                  display: "block",
+                }}
+              />
+              {i === 0 ? (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 4,
+                    left: 4,
+                    width: 16,
+                    height: 16,
+                    borderRadius: "50%",
+                    background: "#2563eb",
+                    color: "#fff",
+                    fontSize: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  i
+                </span>
+              ) : null}
+              <button
+                onClick={() => remove(img.id)}
+                title="Delete image"
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  right: 2,
+                  width: 18,
+                  height: 18,
+                  borderRadius: "50%",
+                  border: "none",
+                  background: "rgba(0,0,0,0.55)",
+                  color: "#fff",
+                  fontSize: 10,
+                  cursor: "pointer",
+                  display: "none",
+                }}
+                className="img-del"
+              >
+                ✕
+              </button>
+              {product.thumbnail !== img.url ? (
+                <button
+                  onClick={() => setThumbnail(img.url)}
+                  title="Set as thumbnail"
+                  style={{
+                    position: "absolute",
+                    bottom: 2,
+                    left: 2,
+                    fontSize: 10,
+                    background: "rgba(0,0,0,0.55)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    padding: "1px 6px",
+                  }}
+                >
+                  thumb
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </DetailSection>
+  );
+}
+
+// ---------- Options ----------
+function OptionsSection({
+  product,
+  onChanged,
+  onAdd,
+}: {
+  product: Product;
+  onChanged: () => void;
+  onAdd: () => void;
+}) {
+  const confirm = useConfirm();
+  const options: ProductOption[] = product.options ?? [];
+  const [err, setErr] = useState<string | null>(null);
+  const [newValue, setNewValue] = useState<Record<string, string>>({});
+
+  async function delOption(optionId: string) {
+    if (!(await confirm({ description: "Delete this option and its values?" })))
+      return;
+    await api(`/admin/product-options/${optionId}`, { method: "DELETE" }).catch(
+      (e) => setErr(e instanceof Error ? e.message : String(e)),
+    );
+    onChanged();
+  }
+
+  async function addValue(optionId: string) {
+    const v = (newValue[optionId] ?? "").trim();
+    if (!v) return;
+    await api(`/admin/product-options/${optionId}/values`, {
+      method: "POST",
+      body: { value: v },
+    })
+      .then(() => {
+        setNewValue((s) => ({ ...s, [optionId]: "" }));
+        onChanged();
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }
+
+  return (
+    <DetailSection
+      title="Options"
+      action={<RowMenu items={[{ label: "Add option", onClick: onAdd }]} />}
+    >
+      {err ? <Alert>{err}</Alert> : null}
+      {options.length === 0 ? (
+        <EmptyState title="No options" hint="Add options like Size or Color" />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {options.map((o) => (
+            <div
+              key={o.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 0",
+                borderTop: "1px solid var(--card-border)",
+                fontSize: 13,
+              }}
+            >
+              <span
+                style={{ width: 120, color: "var(--fg-subtle)", flexShrink: 0 }}
+              >
+                {o.title}
+              </span>
+              <span
+                style={{ flex: 1, display: "flex", gap: 6, flexWrap: "wrap" }}
+              >
+                {(o.values ?? []).map((v) => (
+                  <span key={v.id ?? v.value} className="badge badge-gray">
+                    {v.value}
+                  </span>
+                ))}
+              </span>
+              <TextField
+                placeholder="New value"
+                value={newValue[o.id] ?? ""}
+                onChange={(v) => setNewValue((s) => ({ ...s, [o.id]: v }))}
+                style={{ width: 120 }}
+              />
+              <button
+                className="btn btn-secondary"
+                style={{ padding: "5px 10px" }}
+                onClick={() => addValue(o.id)}
+              >
+                Add
+              </button>
+              <RowMenu
+                items={[
+                  {
+                    label: "Delete",
+                    danger: true,
+                    onClick: () => delOption(o.id),
+                  },
+                ]}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </DetailSection>
+  );
+}
+
+function OptionForm({
+  productId,
+  onClose,
+  onSaved,
+}: {
+  productId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [values, setValues] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!title.trim()) {
+      setErr("Title is required.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/products/${productId}/options`, {
+        method: "POST",
+        body: {
+          title: title.trim(),
+          values: values
+            .split(",")
+            .map((v) => v.trim())
+            .filter(Boolean),
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Add option"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField
+        label="Title"
+        required
+        value={title}
+        onChange={setTitle}
+        placeholder="Size"
+      />
+      <TextField
+        label="Values"
+        value={values}
+        onChange={setValues}
+        placeholder="S, M, L (comma separated)"
+      />
+    </FormDrawer>
+  );
+}
