@@ -233,3 +233,238 @@ export function CreateProductPage() {
       return i === -1 ? Number.MAX_SAFE_INTEGER : i;
     };
     return [...allCombos].sort((a, b) => idx(a.key) - idx(b.key));
+  }, [allCombos, order]);
+  const combos = useMemo(
+    () => rankedCombos.filter((c) => !excluded[c.key]),
+    [rankedCombos, excluded],
+  );
+
+  function moveVariant(fromKey: string, toKey: string) {
+    const keys = rankedCombos.map((c) => c.key);
+    const from = keys.indexOf(fromKey);
+    const to = keys.indexOf(toKey);
+    if (from === -1 || to === -1) return;
+    keys.splice(to, 0, keys.splice(from, 1)[0]);
+    setOrder(keys);
+  }
+
+  function buildPrices(record: Record<string, string>) {
+    return Object.entries(record)
+      .filter(([, v]) => v.trim() !== "" && Number(v) >= 0)
+      .map(([currency_code, v]) => ({
+        currency_code: currency_code.toLowerCase(),
+        amount: Math.round(Number(v)),
+      }));
+  }
+
+  async function save(status: "draft" | "published") {
+    setErr(null);
+    if (!title.trim()) {
+      setErr("Title is required.");
+      setTab("details");
+      return;
+    }
+    if (hasVariants && combos.length === 0) {
+      setErr("Add at least one option with values, or turn off variants.");
+      setTab("variants");
+      return;
+    }
+
+    // The backend requires every variant to have at least one price (matches
+    // Lupus's createProductsWorkflow contract) — validate client-side first so a
+    // missing price shows up as a clear message instead of a 400 after upload.
+    const ed = (k: string): VariantEdit => edits[k] ?? emptyVariantEdit;
+    const variantFields = (k: string, defaultTitle: string) => {
+      const e = ed(k);
+      return {
+        title: (e.title ?? defaultTitle).trim() || defaultTitle,
+        ...(e.sku.trim() ? { sku: e.sku.trim() } : {}),
+        manage_inventory: e.manage,
+        allow_backorder: e.backorder,
+        prices: buildPrices(e.prices),
+      };
+    };
+    const variantsPayload: CreateProductVariantPayload[] = !hasVariants
+      ? [variantFields(DEFAULT_KEY, title.trim())]
+      : combos.map((c, rank) => ({
+          ...variantFields(c.key, c.title),
+          variant_rank: rank,
+          options: c.options,
+        }));
+    if (variantsPayload.some((v) => v.prices.length === 0)) {
+      setErr("Add at least one price for every variant.");
+      setTab("variants");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      let imageUrls: string[] = [];
+      if (files.length > 0) {
+        const fd = new FormData();
+        files.forEach((f) => fd.append("files", f, f.name));
+        const up = await fetch("/admin/uploads", {
+          method: "POST",
+          body: fd,
+          headers: {
+            authorization: `Bearer ${localStorage.getItem("lupus_admin_token") ?? ""}`,
+          },
+        });
+        const uj: any = await up.json().catch(() => null);
+        imageUrls = Array.isArray(uj?.files)
+          ? uj.files.map((f: any) => f.url ?? f.path).filter(Boolean)
+          : [];
+      }
+
+      const body: CreateProductPayload = {
+        title: title.trim(),
+        ...(handle.trim() ? { handle: handle.trim() } : {}),
+        ...(subtitle.trim() ? { subtitle: subtitle.trim() } : {}),
+        ...(description.trim() ? { description: description.trim() } : {}),
+        status,
+        ...(imageUrls.length > 0
+          ? { images: imageUrls.map((url) => ({ url })) }
+          : {}),
+        discountable,
+        ...(shippingProfileId ? { shipping_profile_id: shippingProfileId } : {}),
+        ...(collectionId ? { collection_id: collectionId } : {}),
+        ...(typeId ? { type_id: typeId } : {}),
+        ...(categoryIds.length > 0
+          ? { categories: categoryIds.map((id) => ({ id })) }
+          : {}),
+        ...(tagValues.length > 0
+          ? { tags: tagValues.map((value) => ({ value })) }
+          : {}),
+        ...(channelIds.length > 0
+          ? { sales_channels: channelIds.map((id) => ({ id })) }
+          : {}),
+        variants: variantsPayload,
+      };
+      if (hasVariants) {
+        body.options = options
+          .map((o) => ({ title: o.name.trim(), values: o.values }))
+          .filter((o) => o.title && o.values.length > 0);
+      }
+
+      const created = await api<{ product: Product }>("/admin/products", {
+        method: "POST",
+        body,
+      });
+      navigate(`/r/products/${created.product.id}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleCheck(list: string[], id: string, set: (v: string[]) => void) {
+    set(toggleInList(list, id));
+  }
+
+  const tabIdx = TABS.findIndex((t) => t.id === tab);
+  const lastTab = tabIdx === TABS.length - 1;
+  const titleMissing = title.trim() === "";
+  const detailsInvalid =
+    titleMissing ||
+    (hasVariants &&
+      !options.some((o) => o.name.trim() && o.values.length > 0));
+
+  const dirty =
+    title.trim() !== "" ||
+    subtitle.trim() !== "" ||
+    handleTouched ||
+    description.trim() !== "" ||
+    files.length > 0 ||
+    hasVariants ||
+    typeId !== "" ||
+    collectionId !== "" ||
+    categoryIds.length > 0 ||
+    tagValues.length > 0 ||
+    channelIds.join() !== (defaultChannelId ?? "") ||
+    !discountable ||
+    shippingProfileId !== "" ||
+    Object.values(edits).some(
+      (e) =>
+        e.title !== undefined ||
+        e.sku.trim() !== "" ||
+        e.manage ||
+        e.backorder ||
+        Object.values(e.prices).some((v) => v.trim() !== ""),
+    ) ||
+    options.some((o) => o.name.trim() !== "" || o.values.length > 0);
+
+  async function leave() {
+    if (busy) return;
+    if (dirty) {
+      const ok = await requestConfirm({
+        title: "Are you sure you want to leave this form?",
+        description:
+          "You have unsaved changes that will be lost if you exit this form.",
+        confirmLabel: "Continue",
+        cancelLabel: "Cancel",
+        variant: "primary",
+      });
+      if (!ok) return;
+    }
+    navigate("/r/products");
+  }
+
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (document.querySelector(".confirm-back, [role=\"listbox\"], [data-stacked-modal]")) return;
+      void leaveRef.current();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <WizardShell
+      tabs={TABS}
+      tab={tab}
+      onTab={(id) => setTab(id as Tab)}
+      closeTo="/r/products"
+      onRequestClose={() => void leave()}
+      wide={tab === "variants"}
+      disabledTabs={detailsInvalid ? ["organize", "variants"] : []}
+      footer={
+        <FormActions
+          onCancel={() => void leave()}
+          disabled={detailsInvalid}
+          onSubmit={
+            lastTab
+              ? () => save("published")
+              : () => setTab(TABS[tabIdx + 1].id)
+          }
+          submitLabel={lastTab ? "Publish" : "Continue"}
+          busy={busy}
+          busyLabel={lastTab ? "Publishing…" : undefined}
+          extra={
+            <button
+              className="btn btn-secondary"
+              onClick={() => save("draft")}
+              disabled={busy || detailsInvalid}
+            >
+              {busy ? "Saving…" : "Save as draft"}
+            </button>
+          }
+        />
+      }
+    >
+      {loadErr ? <Alert>{loadErr}</Alert> : null}
+      {err ? <Alert>{err}</Alert> : null}
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : (
+        <>
+          {tab === "details" ? (
+            <>
+              <FormSection title="General">
+                <FormGrid cols={3}>
+                  <TextField
