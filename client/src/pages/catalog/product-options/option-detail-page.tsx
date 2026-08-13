@@ -238,3 +238,242 @@ export function OptionDetailPage() {
                   Add
                 </button>
               </div>
+            }
+          >
+            <DataTable
+              columns={valueCols}
+              rows={pageRows}
+              rowActions={(v: any) => [
+                {
+                  label: "Delete",
+                  danger: true,
+                  onClick: () => delValue(v.id, v.value),
+                },
+              ]}
+              emptyTitle="No records"
+              emptyHint="There are no records to show"
+            />
+            {values.length > 0 ? (
+              <TablePager
+                page={safePage}
+                limit={limit}
+                count={values.length}
+                onPage={setPage}
+              />
+            ) : null}
+          </DetailSection>
+
+          <DetailSection title="Products">
+            <DataTable
+              columns={parentCols}
+              rows={parent ? [parent] : []}
+              emptyTitle="No records"
+              emptyHint="This option is not linked to a product"
+            />
+          </DetailSection>
+
+          <EditableMetadata metadata={option.metadata} path={`/admin/product-options/${id}`} onSaved={load} />
+
+          <JsonSection data={option} />
+        </div>
+      ) : null}
+
+      {drawer === "edit" ? (
+        <OptionEditForm
+          option={option}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "value" ? (
+        <OptionValueForm
+          optionId={id}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function OptionEditForm({
+  option,
+  onClose,
+  onSaved,
+}: {
+  option: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(option.title ?? "");
+  const [values, setValues] = useState<string[]>(
+    (option.values ?? []).map((v: any) => v.value),
+  );
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function dropOn(to: number) {
+    if (dragIdx === null || dragIdx === to) return;
+    setValues((list) => {
+      const next = [...list];
+      const [moved] = next.splice(dragIdx, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }
+
+  async function save() {
+    if (!title.trim()) {
+      setErr("Title is required.");
+      return;
+    }
+    if (values.length === 0) {
+      setErr("Add at least one value.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/product-options/${option.id}`, {
+        method: "POST",
+        body: { title: title.trim(), values },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit Product Option"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField label="Title" value={title} onChange={setTitle} />
+      <div className="field">
+        <label className="field-label">Values</label>
+        <MultiCombobox values={values} onChange={setValues} suggestions={[]} placeholder="S, M, L" />
+      </div>
+      <div className="field">
+        <label className="field-label">Rank</label>
+        <div>
+          {values.map((v, i) => (
+            <div
+              key={v}
+              draggable
+              onDragStart={() => setDragIdx(i)}
+              onDragEnd={() => {
+                setDragIdx(null);
+                setOverIdx(null);
+              }}
+              onDragOver={(e) => {
+                if (dragIdx === null) return;
+                e.preventDefault();
+                setOverIdx(i);
+              }}
+              onDrop={() => {
+                dropOn(i);
+                setDragIdx(null);
+                setOverIdx(null);
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                height: 52,
+                padding: "0 4px",
+                borderBottom: "1px solid var(--card-border)",
+                fontSize: 13,
+                cursor: "grab",
+                background: dragIdx === i ? "var(--hover-bg)" : "transparent",
+                boxShadow:
+                  overIdx === i && dragIdx !== null && dragIdx !== i
+                    ? "inset 0 2px 0 var(--fg-interactive)"
+                    : "none",
+              }}
+            >
+              <span title="Drag to reorder" style={{ color: "var(--fg-muted)", userSelect: "none" }}>
+                ⠿
+              </span>
+              <span>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </FormDrawer>
+  );
+}
+
+function OptionValueForm({
+  optionId,
+  onClose,
+  onSaved,
+}: {
+  optionId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!value.trim()) {
+      setErr("Value is required.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const cur = await api<{ product_option: any }>(
+        `/admin/product-options/${optionId}`,
+      ).then((d) => d.product_option);
+      const values = [
+        ...(cur.values ?? []).map((v: any) => v.value),
+        value.trim(),
+      ];
+      await api(`/admin/product-options/${optionId}`, {
+        method: "POST",
+        body: { values },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Add value"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField
+        label="Value"
+        required
+        placeholder="XL"
+        value={value}
+        onChange={setValue}
+      />
+    </FormDrawer>
+  );
+}
