@@ -670,3 +670,224 @@ function ManageLocationsForm({
   onClose,
   onSaved,
 }: {
+  item: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const levels: any[] = item.location_levels ?? [];
+  const existing = new Set<string>(levels.map((l) => l.location_id));
+  const [all, setAll] = useState<any[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set(existing));
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    listAll("/admin/stock-locations")
+      .then(setAll)
+      .catch((e) => {
+        setAll([]);
+        setErr(e instanceof Error ? e.message : String(e));
+      });
+  }, []);
+
+  const needle = q.trim().toLowerCase();
+  const shown = (all ?? []).filter((l: any) => !needle || String(l.name ?? "").toLowerCase().includes(needle));
+
+  function toggle(id: string) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+
+  async function save() {
+    const create = [...selected].filter((id) => !existing.has(id));
+    const remove = [...existing].filter((id) => !selected.has(id));
+    if (create.length === 0 && remove.length === 0) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/inventory-items/${item.id}/location-levels/batch`, {
+        method: "POST",
+        body: {
+          create: create.map((location_id) => ({ location_id })),
+          delete: remove
+            .map((id) => levels.find((l) => l.location_id === id)?.id)
+            .filter(Boolean),
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Manage locations"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <div
+        style={{
+          border: "1px solid var(--card-border)",
+          borderRadius: 8,
+          overflow: "hidden",
+          fontSize: 13,
+        }}
+      >
+        {[
+          ["Title", item.title ?? "-"],
+          ["SKU", item.sku ?? "-"],
+        ].map(([k, v], i) => (
+          <div
+            key={k}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              borderTop: i === 0 ? "none" : "1px solid var(--card-border)",
+            }}
+          >
+            <span style={{ padding: "6px 10px", color: "var(--fg-subtle)" }}>{k}</span>
+            <span style={{ padding: "6px 10px", borderLeft: "1px solid var(--card-border)" }}>{v}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 13,
+            color: "var(--fg-subtle)",
+          }}
+        >
+          <span>Select locations that stock the item.</span>
+          <span>
+            ({selected.size} of {all?.length ?? 0} selected)
+          </span>
+        </div>
+      </div>
+      <input
+        className="input"
+        style={{ marginTop: 12 }}
+        placeholder="Search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+        {all === null ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
+            <Spinner size={20} />
+          </div>
+        ) : shown.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 24, fontSize: 13, color: "var(--fg-subtle)" }}>
+            No locations found
+          </div>
+        ) : (
+          shown.map((l: any) => {
+            const on = selected.has(l.id);
+            const addr = [l.address?.address_1, l.address?.city, l.address?.country_code]
+              .filter(Boolean)
+              .join(", ");
+            return (
+              <div
+                key={l.id}
+                onClick={() => toggle(l.id)}
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  padding: 10,
+                  cursor: "pointer",
+                  borderRadius: 8,
+                  border: `1px solid ${on ? "var(--fg-interactive)" : "var(--card-border)"}`,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => toggle(l.id)}
+                  aria-label={`Select ${l.name}`}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{l.name}</div>
+                  {addr ? <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>{addr}</div> : null}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </FormDrawer>
+  );
+}
+
+function LevelEditForm({
+  itemId,
+  level,
+  locationName,
+  onClose,
+  onSaved,
+}: {
+  itemId: string;
+  level: any;
+  locationName?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [qty, setQty] = useState(String(level.stocked_quantity ?? 0));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/inventory-items/${itemId}/location-levels`, {
+        method: "POST",
+        body: {
+          location_id: level.location_id,
+          stocked_quantity: Math.max(0, Math.round(Number(qty) || 0)),
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit quantity"
+      subtitle={locationName ?? level.location_id}
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <NumberField
+        label="Stocked quantity"
+        value={qty}
+        onChange={setQty}
+        min={0}
+        maxWidth={200}
+      />
+    </FormDrawer>
+  );
+}
