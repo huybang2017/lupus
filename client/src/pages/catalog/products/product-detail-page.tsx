@@ -240,3 +240,245 @@ export function ProductDetailPage() {
             fontSize: 13,
           }}
         >
+          Products
+        </Link>
+        <span style={{ color: "var(--fg-muted)", fontSize: 13 }}>›</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>
+          {product?.title ?? id}
+        </span>
+      </div>
+
+      {err ? <Alert>{err}</Alert> : null}
+      {!product && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+
+      {product ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) 300px",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          {/* Left column */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title={product.title}
+              action={
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <StatusDot status={product.status} />
+                  <RowMenu
+                    items={[
+                      { label: "Edit", onClick: () => setDrawer("general") },
+                      { label: "Delete", danger: true, onClick: del },
+                    ]}
+                  />
+                </div>
+              }
+            >
+              <KV
+                rows={[
+                  ["Description", fmtCell(product.description)],
+                  ["Subtitle", fmtCell(product.subtitle)],
+                  [
+                    "Handle",
+                    <span key="h" className="mono">
+                      /{fmtCell(product.handle)}
+                    </span>,
+                  ],
+                  ["Material", fmtCell(product.material)],
+                  ["Discountable", String(product.discountable !== false)],
+                ]}
+              />
+            </DetailSection>
+
+            <MediaSection product={product} onChanged={load} />
+            <OptionsSection
+              product={product}
+              onChanged={load}
+              onAdd={() => setDrawer("option")}
+            />
+
+            <DetailSection
+              title="Variants"
+              action={
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <TableSearch
+                    value={variantQuery}
+                    onChange={setVariantQuery}
+                    placeholder="Search"
+                    width={160}
+                  />
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setDrawer("editVariants")}
+                    disabled={(product.variants ?? []).length === 0}
+                  >
+                    Edit variants
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setDrawer("variant")}
+                  >
+                    Create
+                  </button>
+                </div>
+              }
+            >
+              <DataTable
+                columns={variantColumns}
+                rows={variants}
+                rowKey={(v) => v.id}
+                onRowClick={(v) => navigate(`/r/products/${product.id}/variants/${v.id}`)}
+                emptyTitle="No variants"
+                emptyHint="Add variants for this product"
+                rowActions={(v) => [
+                  {
+                    label: "Edit",
+                    onClick: () => setDrawer({ editVariant: v }),
+                  },
+                  {
+                    label: "Delete",
+                    danger: true,
+                    onClick: () => delVariant(product.id, v.id, load, setErr),
+                  },
+                ]}
+              />
+            </DetailSection>
+          </div>
+
+          {/* Right rail */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title="Sales Channels"
+              action={
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setDrawer("channels") },
+                  ]}
+                />
+              }
+            >
+              {channels.length === 0 ? (
+                <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+                  Not available in any channel
+                </div>
+              ) : (
+                <>
+                  {channels.slice(0, 3).map((c: any) => (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "6px 0",
+                        fontSize: 13,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 6,
+                          background: "var(--hover-bg)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 11,
+                        }}
+                      >
+                        ◈
+                      </span>
+                      <span style={{ fontWeight: 500 }}>{c.name}</span>
+                    </div>
+                  ))}
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "var(--fg-subtle)",
+                      marginTop: 6,
+                    }}
+                  >
+                    Available in {channels.length} of {totalChannels ?? channels.length} sales
+                    channels
+                  </div>
+                </>
+              )}
+            </DetailSection>
+
+            <DetailSection
+              title="Shipping configuration"
+              action={
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setDrawer("shipping") },
+                  ]}
+                />
+              }
+            >
+              <div
+                className="card"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 12px",
+                  fontSize: 13,
+                }}
+              >
+                <span
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 6,
+                    background: "var(--hover-bg)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 11,
+                  }}
+                >
+                  ▣
+                </span>
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {profile
+                      ? (profile.name ?? profile.type ?? "Shipping profile")
+                      : "–"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
+                    {profile?.type ?? ""}
+                  </div>
+                </div>
+              </div>
+            </DetailSection>
+
+            <DetailSection
+              title="Organize"
+              action={
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setDrawer("organize") },
+                  ]}
+                />
+              }
+            >
