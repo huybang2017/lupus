@@ -482,3 +482,245 @@ export function ProductDetailPage() {
                 />
               }
             >
+              <KV
+                rows={[
+                  [
+                    "Tags",
+                    (product.tags ?? []).length > 0
+                      ? (product.tags ?? [])
+                          .map((t) => t.value ?? t.name)
+                          .join(", ")
+                      : "–",
+                  ],
+                  ["Type", fmtCell(product.type?.value ?? product.type?.title)],
+                  ["Collection", fmtCell(product.collection?.title)],
+                  [
+                    "Categories",
+                    (product.categories ?? []).length > 0 ? (
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {(product.categories ?? []).map((c) => (
+                          <span
+                            key={c.id}
+                            className="badge badge-gray"
+                            style={{ maxWidth: "100%", whiteSpace: "normal", overflowWrap: "anywhere" }}
+                          >
+                            {c.name}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      "–"
+                    ),
+                  ],
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection
+              title="Attributes"
+              action={
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setDrawer("attributes") },
+                  ]}
+                />
+              }
+            >
+              <KV
+                rows={[
+                  ["Height", fmtCell(product.height)],
+                  ["Width", fmtCell(product.width)],
+                  ["Length", fmtCell(product.length)],
+                  ["Weight", fmtCell(product.weight)],
+                  ["MID code", fmtCell(product.mid_code)],
+                  ["HS code", fmtCell(product.hs_code)],
+                  ["Country of origin", fmtCell(countryName(product.origin_country))],
+                ]}
+              />
+            </DetailSection>
+
+            <MetadataSection
+              metadata={product.metadata}
+              onEdit={() => setDrawer("metadata")}
+            />
+            <JsonSection data={product} />
+          </div>
+        </div>
+      ) : null}
+
+      {drawer === "general" ? (
+        <ProductGeneralDrawer product={product!} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer === "attributes" ? (
+        <ProductAttributesDrawer product={product!} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer === "organize" ? (
+        <ProductOrganizeDrawer product={product!} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer === "shipping" ? (
+        <ProductShippingDrawer product={product!} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer === "channels" ? (
+        <ProductChannelsPicker
+          product={product!}
+          selected={channels.map((c: any) => c.id)}
+          onClose={() => setDrawer(null)}
+          onSaved={saved}
+        />
+      ) : null}
+      {drawer === "metadata" ? (
+        <MetadataDrawer
+          metadata={product!.metadata}
+          onClose={() => setDrawer(null)}
+          onSaved={saved}
+          save={async (m: Record<string, string>) => {
+            await api(`/admin/products/${product!.id}`, { method: "POST", body: { metadata: m } });
+          }}
+        />
+      ) : null}
+      {drawer === "option" ? (
+        <OptionForm productId={id} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer === "variant" ? (
+        <ProductVariantDrawer product={product!} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer === "editVariants" ? (
+        <ProductVariantsEditor product={product!} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {drawer !== null && typeof drawer === "object" && "editVariant" in drawer ? (
+        <ProductVariantDrawer
+          product={product!}
+          initial={drawer.editVariant}
+          onClose={() => setDrawer(null)}
+          onSaved={saved}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+async function delVariant(
+  productId: string,
+  variantId: string,
+  reload: () => void,
+  setErr: (e: string | null) => void,
+) {
+  if (!(await requestConfirm({ description: "Delete this variant?" }))) return;
+  await api(`/admin/products/${productId}/variants/${variantId}`, {
+    method: "DELETE",
+  })
+    .then(reload)
+    .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+}
+
+// ---------- Media ----------
+function MediaSection({
+  product,
+  onChanged,
+}: {
+  product: Product;
+  onChanged: () => void;
+}) {
+  const confirm = useConfirm();
+  const images: ProductImage[] = product.images ?? [];
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function upload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append("files", f, f.name));
+      const up = await fetch("/admin/uploads", {
+        method: "POST",
+        body: fd,
+        headers: {
+          authorization: `Bearer ${localStorage.getItem("lupus_admin_token") ?? ""}`,
+        },
+      });
+      const uj: any = await up.json().catch(() => null);
+      const urls: string[] = Array.isArray(uj?.files)
+        ? uj.files.map((f: any) => f.url ?? f.path).filter(Boolean)
+        : [];
+      if (urls.length === 0) throw new Error("Upload returned no files");
+      await api(`/admin/products/${product.id}/images`, {
+        method: "POST",
+        body: { urls },
+      });
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(imageId: string) {
+    if (!(await confirm({ description: "Delete this image?" }))) return;
+    await api(`/admin/product-images/${imageId}`, { method: "DELETE" }).catch(
+      (e) => setErr(e instanceof Error ? e.message : String(e)),
+    );
+    onChanged();
+  }
+
+  async function setThumbnail(url: string) {
+    await api(`/admin/products/${product.id}`, {
+      method: "POST",
+      body: { thumbnail: url },
+    }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    onChanged();
+  }
+
+  return (
+    <DetailSection
+      title="Media"
+      action={
+        <RowMenu
+          items={[
+            {
+              label: "Upload",
+              onClick: () =>
+                document.getElementById("pd-media-upload")?.click(),
+            },
+          ]}
+        />
+      }
+    >
+      {err ? <Alert>{err}</Alert> : null}
+      <HiddenFileInput
+        id="pd-media-upload"
+        accept="image/*"
+        multiple
+        onFiles={upload}
+      />
+      {busy ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 12 }}>
+          <Spinner />
+        </div>
+      ) : null}
+      {images.length === 0 && !busy ? (
+        <EmptyState title="No media" hint="Upload images for this product" />
+      ) : (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {images.map((img, i) => (
+            <div
+              key={img.id}
+              style={{
+                position: "relative",
+                width: 96,
+                height: 96,
+                borderRadius: 10,
+                overflow: "hidden",
+                background: "#fff",
+                border: "1px solid var(--card-border)",
+              }}
+            >
+              <img
+                src={img.url}
+                alt=""
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
