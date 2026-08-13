@@ -468,3 +468,238 @@ export function CreateProductPage() {
               <FormSection title="General">
                 <FormGrid cols={3}>
                   <TextField
+                    label="Title"
+                    placeholder="Winter jacket"
+                    value={title}
+                    onChange={onTitleChange}
+                    style={
+                      title.trim() === ""
+                        ? { borderColor: "#ef4444" }
+                        : undefined
+                    }
+                  />
+                  <TextField
+                    label="Subtitle"
+                    optional
+                    placeholder="Warm and cosy"
+                    value={subtitle}
+                    onChange={setSubtitle}
+                  />
+                  <FormField label="Handle" optional>
+                    <div className="input-group">
+                      <span className="input-group-prefix">/</span>
+                      <input
+                        className="input"
+                        placeholder="winter-jacket"
+                        value={handle}
+                        onChange={(e) => {
+                          setHandle(e.target.value);
+                          setHandleTouched(true);
+                        }}
+                      />
+                    </div>
+                  </FormField>
+                </FormGrid>
+                <TextAreaField
+                  label="Description"
+                  optional
+                  rows={4}
+                  placeholder="A warm and cozy jacket"
+                  value={description}
+                  onChange={setDescription}
+                />
+              </FormSection>
+              <FormSection title="Media">
+                <MultiFileField
+                  label="Media"
+                  optional
+                  files={files}
+                  onChange={setFiles}
+                  accept="image/*"
+                  markFirst
+                  dropTitle="⤒ Upload images"
+                  dropHint="Drag and drop images here or click to upload. First image becomes the thumbnail."
+                />
+              </FormSection>
+              <FormSection title="Variants">
+                <CardToggle
+                  checked={hasVariants}
+                  onChange={setHasVariants}
+                  title="Yes, this is a product with variants"
+                  hint="When unchecked, we will create a default variant for you"
+                />
+                {hasVariants ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 28,
+                      marginTop: 20,
+                      paddingTop: 20,
+                      borderTop: "1px solid var(--card-border)",
+                    }}
+                  >
+                    <ProductOptionsEditor
+                      options={options}
+                      onChange={setOptions}
+                      existing={existingOptions}
+                    />
+                    <VariantRanking
+                      variants={rankedCombos}
+                      columns={options.map((o) => o.name.trim()).filter(Boolean)}
+                      onToggleAll={(include) =>
+                        setExcluded(
+                          include
+                            ? {}
+                            : Object.fromEntries(
+                                rankedCombos.map((c) => [c.key, true]),
+                              ),
+                        )
+                      }
+                      excluded={excluded}
+                      onToggle={(k) =>
+                        setExcluded((s) => ({ ...s, [k]: !s[k] }))
+                      }
+                      onMove={moveVariant}
+                    />
+                  </div>
+                ) : null}
+              </FormSection>
+            </>
+          ) : null}
+
+          {tab === "organize" ? (
+            <FormSection title="Organize">
+              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+              <CardToggle
+                checked={discountable}
+                onChange={setDiscountable}
+                title="Discountable (Optional)"
+                hint="When unchecked, discounts will not be applied to this product"
+              />
+              <FormGrid cols={2}>
+                <SelectField
+                  label="Type"
+                  optional
+                  value={typeId}
+                  onChange={setTypeId}
+                  options={types.map((t) => ({ value: t.id, label: t.label }))}
+                  placeholder="Select type"
+                  searchable
+                  allowClear
+                />
+                <SelectField
+                  label="Collection"
+                  optional
+                  value={collectionId}
+                  onChange={setCollectionId}
+                  options={collections.map((c) => ({
+                    value: c.id,
+                    label: c.label,
+                  }))}
+                  placeholder="Select collection"
+                  searchable
+                  allowClear
+                />
+              </FormGrid>
+              <FormGrid cols={2}>
+                <FormField label="Categories" optional>
+                  <MultiCombobox
+                    values={categoryIds.map(
+                      (id) => categories.find((c) => c.id === id)?.label ?? id,
+                    )}
+                    onChange={(labels) =>
+                      setCategoryIds(
+                        labels
+                          .map((l) => categories.find((c) => c.label === l)?.id)
+                          .filter((x): x is string => !!x),
+                      )
+                    }
+                    suggestions={categories.map((c) => c.label)}
+                    placeholder="Select categories"
+                    allowCreate={false}
+                  />
+                </FormField>
+                <FormField label="Tags" optional>
+                  <MultiCombobox
+                    values={tagValues}
+                    onChange={setTagValues}
+                    suggestions={tags.map((t) => t.label)}
+                    placeholder="Select or create tags"
+                  />
+                </FormField>
+              </FormGrid>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 16,
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg-base)" }}>
+                    Shipping profile{" "}
+                    <span style={{ fontWeight: 400, color: "var(--fg-muted)" }}>(Optional)</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginTop: 2 }}>
+                    Connect the product to a shipping profile
+                  </div>
+                </div>
+                <SelectField
+                  value={shippingProfileId}
+                  onChange={setShippingProfileId}
+                  options={shippingProfiles.map((x) => ({ value: x.id, label: x.label }))}
+                  placeholder="Select shipping profile"
+                  allowClear
+                />
+              </div>
+              <SalesChannelsField
+                rows={channelRows}
+                selected={channelIds}
+                onChange={setChannelIds}
+              />
+              </div>
+            </FormSection>
+          ) : null}
+
+          {tab === "variants" ? (
+            <VariantsGrid
+              rows={
+                hasVariants
+                  ? combos.map((c) => ({
+                      key: c.key,
+                      label: c.title,
+                      defaultTitle: c.title,
+                    }))
+                  : [
+                      {
+                        key: DEFAULT_KEY,
+                        label: "",
+                        defaultTitle: title.trim(),
+                      },
+                    ]
+              }
+              labelHeader={
+                hasVariants
+                  ? options
+                      .filter((o) => o.name.trim() && o.values.length > 0)
+                      .map((o) => o.name.trim())
+                      .join(" / ")
+                  : null
+              }
+              edits={edits}
+              onEdit={(key, patch) =>
+                setEdits((s) => ({
+                  ...s,
+                  [key]: { ...(s[key] ?? emptyVariantEdit), ...patch },
+                }))
+              }
+              currencies={currencies}
+            />
+          ) : null}
+        </>
+      )}
+    </WizardShell>
+  );
+}
