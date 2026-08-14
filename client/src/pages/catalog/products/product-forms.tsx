@@ -502,3 +502,253 @@ export function ProductVariantDrawer(props: {
       };
       const options = Object.fromEntries(Object.entries(optValues).filter(([, v]) => v));
       let variantId = initial?.id as string | undefined;
+      if (!variantId) {
+        const created = await api<{ variant: ProductVariant }>(`/admin/products/${product.id}/variants`, {
+          method: "POST",
+          body: {
+            title: extras.title,
+            ...(extras.sku ? { sku: extras.sku } : {}),
+            ...(priceArr.length > 0 ? { prices: priceArr } : {}),
+            ...(Object.keys(options).length > 0 ? { options } : {}),
+          },
+        });
+        variantId = created.variant.id;
+      }
+      await api(`/admin/products/${product.id}/variants/${variantId}`, {
+        method: "POST",
+        body: {
+          ...extras,
+          ...(priceArr.length > 0 ? { prices: priceArr } : {}),
+          ...(Object.keys(options).length > 0 ? { options } : {}),
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title={initial ? "Edit Variant" : "Create Variant"}
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <FormGrid cols={2}>
+        <TextField label="Title" required value={f.title} onChange={(v) => set("title", v)} />
+        <TextField label="Material" optional value={f.material} onChange={(v) => set("material", v)} />
+        <TextField label="SKU" optional value={f.sku} onChange={(v) => set("sku", v)} />
+        <TextField label="EAN" optional value={f.ean} onChange={(v) => set("ean", v)} />
+        <TextField label="UPC" optional value={f.upc} onChange={(v) => set("upc", v)} />
+        <TextField label="Barcode" optional value={f.barcode} onChange={(v) => set("barcode", v)} />
+      </FormGrid>
+      <CardToggle
+        title="Allow backorder"
+        hint="When checked, customers can purchase the variant even if there is no inventory available"
+        checked={allowBackorder}
+        onChange={setAllowBackorder}
+      />
+      <CardToggle
+        title="Manage inventory"
+        hint="When checked, Lupus will regulate the inventory when orders and returns are made"
+        checked={manageInventory}
+        onChange={setManageInventory}
+      />
+      {(product.options ?? []).length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Options</div>
+          {(product.options ?? []).map((o) => (
+            <SelectField
+              key={o.id}
+              label={o.title}
+              value={optValues[o.title] ?? ""}
+              onChange={(v) => setOptValues((s) => ({ ...s, [o.title]: v }))}
+              options={(o.values ?? []).map((v) => ({ value: v.value, label: v.value }))}
+              placeholder={o.title}
+            />
+          ))}
+        </div>
+      ) : null}
+      <FormField label="Prices" hint="Amounts in the smallest currency unit">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {currencies.map((c) => (
+            <NumberField
+              key={c}
+              label={c}
+              value={prices[c] ?? ""}
+              onChange={(v) => setPrices((s) => ({ ...s, [c]: v }))}
+              min={0}
+              maxWidth={120}
+            />
+          ))}
+        </div>
+      </FormField>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>Attributes</div>
+      <FormGrid cols={2}>
+        <NumberField label="Height" optional value={f.height} onChange={(v) => set("height", v)} min={0} />
+        <NumberField label="Width" optional value={f.width} onChange={(v) => set("width", v)} min={0} />
+        <NumberField label="Length" optional value={f.length} onChange={(v) => set("length", v)} min={0} />
+        <NumberField label="Weight" optional value={f.weight} onChange={(v) => set("weight", v)} min={0} />
+        <TextField label="MID code" optional value={f.mid_code} onChange={(v) => set("mid_code", v)} />
+        <TextField label="HS code" optional value={f.hs_code} onChange={(v) => set("hs_code", v)} />
+      </FormGrid>
+      <SelectField
+        label="Country of origin"
+        optional
+        value={f.origin_country}
+        onChange={(v) => set("origin_country", v)}
+        options={COUNTRY_OPTIONS}
+        placeholder="Select country"
+        searchable
+        allowClear
+      />
+    </FormDrawer>
+  );
+}
+
+// -------------------------------------------------- bulk variants (grid)
+
+export function ProductVariantsEditor(props: {
+  product: Product;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { product, onClose, onSaved } = props;
+  const variants: ProductVariant[] = product.variants ?? [];
+  const optionTitles: string[] = (product.options ?? []).map((o) => o.title);
+  const [currencies, setCurrencies] = useState<string[]>(() =>
+    [...new Set(variants.flatMap((v) => (v.prices ?? []).map((p) => String(p.currency_code).toUpperCase())))] as string[],
+  );
+  const [edits, setEdits] = useState<Record<string, VariantEdit>>(() =>
+    Object.fromEntries(
+      variants.map((v) => [
+        v.id,
+        {
+          title: v.title ?? "",
+          sku: v.sku ?? "",
+          manage: v.manage_inventory !== false,
+          backorder: !!v.allow_backorder,
+          prices: Object.fromEntries(
+            (v.prices ?? []).map((p) => [String(p.currency_code).toUpperCase(), String(p.amount)]),
+          ),
+        } as VariantEdit,
+      ]),
+    ),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/regions?limit=100&offset=0")
+      .then((d) => {
+        const cur = parseList(d, 100)
+          .items.map((r: any) => String(r.currency_code ?? "").toUpperCase())
+          .filter(Boolean) as string[];
+        setCurrencies((s) => [...new Set([...s, ...cur])]);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  const rows = useMemo(
+    () =>
+      variants.map((v) => ({
+        key: v.id as string,
+        label: optionTitles.map((t) => v.options?.[t]).filter(Boolean).join(" / ") || (v.title ?? ""),
+        defaultTitle: v.title ?? "",
+      })),
+    [variants, optionTitles],
+  );
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const update = variants.map((v) => {
+        const e = edits[v.id] ?? emptyVariantEdit;
+        const prices = Object.entries(e.prices)
+          .filter(([, x]) => x.trim() !== "" && Number(x) >= 0)
+          .map(([currency_code, x]) => ({ currency_code: currency_code.toLowerCase(), amount: Math.round(Number(x)) }));
+        return {
+          id: v.id,
+          title: (e.title ?? v.title).trim() || v.title,
+          sku: e.sku.trim() || null,
+          manage_inventory: e.manage,
+          allow_backorder: e.backorder,
+          ...(prices.length > 0 ? { prices } : {}),
+        };
+      });
+      await api(`/admin/products/${product.id}/variants/batch`, { method: "POST", body: { update } });
+      onSaved();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return createPortal(
+    <div
+      data-stacked-modal
+      role="dialog"
+      aria-modal="true"
+      style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.55)", padding: 8, display: "flex" }}
+    >
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          background: "var(--card-bg)",
+          border: "1px solid var(--card-border)",
+          borderRadius: 12,
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 20px", borderBottom: "1px solid var(--card-border)" }}>
+          <button type="button" onClick={onClose} title="Close (esc)" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)" }}>
+            ✕
+          </button>
+          <span className="kbd">esc</span>
+        </div>
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          {err ? <div className="alert" style={{ margin: 16, color: "#ef4444" }}>{err}</div> : null}
+          <VariantsGrid
+            rows={rows}
+            labelHeader={optionTitles.length > 0 ? optionTitles.join(" / ") : "Variant"}
+            edits={edits}
+            onEdit={(key, patch) =>
+              setEdits((s) => ({ ...s, [key]: { ...(s[key] ?? emptyVariantEdit), ...patch } }))
+            }
+            currencies={currencies}
+          />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "14px 24px", borderTop: "1px solid var(--card-border)" }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
