@@ -250,3 +250,255 @@ export function ProductOrganizeDrawer(props: {
           collection_id: collectionId || null,
           categories: categoryIds.map((id) => ({ id })),
           tags: tags.map((value) => ({ value })),
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer title="Edit Organization" onClose={onClose} onSubmit={save} busy={busy} error={err} submitLabel="Save">
+      <SelectField
+        label="Type"
+        optional
+        value={typeId}
+        onChange={setTypeId}
+        options={types.map((t: any) => ({ value: t.id, label: t.value ?? t.name ?? t.id }))}
+        placeholder="Select type"
+        searchable
+        allowClear
+      />
+      <SelectField
+        label="Collection"
+        optional
+        value={collectionId}
+        onChange={setCollectionId}
+        options={collections.map((c: any) => ({ value: c.id, label: c.title ?? c.id }))}
+        placeholder="Select collection"
+        searchable
+        allowClear
+      />
+      <FormField label="Categories" optional>
+        <MultiCombobox
+          values={categoryIds.map(catLabel)}
+          onChange={(labels) =>
+            setCategoryIds(
+              labels
+                .map((l) => categories.find((c) => c.name === l)?.id)
+                .filter((x): x is string => !!x),
+            )
+          }
+          suggestions={categories.map((c) => c.name)}
+          placeholder="Select categories"
+          allowCreate={false}
+        />
+      </FormField>
+      <FormField label="Tags" optional>
+        <MultiCombobox
+          values={tags}
+          onChange={setTags}
+          suggestions={tagOptions}
+          placeholder="Select or create tags"
+        />
+      </FormField>
+    </FormDrawer>
+  );
+}
+
+// --------------------------------------------------------------- shipping
+
+export function ProductShippingDrawer(props: {
+  product: Product;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { product, onClose, onSaved } = props;
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [value, setValue] = useState(product.shipping_profile_id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/shipping-profiles?limit=100&offset=0")
+      .then((d: any) => setProfiles(parseList(d, 100).items))
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/products/${product.id}`, {
+        method: "POST",
+        body: { shipping_profile_id: value || null },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit Shipping Configuration"
+      subtitle="Connect the product to a shipping profile"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <SelectField
+        label="Shipping profile"
+        optional
+        value={value}
+        onChange={setValue}
+        options={profiles.map((p: any) => ({ value: p.id, label: p.name ?? p.id }))}
+        placeholder="Select shipping profile"
+        allowClear
+      />
+    </FormDrawer>
+  );
+}
+
+// --------------------------------------------------------- sales channels
+
+export function ProductChannelsPicker(props: {
+  product: Product;
+  selected: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { product, selected, onClose, onSaved } = props;
+  const [rows, setRows] = useState<ChannelRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/sales-channels?limit=100&offset=0")
+      .then((d: any) => setRows(parseList(d, 200).items as ChannelRow[]))
+      .catch((e) => setErr(errMsg(e)));
+  }, []);
+
+  if (err) {
+    return (
+      <FormDrawer title="Edit Sales Channels" onClose={onClose} error={err} submitLabel="Close" onSubmit={onClose}>
+        <span />
+      </FormDrawer>
+    );
+  }
+  if (!rows) return null;
+  return (
+    <SalesChannelPicker
+      rows={rows}
+      selected={selected}
+      onCancel={onClose}
+      onSave={async (ids) => {
+        try {
+          await api(`/admin/products/${product.id}`, {
+            method: "POST",
+            body: { sales_channels: ids.map((id) => ({ id })) },
+          });
+          onSaved();
+        } catch (e) {
+          setErr(errMsg(e));
+        }
+      }}
+    />
+  );
+}
+
+// ---------------------------------------------------------------- variant
+
+export function ProductVariantDrawer(props: {
+  product: Product;
+  initial?: ProductVariant;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { product, initial, onClose, onSaved } = props;
+  const init = (k: ProductVariantFieldKey) =>
+    (initial?.[k] == null ? "" : String(initial[k]));
+  const [f, setF] = useState({
+    title: init("title"),
+    material: init("material"),
+    sku: init("sku"),
+    ean: init("ean"),
+    upc: init("upc"),
+    barcode: init("barcode"),
+    height: init("height"),
+    width: init("width"),
+    length: init("length"),
+    weight: init("weight"),
+    mid_code: init("mid_code"),
+    hs_code: init("hs_code"),
+    origin_country: init("origin_country").toLowerCase(),
+  });
+  const [allowBackorder, setAllowBackorder] = useState(!!initial?.allow_backorder);
+  const [manageInventory, setManageInventory] = useState(initial ? initial.manage_inventory !== false : false);
+  const [optValues, setOptValues] = useState<Record<string, string>>(initial?.options ?? {});
+  const [prices, setPrices] = useState<Record<string, string>>(() => {
+    const p: Record<string, string> = {};
+    for (const pr of initial?.prices ?? []) p[String(pr.currency_code).toUpperCase()] = String(pr.amount);
+    return p;
+  });
+  const [currencies, setCurrencies] = useState<string[]>(["USD"]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+
+  useEffect(() => {
+    api("/admin/regions?limit=100&offset=0")
+      .then((d) => {
+        const cur = [
+          ...new Set(
+            parseList(d, 100)
+              .items.map((r: any) => String(r.currency_code ?? "").toUpperCase())
+              .filter(Boolean),
+          ),
+        ] as string[];
+        const existing = Object.keys(prices);
+        const all = [...new Set([...cur, ...existing])];
+        if (all.length > 0) setCurrencies(all);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    if (!f.title.trim()) {
+      setErr("Title is required.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const priceArr = Object.entries(prices)
+        .filter(([, v]) => v.trim() !== "" && Number(v) >= 0)
+        .map(([currency_code, v]) => ({
+          currency_code: currency_code.toLowerCase(),
+          amount: Math.round(Number(v)),
+        }));
+      const extras = {
+        title: f.title.trim(),
+        sku: strOrNull(f.sku),
+        barcode: strOrNull(f.barcode),
+        ean: strOrNull(f.ean),
+        upc: strOrNull(f.upc),
+        material: strOrNull(f.material),
+        manage_inventory: manageInventory,
+        allow_backorder: allowBackorder,
+        height: numOrNull(f.height),
+        width: numOrNull(f.width),
+        length: numOrNull(f.length),
+        weight: numOrNull(f.weight),
+        mid_code: strOrNull(f.mid_code),
+        hs_code: strOrNull(f.hs_code),
+        origin_country: strOrNull(f.origin_country),
+      };
+      const options = Object.fromEntries(Object.entries(optValues).filter(([, v]) => v));
+      let variantId = initial?.id as string | undefined;
