@@ -179,3 +179,184 @@ export function CustomerOrdersSection({ customerId }: { customerId: string }) {
         rows={pageRows}
         loading={loading}
         sort={sort}
+        onSort={(next) => setSort(next || "-created_at")}
+        rowActions={(o: any) => [{ label: "View", onClick: () => navigate(`/r/orders/${o.id}`) }]}
+        emptyTitle={filtering ? "No results found" : "No records"}
+        emptyHint={filtering ? "No orders match your search or filters." : "There are no records to show"}
+      />
+      {sorted.length > 0 ? (
+        <TablePager page={page} limit={limit} count={sorted.length} onPage={setPage} />
+      ) : null}
+    </DetailSection>
+  );
+}
+
+const GROUP_FILTERS: FilterDef[] = [textFilter("name", "Name", { accessor: (row: any) => row?.name })];
+
+// Lupus customer "Customer Groups" table: select column, Name, Customers (member count),
+// row menu (Edit / Remove), and a bulk Remove for the ticked rows.
+export function CustomerGroupsSection({
+  customer,
+  onChanged,
+}: {
+  customer: any;
+  onChanged: () => void;
+}) {
+  const navigate = useNavigate();
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [selected, setSelected] = useState<string[]>([]);
+  const [sort, setSort] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const groups: any[] = customer.groups ?? [];
+  const groupKey = groups.map((g) => g.id).join(",");
+
+  useEffect(() => {
+    listAll("/admin/customer-groups")
+      .then((all: any[]) => {
+        const m: Record<string, number> = {};
+        for (const g of all) m[g.id] = Number(g.customers_count ?? 0);
+        setCounts(m);
+      })
+      .catch(() => {});
+    setSelected([]);
+  }, [groupKey]);
+
+  const { draft, setDraft, submit, filtered: searched } = useTableSearch(
+    groups,
+    (g: any, needle: string) => !needle || String(g.name ?? "").toLowerCase().includes(needle),
+  );
+  const filters = useLocalFilters(searched, GROUP_FILTERS);
+  const sorted = useMemo(
+    () =>
+      sortRows(filters.rows, sort, {
+        name: (g: any) => String(g.name ?? "").toLowerCase(),
+        customers: (g: any) => counts[g.id] ?? 0,
+      }),
+    [filters.rows, sort, counts],
+  );
+  const { page, setPage, limit, pageRows } = useTablePaging(sorted, { limit: PAGE_SIZE, resetKey: customer.id });
+
+  async function remove(ids: string[]) {
+    const names = groups.filter((g) => ids.includes(g.id)).map((g) => g.name);
+    const ok = await requestConfirm({
+      title: "Are you sure?",
+      description:
+        ids.length === 1
+          ? `You are about to remove the customer from the group ${names[0]}. This action cannot be undone.`
+          : `You are about to remove the customer from the groups ${names.join(", ")}. This action cannot be undone.`,
+      confirmLabel: "Remove",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/customers/${customer.id}/customer-groups`, {
+        method: "POST",
+        body: { remove: ids },
+      });
+      setSelected([]);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const columns: TableColumn[] = [
+    {
+      key: "name",
+      label: "Name",
+      sortKey: "name",
+      render: (g: any) => (
+        <Link
+          to={`/r/customer-groups/${g.id}`}
+          style={{ color: "var(--fg-base)", textDecoration: "none", fontWeight: 500 }}
+        >
+          {g.name}
+        </Link>
+      ),
+    },
+    {
+      key: "customers",
+      label: "Customers",
+      sortKey: "customers",
+      render: (g: any) => (counts[g.id] != null ? counts[g.id].toLocaleString() : "-"),
+    },
+  ];
+
+  const filtering = !!draft || filters.count > 0;
+  return (
+    <DetailSection
+      title="Customer Groups"
+      action={
+        <button
+          className="btn btn-secondary"
+          onClick={() => navigate(`/r/customers/${customer.id}/add-customer-groups`)}
+        >
+          Add
+        </button>
+      }
+    >
+      {err ? <Alert>{err}</Alert> : null}
+      <TableToolbar
+        left={<FilterBar defs={GROUP_FILTERS} filters={filters} />}
+        right={
+          <TableSearch
+            value={draft}
+            onChange={setDraft}
+            onSubmit={() => {
+              submit();
+              setPage(1);
+            }}
+            width={220}
+            placeholder="Search"
+          />
+        }
+      />
+      {selected.length > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "8px 16px",
+            borderBottom: "1px solid var(--card-border)",
+            background: "var(--hover-bg)",
+            fontSize: 13,
+          }}
+        >
+          <span>{selected.length} selected</span>
+          <button className="btn btn-danger" disabled={busy} onClick={() => void remove(selected)}>
+            Remove
+          </button>
+        </div>
+      ) : null}
+      <DataTable
+        columns={columns}
+        rows={pageRows}
+        selectable
+        selected={selected}
+        onToggleRow={(gid) => setSelected((s) => (s.includes(gid) ? s.filter((x) => x !== gid) : [...s, gid]))}
+        onToggleAll={(checked) => {
+          const ids = pageRows.map((g: any) => g.id);
+          setSelected((s) => (checked ? [...new Set([...s, ...ids])] : s.filter((x) => !ids.includes(x))));
+        }}
+        sort={sort}
+        onSort={setSort}
+        rowActions={(g: any) => [
+          { label: "Edit", onClick: () => navigate(`/r/customer-groups/${g.id}`) },
+          { label: "Remove", danger: true, onClick: () => void remove([g.id]) },
+        ]}
+        emptyTitle={filtering ? "No results found" : "No records"}
+        emptyHint={filtering ? "No groups match your search or filters." : "This customer doesn't belong to any group."}
+      />
+      {sorted.length > 0 ? (
+        <TablePager page={page} limit={limit} count={sorted.length} onPage={setPage} />
+      ) : null}
+    </DetailSection>
+  );
+}
