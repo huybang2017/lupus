@@ -229,3 +229,234 @@ function FulfillmentSet({
   setErr: (e: string) => void;
   openDrawer: (d: Drawer) => void;
 }) {
+  const confirm = useConfirm();
+  async function enable() {
+    try {
+      await api(`/admin/stock-locations/${location.id}/fulfillment-sets`, {
+        method: "POST",
+        body: { name: `${location.name} ${type === "pickup" ? "pick up" : type}`, type },
+      });
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  async function disable() {
+    const ok = await confirm({
+      title: "Are you sure?",
+      description: `Are you sure that you want to disable "${set.name}"? This will delete all associated service zones and shipping options, and cannot be undone.`,
+      confirmLabel: "Disable",
+    });
+    if (!ok) return;
+    try {
+      await api(`/admin/fulfillment-sets/${set.id}`, { method: "DELETE" });
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  const zones: any[] = set?.service_zones ?? [];
+  return (
+    <section className="card" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px" }}>
+        <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{type === "pickup" ? "Pickup" : "Shipping"}</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <StatusBadge color={set ? "green" : "grey"}>{set ? "Enabled" : "Disabled"}</StatusBadge>
+          <RowMenu
+            items={
+              set
+                ? [
+                    { label: "Create service zone", onClick: () => openDrawer({ kind: "zone-create", setId: set.id, type }) },
+                    { label: "Disable", danger: true, onClick: () => void disable() },
+                  ]
+                : [{ label: "Enable", onClick: () => void enable() }]
+            }
+          />
+        </div>
+      </div>
+      {set && zones.length === 0 ? (
+        <div style={{ borderTop: "1px solid var(--card-border)", padding: "20px 24px", textAlign: "center" }}>
+          <EmptyState title="No records" hint="There are no service zones to add shipping options to." />
+          <button className="btn btn-secondary" onClick={() => openDrawer({ kind: "zone-create", setId: set.id, type })}>
+            Create service zone
+          </button>
+        </div>
+      ) : null}
+      {zones.map((z) => (
+        <div key={z.id} style={{ borderTop: "1px solid var(--card-border)" }}>
+          <ServiceZone
+            zone={z}
+            locationId={location.id}
+            setId={set.id}
+            type={type}
+            onEditZone={() => openDrawer({ kind: "zone-edit", setId: set.id, zone: z, type })}
+            onAreas={() => openDrawer({ kind: "areas", setId: set.id, zone: z })}
+            onEditOption={(o) => openDrawer({ kind: "option", option: o, type })}
+            onChanged={onChanged}
+            setErr={setErr}
+          />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+type Drawer =
+  | { kind: "edit" | "channels" | "providers" | "metadata" }
+  | { kind: "zone-create"; setId: string; type: FsType }
+  | { kind: "zone-edit"; setId: string; zone: any; type: FsType }
+  | { kind: "areas"; setId: string; zone: any }
+  | { kind: "option"; option: any; type: FsType };
+
+// Lupus stock location detail: general, Pickup and Shipping fulfillment sets (service zones with
+// their shipping / return options), and the connected sales channels and fulfillment providers.
+export function LocationDetailPage() {
+  const { id = "" } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const [loc, setLoc] = useState<any>(null);
+  const [totalChannels, setTotalChannels] = useState<number | null>(null);
+  const [totalProviders, setTotalProviders] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<Drawer | null>(null);
+
+  function load() {
+    api<{ stock_location: any }>(`/admin/stock-locations/${id}`)
+      .then((d) => {
+        setLoc(d.stock_location);
+        setErr(null);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    api<any>("/admin/sales-channels?limit=1&offset=0").then((d) => setTotalChannels(d.count ?? null)).catch(() => undefined);
+    api<any>("/admin/fulfillment-providers").then((d) => setTotalProviders(d.count ?? null)).catch(() => undefined);
+  }
+  useEffect(load, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function del() {
+    const ok = await confirm({
+      title: "Are you sure?",
+      description: `You are about to delete the stock location "${loc.name}". This action cannot be undone.`,
+      confirmLabel: "Delete",
+      verifyText: loc.name,
+    });
+    if (!ok) return;
+    try {
+      await api(`/admin/stock-locations/${id}`, { method: "DELETE" });
+      navigate("/settings/stock-locations", { replace: true });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const saved = () => {
+    setDrawer(null);
+    load();
+  };
+  const setOf = (type: FsType) => (loc?.fulfillment_sets ?? []).find((s: any) => s.type === type);
+  const channels: string[] = (loc?.sales_channels ?? []).map((c: any) => c.name);
+  const providers: string[] = (loc?.fulfillment_providers ?? []).map((p: any) => formatProvider(p.id));
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, fontSize: 13 }}>
+        <Link to="/settings/stock-locations" style={{ color: "var(--fg-subtle)", textDecoration: "none" }}>
+          Locations
+        </Link>
+        <span style={{ color: "var(--fg-muted)" }}>›</span>
+        <span style={{ fontWeight: 600 }}>{loc?.name ?? id}</span>
+      </div>
+      {err ? <Alert>{err}</Alert> : null}
+      {!loc && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+
+      {loc ? (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 320px", gap: 16, alignItems: "start" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+            <section className="card" style={{ padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{loc.name}</h1>
+                <div style={subtle}>{formatAddress(loc.address) || "-"}</div>
+              </div>
+              <RowMenu
+                items={[
+                  { label: "Edit", onClick: () => setDrawer({ kind: "edit" }) },
+                  { label: "View inventory", onClick: () => navigate(`/r/inventory-items?location_id=${id}`) },
+                  { label: "Delete", danger: true, onClick: () => void del() },
+                ]}
+              />
+            </section>
+
+            <FulfillmentSet location={loc} type="pickup" set={setOf("pickup")} onChanged={load} setErr={setErr} openDrawer={setDrawer} />
+            <FulfillmentSet location={loc} type="shipping" set={setOf("shipping")} onChanged={load} setErr={setErr} openDrawer={setDrawer} />
+
+            <MetadataSection metadata={loc.metadata} onEdit={() => setDrawer({ kind: "metadata" })} />
+            <JsonSection data={loc} />
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+            <DetailSection
+              title="Sales Channels"
+              action={<RowMenu items={[{ label: "Connect sales channels", onClick: () => setDrawer({ kind: "channels" }) }]} />}
+            >
+              {channels.length > 0 ? (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{summarize(channels, 3)}</div>
+                  <div style={{ ...subtle, fontSize: 12, marginTop: 4 }}>
+                    Connected to {channels.length}
+                    {totalChannels != null ? ` of ${totalChannels}` : ""} sales channels
+                  </div>
+                </>
+              ) : (
+                <EmptyState title="No records" hint="The location is not connected to any sales channels." />
+              )}
+            </DetailSection>
+
+            <DetailSection
+              title="Fulfillment Providers"
+              action={<RowMenu items={[{ label: "Connect Providers", onClick: () => setDrawer({ kind: "providers" }) }]} />}
+            >
+              {providers.length > 0 ? (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{summarize(providers, 3)}</div>
+                  <div style={{ ...subtle, fontSize: 12, marginTop: 4 }}>
+                    Connected to {providers.length}
+                    {totalProviders != null ? ` of ${totalProviders}` : ""} fulfillment providers
+                  </div>
+                </>
+              ) : (
+                <EmptyState title="No records" hint="This Stock Location is not connected to any fulfillment providers." />
+              )}
+            </DetailSection>
+          </div>
+        </div>
+      ) : null}
+
+      {loc && drawer?.kind === "edit" ? <EditLocationDrawer location={loc} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {loc && drawer?.kind === "channels" ? <SalesChannelsDrawer location={loc} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {loc && drawer?.kind === "providers" ? <ProvidersDrawer location={loc} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {loc && drawer?.kind === "metadata" ? (
+        <MetadataDrawer
+          metadata={loc.metadata}
+          onClose={() => setDrawer(null)}
+          onSaved={saved}
+          save={async (metadata) => {
+            await api(`/admin/stock-locations/${id}`, { method: "POST", body: { metadata } });
+          }}
+        />
+      ) : null}
+      {loc && drawer?.kind === "zone-create" ? (
+        <ServiceZoneDrawer mode="create" location={loc} setId={drawer.setId} type={drawer.type} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {loc && drawer?.kind === "zone-edit" ? (
+        <ServiceZoneDrawer mode="edit" location={loc} setId={drawer.setId} zone={drawer.zone} type={drawer.type} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+      {loc && drawer?.kind === "areas" ? <ManageAreasDrawer setId={drawer.setId} zone={drawer.zone} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {loc && drawer?.kind === "option" ? (
+        <EditShippingOptionDrawer option={drawer.option} locationId={id} isPickup={drawer.type === "pickup"} onClose={() => setDrawer(null)} onSaved={saved} />
+      ) : null}
+    </div>
+  );
+}
