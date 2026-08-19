@@ -270,3 +270,275 @@ export function DashboardPage() {
               ))}
             </select>
           ) : null}
+          <div role="group" aria-label="Period" style={{ display: "inline-flex", border: "1px solid var(--card-border)", borderRadius: 8, overflow: "hidden" }}>
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                onClick={() => setDays(r)}
+                aria-pressed={days === r}
+                style={{ padding: "6px 12px", fontSize: 13, border: "none", cursor: "pointer", background: days === r ? "var(--hover-bg)" : "transparent", color: days === r ? "var(--fg-base)" : "var(--fg-subtle)", fontWeight: days === r ? 600 : 400 }}
+              >
+                {r}d
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {err ? <Alert>{err}</Alert> : null}
+      {!data && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 64 }}>
+          <Spinner size={24} />
+        </div>
+      ) : null}
+
+      {data ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 16 }}>
+            <Kpi label="Revenue" value={money(data.kpis.revenue.value)} change={data.kpis.revenue.change} hint={`vs previous ${data.days} days`} />
+            <Kpi label="Orders" value={String(data.kpis.orders.value)} change={data.kpis.orders.change} hint={`vs previous ${data.days} days`} />
+            <Kpi label="Average order value" value={money(data.kpis.aov.value)} change={data.kpis.aov.change} hint={`vs previous ${data.days} days`} />
+            <Kpi label="New customers" value={String(data.kpis.customers.value)} change={data.kpis.customers.change} hint={`vs previous ${data.days} days`} />
+            <Kpi label="Refunded" value={money(data.kpis.refunds.value)} change={data.kpis.refunds.change} inverse hint={`vs previous ${data.days} days`} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(260px,1fr)", gap: 16 }} className="dash-split">
+            <section className="card" style={card}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Sales</h2>
+                <div role="group" aria-label="Chart metric" style={{ display: "inline-flex", gap: 4 }}>
+                  {(["revenue", "orders"] as const).map((m) => (
+                    <button key={m} className="btn btn-secondary" aria-pressed={metric === m} onClick={() => setMetric(m)} style={{ padding: "3px 10px", fontSize: 12, opacity: metric === m ? 1 : 0.6 }}>
+                      {m === "revenue" ? "Revenue" : "Orders"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {data.kpis.orders.value === 0 ? (
+                <div style={{ padding: "48px 0", textAlign: "center", color: "var(--fg-subtle)", fontSize: 13 }}>No orders in the last {data.days} days.</div>
+              ) : (
+                <SalesChart series={data.series} currency={data.currency} metric={metric} />
+              )}
+            </section>
+
+            <section className="card" style={card}>
+              <h2 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 700 }}>Needs attention</h2>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {ATTENTION.map((a) => {
+                  const n = data.attention[a.key];
+                  return (
+                    <li key={a.key} style={{ borderTop: "1px solid var(--card-border)" }}>
+                      <Link to={a.to} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 0", textDecoration: "none", color: "var(--fg-base)", fontSize: 13 }}>
+                        <span>{a.label}</span>
+                        <span className={`badge ${n > 0 ? (a.tone === "warn" ? "badge-amber" : "badge-blue") : "badge-gray"}`} style={{ minWidth: 28, justifyContent: "center" }}>
+                          {n}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div style={{ ...muted, marginTop: 6 }}>Low stock means {data.low_stock_at} or fewer available.</div>
+            </section>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16 }}>
+            <section className="card" style={card}>
+              <h2 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 700 }}>Top products</h2>
+              {data.top_products.length === 0 ? (
+                <div style={{ ...muted, padding: "16px 0" }}>No sales in this period yet.</div>
+              ) : (
+                <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {data.top_products.map((p, i) => (
+                    <li key={`${p.product_id}-${i}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderTop: i === 0 ? "none" : "1px solid var(--card-border)" }}>
+                      <span style={{ width: 36, height: 44, borderRadius: 4, overflow: "hidden", background: "var(--hover-bg)", border: "1px solid var(--card-border)", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--fg-muted)", flexShrink: 0 }}>
+                        {p.thumbnail ? <img src={p.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "▣"}
+                      </span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {p.product_id ? (
+                          <Link to={`/r/products/${p.product_id}`} style={{ color: "var(--fg-base)", textDecoration: "none", fontWeight: 600, fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {p.title}
+                          </Link>
+                        ) : (
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{p.title}</span>
+                        )}
+                        <div style={muted}>{p.units} sold</div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{money(p.revenue)}</div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+
+            <section className="card" style={card}>
+              <h2 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 700 }}>Sales by channel</h2>
+              {data.channels.length === 0 ? (
+                <div style={{ ...muted, padding: "16px 0" }}>No sales in this period yet.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {data.channels.map((c) => (
+                    <div key={c.name}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                        <span style={{ fontWeight: 600 }}>{c.name}</span>
+                        <span>
+                          {money(c.revenue)} <span style={muted}>· {c.orders} orders</span>
+                        </span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 3, background: "var(--hover-bg)", overflow: "hidden" }}>
+                        <div style={{ width: `${Math.max(3, (c.revenue / maxChannel) * 100)}%`, height: "100%", background: "#818cf8" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16 }}>
+            <Card title="Payments" hint={`Orders in the last ${data.days} days by payment status`}>
+              {data.payment_breakdown.length === 0 ? <Empty>No orders in this period.</Empty> : <Donut parts={data.payment_breakdown.map((p) => ({ key: p.key, value: p.count }))} />}
+            </Card>
+            <Card title="Fulfillment" hint="Orders by delivery progress">
+              {data.fulfillment_breakdown.length === 0 ? <Empty>No orders in this period.</Empty> : <Donut parts={data.fulfillment_breakdown.map((p) => ({ key: p.key, value: p.count }))} />}
+            </Card>
+            <Card title="Customers" hint="Buyers in this period">
+              {data.customers.buyers === 0 ? (
+                <Empty>No customer orders in this period.</Empty>
+              ) : (
+                <Donut
+                  center={`${data.customers.repeat_rate}%`}
+                  parts={[
+                    { key: "returning", value: data.customers.returning, color: "#22c55e" },
+                    { key: "new", value: data.customers.buyers - data.customers.returning, color: "#818cf8" },
+                  ]}
+                />
+              )}
+              <div style={{ ...muted, marginTop: 8 }}>The ring shows the repeat purchase rate: buyers who had ordered before this period.</div>
+            </Card>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16 }}>
+            <Card title="Busiest days" hint="Orders by day of the week">
+              {data.kpis.orders.value === 0 ? <Empty>No orders in this period.</Empty> : <WeekdayBars days={data.weekdays} />}
+            </Card>
+            <Card title="Checkout" hint="Carts started in this period">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 12 }}>
+                <Stat label="Carts" value={String(data.carts.created)} />
+                <Stat label="Completed" value={String(data.carts.completed)} />
+                <Stat label="Abandoned" value={String(data.carts.abandoned)} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                <span>Conversion rate</span>
+                <span style={{ fontWeight: 700 }}>{data.carts.conversion_rate}%</span>
+              </div>
+              <div style={{ height: 8, borderRadius: 4, background: "var(--hover-bg)", overflow: "hidden" }}>
+                <div style={{ width: `${Math.min(100, data.carts.conversion_rate)}%`, height: "100%", background: "#22c55e" }} />
+              </div>
+            </Card>
+            <Card title="Discounts" hint="What promotions gave away">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+                <Stat label="Discounted" value={money(data.discounts.total)} />
+                <Stat label="Orders" value={String(data.discounts.orders)} sub="with a discount" />
+                <Stat label="Share" value={`${data.discounts.share}%`} sub="of gross sales" />
+              </div>
+            </Card>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16 }}>
+            <Card title="Top countries" hint="Where orders ship to">
+              {data.countries.length === 0 ? (
+                <Empty>No shipping addresses in this period.</Empty>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {data.countries.map((c) => (
+                    <div key={c.country}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                        <span style={{ fontWeight: 600 }}>{countryName(c.country)}</span>
+                        <span>
+                          {money(c.revenue)} <span style={muted}>· {c.orders} orders</span>
+                        </span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 3, background: "var(--hover-bg)", overflow: "hidden" }}>
+                        <div style={{ width: `${Math.max(3, (c.revenue / Math.max(1, data.countries[0].revenue)) * 100)}%`, height: "100%", background: "#38bdf8" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+            <Card title="Low stock" hint={`Items with ${data.low_stock_at} or fewer available`}>
+              {data.low_stock_items.length === 0 ? (
+                <Empty>Every item has enough stock.</Empty>
+              ) : (
+                <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {data.low_stock_items.map((i, n) => (
+                    <li key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 0", borderTop: n === 0 ? "none" : "1px solid var(--card-border)", fontSize: 13 }}>
+                      <Link to={`/r/inventory-items/${i.id}`} style={{ color: "var(--fg-base)", textDecoration: "none", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ fontWeight: 600 }}>{i.title}</span>
+                        {i.sku ? <span style={{ ...muted, marginLeft: 8 }}>{i.sku}</span> : null}
+                      </Link>
+                      <span className={`badge ${i.available <= 0 ? "badge-red" : "badge-amber"}`}>{i.available} left</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          </div>
+
+          <section className="card" style={{ ...card, padding: "18px 0 6px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 20px 10px" }}>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Recent orders</h2>
+              <Link to="/r/orders" style={{ fontSize: 13, color: "var(--fg-interactive)", textDecoration: "none" }}>
+                View all
+              </Link>
+            </div>
+            {data.recent_orders.length === 0 ? (
+              <div style={{ ...muted, padding: "16px 20px 24px" }}>No orders yet. They appear here as soon as customers check out.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="dtable" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      {["Order", "Date", "Customer", "Payment", "Fulfillment", "Total"].map((h) => (
+                        <th key={h} scope="col" style={{ textAlign: h === "Total" ? "right" : "left" }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.recent_orders.map((o) => (
+                      <tr key={o.id} style={{ cursor: "pointer" }} onClick={(e) => { if (!(e.target as HTMLElement).closest("a")) navigate(`/r/orders/${o.id}`); }}>
+                        <td>
+                          <Link to={`/r/orders/${o.id}`} style={{ color: "var(--fg-interactive)", textDecoration: "none", fontWeight: 600 }}>
+                            #{o.display_id}
+                          </Link>
+                        </td>
+                        <td>{new Date(o.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                        <td>{o.customer_name || o.email || "-"}</td>
+                        <td>
+                          <PaymentStatusCell value={o.payment_status} />
+                        </td>
+                        <td>
+                          <FulfillmentStatusCell value={o.fulfillment_status} />
+                        </td>
+                        <td style={{ textAlign: "right" }}>{fmtMoney(o.total, o.currency_code)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <div style={{ ...muted, display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span>{data.totals.orders} orders in total</span>
+            <span>{data.totals.products} products</span>
+            <span>{data.totals.customers} customers</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
