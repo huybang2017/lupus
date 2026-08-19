@@ -201,3 +201,205 @@ export function ProvidersDrawer({ location, onClose, onSaved }: { location: any;
   const [picked, setPicked] = useState<string[]>(initial);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { items, loading, error } = useServerList<any>("/admin/fulfillment-providers", { page: 1, limit: 100 });
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/stock-locations/${location.id}/fulfillment-providers`, {
+        method: "POST",
+        body: { add: picked.filter((x) => !initial.includes(x)), remove: initial.filter((x) => !picked.includes(x)) },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Fulfillment Providers"
+      subtitle="Choose the fulfillment providers that can be used by this location's shipping options."
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+    >
+      <div style={{ margin: "0 -24px" }}>
+        <DataTable
+          columns={[{ key: "id", label: "ID", render: (p: any) => <span style={{ fontWeight: 600 }}>{formatProvider(p.id)}</span> }]}
+          rows={items}
+          loading={loading}
+          error={error}
+          selectable
+          selected={picked}
+          onToggleRow={(id) => setPicked((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))}
+          onToggleAll={(checked) => setPicked(checked ? items.map((p) => p.id) : [])}
+          emptyTitle="No records"
+        />
+      </div>
+    </FormDrawer>
+  );
+}
+
+/** Lupus's area picker: the countries a service zone covers. */
+export function AreaPicker({ value, onChange }: { value: string[]; onChange: (codes: string[]) => void }) {
+  const [q, setQ] = useState("");
+  const shown = useMemo(() => COUNTRY_OPTIONS.filter((c) => c.label.toLowerCase().includes(q.trim().toLowerCase())), [q]);
+  return (
+    <div>
+      <input className="input" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: "100%", marginBottom: 8 }} />
+      <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginBottom: 6 }}>
+        {value.length} {value.length === 1 ? "area" : "areas"} selected
+      </div>
+      <div style={{ border: "1px solid var(--card-border)", borderRadius: 8, maxHeight: "50vh", overflowY: "auto" }}>
+        {shown.map((c) => (
+          <label
+            key={c.value}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", fontSize: 13, borderBottom: "1px solid var(--card-border)", cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={value.includes(c.value)}
+              onChange={() => onChange(value.includes(c.value) ? value.filter((x) => x !== c.value) : [...value, c.value])}
+            />
+            {c.label}
+          </label>
+        ))}
+        {shown.length === 0 ? <div style={{ padding: 16, fontSize: 13, color: "var(--fg-subtle)" }}>No results found</div> : null}
+      </div>
+    </div>
+  );
+}
+
+// Lupus "Create Service Zone" (name + areas) and "Edit Service Zone" (name).
+export function ServiceZoneDrawer({
+  mode,
+  location,
+  setId,
+  zone,
+  type,
+  onClose,
+  onSaved,
+}: {
+  mode: "create" | "edit";
+  location: any;
+  setId: string;
+  zone?: any;
+  type: "shipping" | "pickup";
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState<string>(zone?.name ?? "");
+  const [countries, setCountries] = useState<string[]>([]);
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const nameError = name.trim() === "" ? REQUIRED : undefined;
+  const areaError = mode === "create" && countries.length === 0 ? "Select at least one area" : undefined;
+
+  async function save() {
+    if (nameError || areaError) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      if (mode === "create") {
+        await api(`/admin/fulfillment-sets/${setId}/service-zones`, {
+          method: "POST",
+          body: { name: name.trim(), geo_zones: countries.map((country_code) => ({ type: "country", country_code })) },
+        });
+      } else {
+        await api(`/admin/fulfillment-sets/${setId}/service-zones/${zone.id}`, { method: "POST", body: { name: name.trim() } });
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title={mode === "create" ? `Create Service Zone for ${type === "pickup" ? "Pickup" : "Shipping"} from ${location.name}` : "Edit Service Zone"}
+      subtitle={
+        mode === "create"
+          ? "A service zone is a collection of geographical zones or areas. It's used to restrict available shipping options to a defined set of locations."
+          : undefined
+      }
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+    >
+      <TextField label="Name" value={name} onChange={setName} error={show ? nameError : undefined} />
+      {mode === "create" ? (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>Areas</div>
+          <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginBottom: 8 }}>Select the geographical areas that the service zone covers.</div>
+          <AreaPicker value={countries} onChange={setCountries} />
+          {show && areaError ? (
+            <div role="alert" style={{ marginTop: 6, fontSize: 12, color: "#ef4444" }}>
+              {areaError}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </FormDrawer>
+  );
+}
+
+// Lupus "Manage Areas for <zone>".
+export function ManageAreasDrawer({ setId, zone, onClose, onSaved }: { setId: string; zone: any; onClose: () => void; onSaved: () => void }) {
+  const others = (zone.geo_zones ?? []).filter((g: any) => g.type !== "country");
+  const [countries, setCountries] = useState<string[]>(
+    (zone.geo_zones ?? []).filter((g: any) => g.type === "country").map((g: any) => String(g.country_code).toLowerCase()),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/fulfillment-sets/${setId}/service-zones/${zone.id}`, {
+        method: "POST",
+        body: {
+          geo_zones: [
+            ...countries.map((country_code) => ({ type: "country", country_code })),
+            // province / city / postal areas can only be managed through the API; keep them
+            ...others.map((g: any) => ({
+              type: g.type,
+              country_code: g.country_code,
+              province_code: g.province_code,
+              city: g.city,
+              postal_expression: g.postal_expression ? (typeof g.postal_expression === "string" ? JSON.parse(g.postal_expression) : g.postal_expression) : undefined,
+            })),
+          ],
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title={`Manage Areas for ${zone.name}`}
+      subtitle="Select the geographical areas that the service zone covers."
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+    >
+      <AreaPicker value={countries} onChange={setCountries} />
+    </FormDrawer>
+  );
+}
+
