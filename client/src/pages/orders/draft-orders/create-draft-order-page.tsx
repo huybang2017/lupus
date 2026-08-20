@@ -185,3 +185,190 @@ export function CreateDraftOrderPage() {
     let alive = true;
     api(`/admin/customers/${customerId}/addresses`)
       .then((d: any) => {
+        if (!alive) return;
+        const rows = Array.isArray(d?.addresses)
+          ? d.addresses
+          : parseList(d, 100).items;
+        setSavedAddresses(rows);
+      })
+      .catch(() => {
+        if (alive) setSavedAddresses([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [customerId]);
+
+  function pickCustomer(id: string) {
+    setCustomerId(id);
+    if (!id) {
+      setEmail("");
+      setShipPick("");
+      setBillPick("");
+      return;
+    }
+    const c = customersRaw.find((x: any) => x.id === id);
+    if (c?.email) setEmail(String(c.email));
+  }
+
+  function fillFromSaved(kind: "ship" | "bill", addressId: string) {
+    if (kind === "ship") setShipPick(addressId);
+    else setBillPick(addressId);
+    if (!addressId) return;
+    const found = savedAddresses.find((x: any) => x.id === addressId);
+    if (!found) return;
+    const next: Addr = { ...EMPTY_ADDR };
+    for (const k of Object.keys(next) as (keyof Addr)[]) {
+      const v = found[k];
+      next[k] = v === null || v === undefined ? "" : String(v);
+    }
+    const cust = customersRaw.find((x: any) => x.id === customerId);
+    if (!next.first_name.trim() && cust?.first_name)
+      next.first_name = String(cust.first_name);
+    if (!next.last_name.trim() && cust?.last_name)
+      next.last_name = String(cust.last_name);
+    if (kind === "ship") setShip(next);
+    else setBill(next);
+  }
+
+  async function handleDismiss() {
+    if (dirty) {
+      const ok = await confirm({
+        title: "Unsaved changes",
+        description:
+          "You have unsaved changes. Are you sure you want to leave this form?",
+        variant: "primary",
+        confirmLabel: "Continue",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+    }
+    navigate("/r/draft-orders");
+  }
+
+  async function save() {
+    setServerErr(null);
+    if (
+      !validate({
+        regionId: (v) => requiredText(v, "Required"),
+        channelId: (v) => requiredText(v, "Required"),
+        email: (v, all) =>
+          all.customerId || `${v}`.trim()
+            ? undefined
+            : "Either a customer or email must be provided",
+        ship: (v) =>
+          addrComplete(v as Addr) ? undefined : "Shipping address is required",
+        bill: (v, all) =>
+          all.sameAsShipping || addrComplete(v as Addr)
+            ? undefined
+            : "Billing address is required",
+      })
+    )
+      return;
+    setBusy(true);
+    try {
+      const body: Record<string, any> = {
+        region_id: regionId,
+        sales_channel_id: channelId,
+        shipping_address: cleanAddr(ship),
+        billing_address: sameAsShipping ? cleanAddr(ship) : cleanAddr(bill),
+      };
+      if (customerId) body.customer_id = customerId;
+      else body.email = email.trim();
+      const res = await api<{ draft_order: any }>("/admin/draft-orders", {
+        method: "POST",
+        body,
+      });
+      navigate(`/r/draft-orders/${res.draft_order.id}`);
+    } catch (e) {
+      setServerErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onFormKeyDown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      void save();
+    }
+  }
+
+  const divider = (
+    <div
+      aria-hidden="true"
+      style={{ borderTop: "1px dashed var(--card-border)", margin: "20px 0" }}
+    />
+  );
+
+  return (
+    <WizardShell
+      tabs={[]}
+      tab=""
+      onTab={() => {}}
+      closeTo="/r/draft-orders"
+      footer={
+        <FormActions
+          onCancel={() => {
+            void handleDismiss();
+          }}
+          onSubmit={() => {
+            void save();
+          }}
+          submitLabel="Save"
+          busy={busy}
+        />
+      }
+    >
+      <form
+        onKeyDown={onFormKeyDown}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
+          Create Draft Order
+        </div>
+        {loadErr ? <Alert>{loadErr}</Alert> : null}
+        {serverErr ? <Alert>{serverErr}</Alert> : null}
+        {loading ? (
+          <div
+            style={{ display: "flex", justifyContent: "center", padding: 48 }}
+          >
+            <Spinner size={22} />
+          </div>
+        ) : (
+          <>
+            <SelectField
+              label="Region"
+              layout="split"
+              hint="Choose region"
+              required
+              error={fieldErrors.regionId}
+              value={regionId}
+              onChange={(v) => set("regionId", v)}
+              options={regions.map((o) => ({
+                value: o.id,
+                label: o.label,
+                sub: o.sub,
+              }))}
+              placeholder="Select region"
+              searchable
+            />
+            {divider}
+            <SelectField
+              label="Sales Channel"
+              layout="split"
+              hint="Choose sales channel"
+              required
+              error={fieldErrors.channelId}
+              value={channelId}
+              onChange={(v) => set("channelId", v)}
+              options={channels.map((o) => ({
+                value: o.id,
+                label: o.label,
+                sub: o.sub,
+              }))}
+              placeholder="Select sales channel"
+              searchable
