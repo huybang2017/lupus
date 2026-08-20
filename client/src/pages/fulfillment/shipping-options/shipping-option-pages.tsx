@@ -226,3 +226,231 @@ export function CreateShippingOptionPage() {
     }
     const problem = calculated ? undefined : priceStateError(prices);
     if (problem) {
+      setShowPrices(true);
+      setTab("prices");
+      return;
+    }
+    setBusy(true);
+    try {
+      const option = fulfillmentOptions.find((o) => o.id === d.fulfillment_option_id);
+      await api("/admin/shipping-options", {
+        method: "POST",
+        body: {
+          name: d.name.trim(),
+          price_type: isPickup ? "flat" : d.price_type,
+          service_zone_id: zoneId,
+          shipping_profile_id: d.shipping_profile_id,
+          provider_id: d.provider_id,
+          prices: calculated ? [] : pricesToPayload(prices),
+          data: option ?? undefined,
+          rules: [
+            { attribute: "is_return", operator: "eq", value: isReturn ? "true" : "false" },
+            { attribute: "enabled_in_store", operator: "eq", value: d.enabled_in_store ? "true" : "false" },
+          ],
+          type_id: d.shipping_option_type_id,
+        },
+      });
+      navigate(back);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  const tabs = [{ id: "details", label: "Details" }, ...(calculated ? [] : [{ id: "prices", label: "Prices" }])];
+  const onPrices = tab === "prices" && !calculated;
+
+  return (
+    <WizardShell
+      tabs={tabs}
+      tab={calculated ? "details" : tab}
+      onTab={goTo}
+      closeTo={back}
+      onRequestClose={() => void leave()}
+      wide={onPrices}
+      footer={
+        <FormActions
+          onCancel={() => void leave()}
+          onSubmit={onPrices || calculated ? save : () => goTo("prices")}
+          submitLabel={onPrices || calculated ? "Save" : "Continue"}
+          busy={busy}
+        />
+      }
+    >
+      {err ? (
+        <div style={{ padding: onPrices ? "16px 24px 0" : 0 }}>
+          <Alert>{err}</Alert>
+        </div>
+      ) : null}
+      {!zone && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+      {zone && !onPrices ? (
+        <FormSection title={heading} subtitle={hint}>
+          <DetailsFields
+            value={d}
+            onChange={setD}
+            errors={showDetails ? errors : undefined}
+            locationId={id}
+            isPickup={isPickup}
+            isReturn={isReturn}
+            withFulfillmentOption
+            onOptions={setFulfillmentOptions}
+          />
+        </FormSection>
+      ) : null}
+      {zone && onPrices ? (
+        <div style={{ padding: "20px 24px 72px" }}>
+          <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--fg-subtle)" }}>
+            Amounts are in the smallest currency unit (e.g. cents). Leave a column empty to not offer the option in that currency or region.
+          </p>
+          <ShippingPriceGrid name={d.name} value={prices} onChange={setPrices} showErrors={showPrices} prefillZero={isPickup} />
+        </div>
+      ) : null}
+    </WizardShell>
+  );
+}
+
+// Lupus "Edit Shipping Option" drawer.
+export function EditShippingOptionDrawer({
+  option,
+  locationId,
+  isPickup,
+  onClose,
+  onSaved,
+}: {
+  option: any;
+  locationId: string;
+  isPickup: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [d, setD] = useState<Details>({
+    price_type: option.price_type,
+    name: option.name ?? "",
+    shipping_profile_id: option.shipping_profile?.id ?? "",
+    shipping_option_type_id: option.type?.id ?? "",
+    provider_id: option.provider_id ?? "",
+    fulfillment_option_id: option.data?.id ?? "",
+    enabled_in_store: option.enabled_in_store !== false,
+  });
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const errors = detailErrors(d, false);
+  const invalid = Object.values(errors).some(Boolean);
+
+  async function save() {
+    if (invalid) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/shipping-options/${option.id}`, {
+        method: "POST",
+        body: {
+          name: d.name.trim(),
+          price_type: isPickup ? "flat" : d.price_type,
+          shipping_profile_id: d.shipping_profile_id,
+          provider_id: d.provider_id,
+          type_id: d.shipping_option_type_id,
+          rules: [{ attribute: "enabled_in_store", operator: "eq", value: d.enabled_in_store ? "true" : "false" }],
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer title="Edit Shipping Option" onClose={onClose} onSubmit={save} busy={busy} error={err}>
+      <DetailsFields
+        value={d}
+        onChange={setD}
+        errors={show ? errors : undefined}
+        locationId={locationId}
+        isPickup={isPickup}
+        isReturn={!!option.is_return}
+        withFulfillmentOption={false}
+      />
+    </FormDrawer>
+  );
+}
+
+// Lupus "Edit prices" of one shipping option.
+export function ShippingOptionPricingPage() {
+  const { id = "", optionId = "" } = useParams<{ id: string; optionId: string }>();
+  const navigate = useNavigate();
+  const back = detailLink(id);
+  const [option, setOption] = useState<any>(null);
+  const [before, setBefore] = useState("");
+  const [prices, setPrices] = useState<PriceState>(emptyPrices());
+  const [showErrors, setShowErrors] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ shipping_option: any }>(`/admin/shipping-options/${optionId}`)
+      .then((r) => {
+        setOption(r.shipping_option);
+        const s = pricesFromOption(r.shipping_option.prices);
+        setPrices(s);
+        setBefore(JSON.stringify(s));
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [optionId]);
+
+  const leave = useLeaveGuard(JSON.stringify(prices) !== before, back, busy);
+
+  async function save() {
+    if (priceStateError(prices)) {
+      setShowErrors(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/shipping-options/${optionId}`, { method: "POST", body: { prices: pricesToPayload(prices) } });
+      navigate(back);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <WizardShell
+      tabs={[]}
+      tab=""
+      onTab={() => {}}
+      closeTo={back}
+      onRequestClose={() => void leave()}
+      wide
+      footer={<FormActions onCancel={() => void leave()} onSubmit={save} submitLabel="Save" busy={busy} disabled={!option} />}
+    >
+      <div style={{ padding: "20px 24px 72px" }}>
+        {err ? <Alert>{err}</Alert> : null}
+        {!option && !err ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <Spinner size={22} />
+          </div>
+        ) : null}
+        {option ? (
+          <>
+            <h1 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>Edit prices</h1>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--fg-subtle)" }}>
+              Amounts are in the smallest currency unit (e.g. cents). Leave a column empty to not offer the option in that currency or region.
+            </p>
+            <ShippingPriceGrid name={option.name} value={prices} onChange={setPrices} showErrors={showErrors} />
+          </>
+        ) : null}
+      </div>
+    </WizardShell>
+  );
+}
