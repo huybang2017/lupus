@@ -372,3 +372,188 @@ export function CreateDraftOrderPage() {
               }))}
               placeholder="Select sales channel"
               searchable
+            />
+            {divider}
+            <SelectField
+              label="Customer"
+              layout="split"
+              optional
+              hint="Choose an existing customer"
+              value={customerId}
+              onChange={pickCustomer}
+              options={customers.map((o) => ({
+                value: o.id,
+                label: o.label,
+                sub: o.sub,
+              }))}
+              placeholder="Select customer"
+              searchable
+            />
+            {divider}
+            <TextField
+              label="Email"
+              layout="split"
+              hint={
+                customerId
+                  ? "You cannot change the email when a customer is selected"
+                  : "Input a email to associate with the order"
+              }
+              type="email"
+              placeholder="john@doe.com"
+              value={email}
+              onChange={setEmail}
+              disabled={!!customerId}
+              error={fieldErrors.email}
+            />
+            {divider}
+            <FormSection
+              title="Shipping address"
+              layout="split"
+              subtitle="Address used for shipping"
+            >
+              {customerId ? (
+                <>
+                  <SelectField
+                    label="Saved addresses"
+                    optional
+                    hint="Choose one of the customers saved addresses."
+                    value={shipPick}
+                    onChange={(v) => fillFromSaved("ship", v)}
+                    options={savedAddresses.map((a: any, i: number) => ({
+                      value: a.id,
+                      label: savedLabel(a, i),
+                      sub: a.country_code
+                        ? String(a.country_code).toUpperCase()
+                        : undefined,
+                    }))}
+                    placeholder="Select shipping address"
+                    searchable
+                  />
+                  {divider}
+                </>
+              ) : null}
+              <AddrStack addr={ship} onChange={setShip} error={fieldErrors.ship} />
+            </FormSection>
+            {divider}
+            <FormSection
+              title="Billing address"
+              layout="split"
+              subtitle="Address used for billing"
+            >
+              <ToggleField
+                title="Same as shipping address"
+                hint="Use the same address for billing and shipping"
+                checked={sameAsShipping}
+                onChange={setSameAsShipping}
+              />
+              {sameAsShipping ? null : (
+                <>
+                  {customerId ? (
+                    <>
+                      <SelectField
+                        label="Saved addresses"
+                        optional
+                        hint="Choose one of the customers saved addresses."
+                        value={billPick}
+                        onChange={(v) => fillFromSaved("bill", v)}
+                        options={savedAddresses.map((a: any, i: number) => ({
+                          value: a.id,
+                          label: savedLabel(a, i),
+                          sub: a.country_code
+                            ? String(a.country_code).toUpperCase()
+                            : undefined,
+                        }))}
+                        placeholder="Select billing address"
+                        searchable
+                      />
+                      {divider}
+                    </>
+                  ) : null}
+                  <AddrStack addr={bill} onChange={setBill} error={fieldErrors.bill} />
+                </>
+              )}
+            </FormSection>
+          </>
+        )}
+      </form>
+    </WizardShell>
+  );
+}
+
+function AddrStack({
+  addr,
+  onChange,
+  error,
+}: {
+  addr: Addr;
+  onChange: (a: Addr) => void;
+  error?: string;
+}) {
+  const set = (k: keyof Addr, v: string) => onChange({ ...addr, [k]: v });
+  return (
+    <>
+      <SelectField
+        label="Country"
+        value={addr.country_code}
+        onChange={(v) => set("country_code", v)}
+        options={COUNTRIES.map((c) => ({ value: c.id, label: c.label }))}
+        placeholder="Select country"
+        searchable
+        error={error}
+      />
+      <FormGrid cols={2}>
+        <TextField
+          label="First name"
+          value={addr.first_name}
+          onChange={(v) => set("first_name", v)}
+        />
+        <TextField
+          label="Last name"
+          value={addr.last_name}
+          onChange={(v) => set("last_name", v)}
+        />
+      </FormGrid>
+      <TextField
+        label="Company"
+        optional
+        value={addr.company}
+        onChange={(v) => set("company", v)}
+      />
+      <TextField
+        label="Address"
+        value={addr.address_1}
+        onChange={(v) => set("address_1", v)}
+      />
+      <TextField
+        label="Apartment, suite, etc."
+        optional
+        value={addr.address_2}
+        onChange={(v) => set("address_2", v)}
+      />
+      <FormGrid cols={2}>
+        <TextField
+          label="Postal code"
+          value={addr.postal_code}
+          onChange={(v) => set("postal_code", v)}
+        />
+        <TextField
+          label="City"
+          value={addr.city}
+          onChange={(v) => set("city", v)}
+        />
+      </FormGrid>
+      <TextField
+        label="Province / State"
+        optional
+        value={addr.province}
+        onChange={(v) => set("province", v)}
+      />
+      <TextField
+        label="Phone"
+        optional
+        value={addr.phone}
+        onChange={(v) => set("phone", v)}
+      />
+    </>
+  );
+}
