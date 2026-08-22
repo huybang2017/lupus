@@ -1143,3 +1143,232 @@ function EditItemsDrawer({
       });
       onSaved();
     } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? lines.filter((l) =>
+        `${l.title} ${l.variant_title ?? ""} ${l.variant_sku ?? ""}`
+          .toLowerCase()
+          .includes(needle),
+      )
+    : lines;
+  const count = lines.reduce((acc, l) => acc + (Number(l.quantity) || 0), 0);
+  const computed = lines.reduce(
+    (acc, l) => acc + (Number(l.quantity) || 0) * (Number(l.unit_price) || 0),
+    0,
+  );
+  const columns: TableColumn<EditLine>[] = [
+    {
+      key: "item",
+      label: "Item",
+      render: (l) => (
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 600,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+            }}
+          >
+            {l.title}
+          </div>
+          {l.variant_sku ? (
+            <div
+              className="mono"
+              style={{ fontSize: 12, color: "var(--fg-subtle)" }}
+            >
+              {l.variant_sku}
+            </div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "qty",
+      label: "Quantity",
+      render: (l) => (
+        <NumberField
+          min={1}
+          value={String(l.quantity)}
+          onChange={(v) =>
+            setLines((s) =>
+              s.map((x) =>
+                x.key === l.key
+                  ? { ...x, quantity: Math.max(1, Number(v) || 1) }
+                  : x,
+              ),
+            )
+          }
+          style={{ width: 80 }}
+        />
+      ),
+    },
+    {
+      key: "price",
+      label: "Unit price",
+      render: (l) => (
+        <NumberField
+          min={0}
+          value={String(l.unit_price)}
+          onChange={(v) =>
+            setLines((s) =>
+              s.map((x) =>
+                x.key === l.key
+                  ? { ...x, unit_price: Math.max(0, Number(v) || 0) }
+                  : x,
+              ),
+            )
+          }
+          style={{ width: 110 }}
+        />
+      ),
+    },
+  ];
+
+  return (
+    <FormDrawer
+      title="Edit Items"
+      subtitle="Edit the items in the draft order"
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <div style={{ marginBottom: 12 }}>
+        <TableSearch
+          value={query}
+          onChange={setQuery}
+          placeholder="Search items"
+          width={240}
+        />
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          gap: 8,
+          marginBottom: 0,
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SelectField
+            label="Variant"
+            value={variantPick}
+            onChange={setVariantPick}
+            options={variants
+              .filter((v: any) => !lines.some((l) => l.variant_id === v.id))
+              .map((v: any) => ({
+                value: v.id,
+                label: v.title ?? v.sku ?? v.id,
+                sub: v.sku,
+              }))}
+            placeholder="Select variant"
+            searchable
+          />
+        </div>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ marginBottom: 12 }}
+          onClick={addVariant}
+          disabled={!variantPick}
+        >
+          Add
+        </button>
+      </div>
+      {showCustom ? (
+        <div
+          style={{
+            border: "1px solid var(--card-border)",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <TextField
+            label="Title"
+            hint="Enter the title of the item"
+            value={customTitle}
+            onChange={setCustomTitle}
+          />
+          <FormGrid cols={2}>
+            <NumberField
+              label="Unit price"
+              hint="Enter the unit price of the item"
+              value={customPrice}
+              onChange={setCustomPrice}
+              min={0}
+            />
+            <NumberField
+              label="Quantity"
+              hint="Enter the quantity of the item"
+              value={customQty}
+              onChange={setCustomQty}
+              min={1}
+            />
+          </FormGrid>
+          <button className="btn btn-secondary" onClick={addCustom}>
+            Add item
+          </button>
+        </div>
+      ) : (
+        <div style={{ marginBottom: 12 }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowCustom(true)}
+          >
+            Add custom item
+          </button>
+        </div>
+      )}
+      <DataTable
+        columns={columns}
+        rows={shown}
+        rowKey={(l) => l.key}
+        rowActions={(l) => [
+          {
+            label: "Remove",
+            danger: true,
+            onClick: () => setLines((s) => s.filter((x) => x.key !== l.key)),
+          },
+        ]}
+        emptyTitle={
+          lines.length === 0
+            ? "There are no items in this order"
+            : "No items found"
+        }
+        emptyHint={
+          lines.length === 0 ? "Add items to the order to get started." : ""
+        }
+      />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          paddingTop: 12,
+          fontSize: 13,
+        }}
+      >
+        <span>Subtotal</span>
+        <span style={{ color: "var(--fg-subtle)" }}>{`${count} item(s)`}</span>
+        <strong>{money(computed, currency)}</strong>
+      </div>
+    </FormDrawer>
+  );
+}
+
+function EditPromotionsDrawer({
+  draft,
+  onClose,
+  onSaved,
+}: {
