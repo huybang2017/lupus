@@ -1601,3 +1601,232 @@ function ShippingMethodDrawer({
     api<{ shipping_options: any[] }>(
       `/admin/draft-orders/${draft?.id}/shipping-options`,
     )
+      .then((d) => {
+        if (!alive) return;
+        setOptions(Array.isArray(d?.shipping_options) ? d.shipping_options : []);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setOptionsErr(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [draft?.id]);
+
+  const selected =
+    pick === CUSTOM_SHIPPING_OPTION
+      ? null
+      : options.find((o: any) => o.id === pick) ?? null;
+  const isCustom = pick === CUSTOM_SHIPPING_OPTION;
+  const isCalculated = !isCustom && selected?.price_type === "calculated";
+  const dataKeys = isCustom
+    ? []
+    : Object.keys((selected?.data as Record<string, unknown>) ?? {});
+  const optionLabel = isEdit
+    ? (options.find(
+        (o: any) => o.id === method?.shipping_option_id,
+      )?.name ??
+      method?.shipping_option_id ??
+      "–")
+    : null;
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (isEdit) {
+        const name = editName.trim();
+        if (!name) {
+          setErr("Enter a name for the shipping method.");
+          return;
+        }
+        await api(
+          `/admin/draft-orders/${draft.id}/shipping-methods/${method.id}`,
+          {
+            method: "POST",
+            body: {
+              name,
+              amount: Math.max(0, Math.round(Number(amount) || 0)),
+            },
+          },
+        );
+      } else if (isCustom) {
+        const name = customName.trim();
+        if (!name) {
+          setErr("Enter a name for the shipping method.");
+          return;
+        }
+        await api(`/admin/draft-orders/${draft.id}/shipping-methods`, {
+          method: "POST",
+          body: {
+            shipping_option_id: "",
+            name,
+            custom_amount: Math.max(0, Math.round(Number(customAmount) || 0)),
+            data: {},
+          },
+        });
+      } else {
+        if (!selected) {
+          setErr("Select a shipping option.");
+          return;
+        }
+        await api(`/admin/draft-orders/${draft.id}/shipping-methods`, {
+          method: "POST",
+          body: isCalculated
+            ? { shipping_option_id: selected.id, data }
+            : { shipping_option_id: selected.id },
+        });
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const picker =
+    loading && !isEdit ? (
+      <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
+        <Spinner size={20} />
+      </div>
+    ) : optionsErr ? (
+      <Alert>{optionsErr}</Alert>
+    ) : options.length === 0 ? (
+      <div className="hint" style={{ marginTop: 0 }}>
+        No shipping options are available for this order. Add a custom shipping
+        method instead.
+      </div>
+    ) : options.length > 8 ? (
+      <SelectField
+        label="Shipping option"
+        value={pick}
+        onChange={setPick}
+        options={[
+          ...options.map((o: any) => ({
+            value: o.id,
+            label: String(o.name ?? o.id),
+            sub: money(o.amount, currency),
+          })),
+          {
+            value: CUSTOM_SHIPPING_OPTION,
+            label: "Custom",
+            sub: "Enter a name and amount",
+          },
+        ]}
+        placeholder="Select a shipping option"
+        searchable
+      />
+    ) : (
+      <div
+        role="radiogroup"
+        aria-label="Shipping option"
+        style={{ display: "flex", flexDirection: "column" }}
+      >
+        {options.map((o: any) => (
+          <RadioCardField
+            key={o.id}
+            option={{
+              id: o.id,
+              label: String(o.name ?? o.id),
+              hint: money(o.amount, currency),
+            }}
+            selected={pick === o.id}
+            onSelect={() => setPick(o.id)}
+          />
+        ))}
+        <RadioCardField
+          option={{
+            id: CUSTOM_SHIPPING_OPTION,
+            label: "Custom",
+            hint: "Enter a name and amount",
+          }}
+          selected={isCustom}
+          onSelect={() => setPick(CUSTOM_SHIPPING_OPTION)}
+          style={{ marginBottom: 0 }}
+        />
+      </div>
+    );
+
+  return (
+    <FormDrawer
+      title={isEdit ? "Edit shipping method" : "Add shipping"}
+      subtitle={
+        isEdit
+          ? "Update the name or price of the shipping method."
+          : "Pick a shipping option or add a custom one."
+      }
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      disabled={!hasItems || (!isEdit && !isCustom && !selected)}
+      error={err}
+      submitLabel={isEdit ? "Save" : "Add"}
+    >
+      {!hasItems ? (
+        <EmptyState
+          title="No items"
+          hint="Add items to the order before adding shipping."
+        />
+      ) : isEdit ? (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <div
+              style={{
+                color: "var(--fg-subtle)",
+                fontSize: 12,
+                marginBottom: 4,
+              }}
+            >
+              Shipping option
+            </div>
+            <div
+              style={{
+                minWidth: 0,
+                overflowWrap: "anywhere",
+                wordBreak: "break-word",
+                fontSize: 13,
+              }}
+            >
+              {optionLabel}
+            </div>
+          </div>
+          <TextField label="Name" value={editName} onChange={setEditName} />
+          <NumberField
+            label="Amount"
+            hint="Amount in the smallest currency unit, e.g. cents"
+            value={amount}
+            onChange={setAmount}
+            min={0}
+          />
+          {Object.keys(data).map((k) => (
+            <TextField
+              key={k}
+              label={k}
+              value={String(data[k] ?? "")}
+              onChange={() => {}}
+              readOnly
+            />
+          ))}
+        </>
+      ) : (
+        <>
+          {picker}
+          {isCustom ? (
+            <div
+              style={{
+                border: "1px solid var(--card-border)",
+                borderRadius: 8,
+                padding: 12,
+                marginTop: 12,
+              }}
+            >
+              <TextField
+                label="Name"
+                placeholder="Standard shipping"
