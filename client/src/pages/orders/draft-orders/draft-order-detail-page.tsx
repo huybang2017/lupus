@@ -227,3 +227,232 @@ export function DraftOrderDetailPage() {
       : null);
   const discountTotal = s.discount_total ?? draft?.discount_total ?? null;
   const taxTotal = s.tax_total ?? draft?.tax_total ?? null;
+  const total = s.total ?? draft?.total ?? null;
+  const itemCount = items.reduce(
+    (acc, li) => acc + (Number(li.quantity) || 0),
+    0,
+  );
+  const customer = draft?.customer ?? null;
+  const customerId = customer?.id ?? draft?.customer_id ?? "";
+  const customerEmail = customer?.email ?? draft?.email ?? "";
+  const customerPhone =
+    customer?.phone ??
+    draft?.shipping_address?.phone ??
+    draft?.billing_address?.phone ??
+    "";
+  const nameParts = [customer?.first_name, customer?.last_name]
+    .filter(Boolean)
+    .map((p) => String(p));
+  const displayName = nameParts.join(" ") || customerEmail || "–";
+  const initials = nameParts.length
+    ? nameParts
+        .map((p) => p[0])
+        .join("")
+        .toUpperCase()
+    : customerEmail
+      ? String(customerEmail)[0].toUpperCase()
+      : "?";
+  const custShip = fmtAddr(draft?.shipping_address);
+  const billingSame = sameAddress(
+    draft?.shipping_address,
+    draft?.billing_address,
+  );
+  const custBill = billingSame ? [] : fmtAddr(draft?.billing_address);
+  const created = draft?.created_at ? new Date(draft.created_at) : null;
+  const events: TimelineEvent[] = [];
+  if (draft?.created_at)
+    events.push({
+      id: "created",
+      title: "Draft order created",
+      description: "Draft order created",
+      at: draft.created_at,
+    });
+  if (draft?.payment_collection?.created_at)
+    events.push({
+      id: "payment",
+      title: "Payment collection created",
+      at: draft.payment_collection.created_at,
+    });
+  const shippingColumns: TableColumn<any>[] = [
+    {
+      key: "method",
+      label: "Method",
+      render: (m: any) => (
+        <div
+          style={{
+            minWidth: 0,
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+          }}
+        >
+          {m?.name ?? "–"}
+        </div>
+      ),
+    },
+    {
+      key: "price",
+      label: "Price",
+      align: "right",
+      mono: true,
+      render: (m: any) => (
+        <span style={{ whiteSpace: "nowrap" }}>{money(m?.amount, cur)}</span>
+      ),
+    },
+  ];
+  function openShippingMethod(method: any | null) {
+    setShippingMethod(method);
+    setDrawer("shipping-method");
+  }
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 4,
+        }}
+      >
+        <Link
+          to="/r/draft-orders"
+          style={{
+            color: "var(--fg-subtle)",
+            textDecoration: "none",
+            fontSize: 13,
+          }}
+        >
+          Draft Orders
+        </Link>
+        <span style={{ color: "var(--fg-muted)", fontSize: 13 }}>›</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>
+          #{draft?.display_id ?? id}
+        </span>
+      </div>
+
+      {err ? <Alert>{err}</Alert> : null}
+      {!draft && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+
+      {draft ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) 300px",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title={`Draft Order #${draft.display_id ?? id}`}
+              action={
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexShrink: 0,
+                  }}
+                >
+                  {draft.region?.name ? (
+                    <Badge value={draft.region.name} />
+                  ) : null}
+                  <CopyButton
+                    value={`#${draft.display_id ?? id}`}
+                    title="Copy draft order number"
+                  />
+                  <RowMenu
+                    items={[
+                      {
+                        label: "Edit sales channel",
+                        onClick: () => setDrawer("sales-channel"),
+                      },
+                      {
+                        label: "Delete draft order",
+                        danger: true,
+                        onClick: () => {
+                          void del();
+                        },
+                      },
+                    ]}
+                  />
+                </div>
+              }
+            >
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "var(--fg-subtle)",
+                  minWidth: 0,
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
+                }}
+              >
+                {created
+                  ? created.toLocaleString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })
+                  : "–"}
+                {channelName ? ` from ${channelName}` : ""}
+              </div>
+            </DetailSection>
+
+            <DetailSection
+              title="Summary"
+              action={
+                <RowMenu
+                  items={[
+                    { label: "Edit items", onClick: () => setDrawer("items") },
+                    {
+                      label: "Edit promotions",
+                      onClick: () => setDrawer("promotions"),
+                    },
+                  ]}
+                />
+              }
+            >
+              {items.length === 0 ? (
+                <EmptyState
+                  title="There are no items in this order"
+                  hint="Add items to the order to get started."
+                />
+              ) : (
+                <div>
+                  {items.map((li: any) => (
+                    <div
+                      key={li.id ?? `${li.title}-${li.variant_id}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto auto auto",
+                        gap: 12,
+                        alignItems: "center",
+                        padding: "12px 0",
+                        borderTop: "1px solid var(--card-border)",
+                        fontSize: 13,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>
+                            {li.title ?? li.product_title ?? "Draft item"}
