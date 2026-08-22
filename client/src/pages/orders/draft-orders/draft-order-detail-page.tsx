@@ -914,3 +914,232 @@ export function DraftOrderDetailPage() {
                   ) : (
                     <span>–</span>
                   )}
+                </div>
+              </div>
+            </DetailSection>
+
+            <DetailSection title="Activity">
+              <Timeline events={events} />
+            </DetailSection>
+          </div>
+        </div>
+      ) : null}
+
+      {drawer === "items" ? (
+        <EditItemsDrawer
+          draft={draft}
+          currency={cur}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "promotions" ? (
+        <EditPromotionsDrawer
+          draft={draft}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "shipping" ? (
+        <AddressDrawer
+          draft={draft}
+          kind="shipping"
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "billing" ? (
+        <AddressDrawer
+          draft={draft}
+          kind="billing"
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "shipping-method" ? (
+        <ShippingMethodDrawer
+          draft={draft}
+          method={shippingMethod}
+          currency={cur}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            setShippingMethod(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "metadata" ? (
+        <MetadataDrawer
+          metadata={draft?.metadata}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+          save={async (m: Record<string, string>) => {
+            await api(`/admin/draft-orders/${draft?.id ?? id}`, {
+              method: "POST",
+              body: { metadata: m },
+            });
+          }}
+        />
+      ) : null}
+      {drawer === "transfer" ? (
+        <TransferDrawer
+          draft={draft}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "email" ? (
+        <EmailDrawer
+          draft={draft}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+      {drawer === "sales-channel" ? (
+        <SalesChannelDrawer
+          draft={draft}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            load();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+interface EditLine {
+  key: string;
+  variant_id?: string;
+  title: string;
+  variant_title?: string;
+  variant_sku?: string;
+  quantity: number;
+  unit_price: number;
+}
+
+function EditItemsDrawer({
+  draft,
+  currency,
+  onClose,
+  onSaved,
+}: {
+  draft: any;
+  currency?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [lines, setLines] = useState<EditLine[]>(() =>
+    (draft.items ?? []).map((li: any, i: number) => ({
+      key: li.id ?? `line-${i}`,
+      variant_id: li.variant_id,
+      title: li.title ?? li.product_title ?? "Draft item",
+      variant_title: li.variant_title,
+      variant_sku: li.variant_sku,
+      quantity: Number(li.quantity) || 1,
+      unit_price: Number(li.unit_price) || 0,
+    })),
+  );
+  const [variants, setVariants] = useState<any[]>([]);
+  const [variantPick, setVariantPick] = useState("");
+  const [query, setQuery] = useState("");
+  const [showCustom, setShowCustom] = useState(false);
+  const [customTitle, setCustomTitle] = useState("");
+  const [customPrice, setCustomPrice] = useState("");
+  const [customQty, setCustomQty] = useState("1");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/product-variants?limit=100&offset=0")
+      .then((d: any) => setVariants(parseList(d, 100).items))
+      .catch(() => {});
+  }, []);
+
+  function addVariant() {
+    if (!variantPick) return;
+    if (lines.some((l) => l.variant_id === variantPick)) {
+      setVariantPick("");
+      return;
+    }
+    const v = variants.find((x: any) => x.id === variantPick);
+    if (!v) return;
+    const price = Number(v.unit_price ?? v.prices?.[0]?.amount ?? 0) || 0;
+    setLines((s) => [
+      ...s,
+      {
+        key: `new-${Date.now()}`,
+        variant_id: v.id,
+        title: v.title ?? v.sku ?? v.id,
+        variant_sku: v.sku,
+        quantity: 1,
+        unit_price: price,
+      },
+    ]);
+    setVariantPick("");
+  }
+
+  function addCustom() {
+    if (!customTitle.trim()) {
+      setErr("Enter a title for the custom item.");
+      return;
+    }
+    setErr(null);
+    setLines((s) => [
+      ...s,
+      {
+        key: `custom-${Date.now()}`,
+        title: customTitle.trim(),
+        quantity: Math.max(1, parseInt(customQty, 10) || 1),
+        unit_price: Number(customPrice) || 0,
+      },
+    ]);
+    setCustomTitle("");
+    setCustomPrice("");
+    setCustomQty("1");
+  }
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const items = lines
+        .map((l) => {
+          const quantity = Math.max(1, Math.round(Number(l.quantity) || 1));
+          const unit_price = Math.max(0, Math.round(Number(l.unit_price) || 0));
+          if (l.variant_id) {
+            return { variant_id: l.variant_id, quantity, unit_price };
+          }
+          if (!l.title.trim()) return null;
+          return { title: l.title.trim(), quantity, unit_price };
+        })
+        .filter((l) => l !== null) as Record<string, any>[];
+      await api(`/admin/draft-orders/${draft.id}`, {
+        method: "POST",
+        body: { items },
+      });
+      onSaved();
+    } catch (e) {
