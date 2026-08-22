@@ -685,3 +685,232 @@ export function DraftOrderDetailPage() {
             <MetadataSection
               metadata={draft.metadata}
               onEdit={() => setDrawer("metadata")}
+            />
+
+            <JsonSection data={draft} />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title="Customer"
+              action={
+                <RowMenu
+                  items={[
+                    {
+                      label: "Transfer ownership",
+                      onClick: () => setDrawer("transfer"),
+                    },
+                    {
+                      label: "Edit shipping address",
+                      divider: true,
+                      onClick: () => setDrawer("shipping"),
+                    },
+                    {
+                      label: "Edit billing address",
+                      onClick: () => setDrawer("billing"),
+                    },
+                    {
+                      label: "Edit email",
+                      divider: true,
+                      onClick: () => setDrawer("email"),
+                    },
+                  ]}
+                />
+              }
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  minWidth: 0,
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    ID
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 6,
+                        background: "var(--hover-bg)",
+                        border: "1px solid var(--card-border)",
+                        color: "var(--fg-subtle)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {initials}
+                    </span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      {customerId ? (
+                        <Link
+                          to={`/r/customers/${customerId}`}
+                          style={{
+                            fontWeight: 600,
+                            color: "var(--fg-base)",
+                            textDecoration: "none",
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                            display: "block",
+                          }}
+                        >
+                          {displayName}
+                        </Link>
+                      ) : (
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {displayName}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Contact
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      minWidth: 0,
+                    }}
+                  >
+                    {customerEmail ? (
+                      <CopyText value={customerEmail} />
+                    ) : (
+                      <span>–</span>
+                    )}
+                    {customerPhone ? <CopyText value={customerPhone} /> : null}
+                  </div>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Shipping address
+                  </div>
+                  {custShip.length ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {custShip.map((l, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {l}
+                          </div>
+                        ))}
+                      </div>
+                      <CopyButton
+                        value={custShip.join("\n")}
+                        title="Copy shipping address"
+                      />
+                    </div>
+                  ) : (
+                    <span>–</span>
+                  )}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Billing address
+                  </div>
+                  {billingSame ? (
+                    <span style={{ color: "var(--fg-subtle)" }}>
+                      Same as shipping address
+                    </span>
+                  ) : custBill.length ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {custBill.map((l, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {l}
+                          </div>
+                        ))}
+                      </div>
+                      <CopyButton
+                        value={custBill.join("\n")}
+                        title="Copy billing address"
+                      />
+                    </div>
+                  ) : (
+                    <span>–</span>
+                  )}
