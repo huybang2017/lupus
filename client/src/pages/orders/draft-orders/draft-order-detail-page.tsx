@@ -456,3 +456,232 @@ export function DraftOrderDetailPage() {
                         >
                           <span style={{ fontWeight: 600 }}>
                             {li.title ?? li.product_title ?? "Draft item"}
+                          </span>
+                          {li.variant_title ? (
+                            <span style={{ color: "var(--fg-subtle)" }}>
+                              {" "}
+                              ({li.variant_title})
+                            </span>
+                          ) : null}
+                        </div>
+                        {li.variant_sku ? (
+                          <div
+                            className="mono"
+                            style={{
+                              fontSize: 12,
+                              color: "var(--fg-subtle)",
+                              minWidth: 0,
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {li.variant_sku}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div
+                        style={{
+                          color: "var(--fg-subtle)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {money(li.unit_price, cur)}
+                      </div>
+                      <div
+                        style={{
+                          color: "var(--fg-subtle)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >{`${Number(li.quantity) || 0}x`}</div>
+                      <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {money(
+                          li.subtotal ??
+                            (Number(li.quantity) || 0) *
+                              (Number(li.unit_price) || 0),
+                          cur,
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  padding: "12px 0",
+                  borderTop: "1px solid var(--card-border)",
+                  fontSize: 13,
+                }}
+              >
+                {subtotal !== null && subtotal !== undefined ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) auto auto",
+                      gap: 12,
+                      color: "var(--fg-subtle)",
+                    }}
+                  >
+                    <span>Subtotal</span>
+                    <span>{`${itemCount} item(s)`}</span>
+                    <span style={{ textAlign: "right" }}>
+                      {money(subtotal, cur)}
+                    </span>
+                  </div>
+                ) : null}
+                {shippingTotal !== null && shippingTotal !== undefined ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      color: "var(--fg-subtle)",
+                    }}
+                  >
+                    <span>Shipping</span>
+                    <span>{money(shippingTotal, cur)}</span>
+                  </div>
+                ) : null}
+                {discountTotal !== null && discountTotal !== undefined ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "minmax(0, auto) minmax(0, 1fr) auto",
+                      gap: 12,
+                      color: "var(--fg-subtle)",
+                    }}
+                  >
+                    <span>Discount</span>
+                    <span
+                      style={{
+                        textAlign: "right",
+                        minWidth: 0,
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {promos.join(", ")}
+                    </span>
+                    <span style={{ textAlign: "right" }}>
+                      {money(discountTotal, cur)}
+                    </span>
+                  </div>
+                ) : null}
+                {taxTotal !== null && taxTotal !== undefined ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      color: "var(--fg-subtle)",
+                    }}
+                  >
+                    <span>Tax</span>
+                    <span>
+                      {Number(taxTotal) > 0 ? money(taxTotal, cur) : "-"}
+                    </span>
+                  </div>
+                ) : null}
+                {total !== null && total !== undefined ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>Total</span>
+                    <span>{money(total, cur)}</span>
+                  </div>
+                ) : null}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  paddingTop: 12,
+                  borderTop: "1px solid var(--card-border)",
+                }}
+              >
+                <button
+                  className="btn btn-secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    void convert();
+                  }}
+                >
+                  {busy ? "Converting…" : "Convert to order"}
+                </button>
+              </div>
+            </DetailSection>
+
+            <DetailSection
+              title="Shipping"
+              action={
+                !hasItems || shippingMethods.length === 0 ? null : (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => openShippingMethod(null)}
+                  >
+                    Edit
+                  </button>
+                )
+              }
+            >
+              {!hasItems ? (
+                <EmptyState
+                  title="No items"
+                  hint="Add items to the order before adding shipping"
+                />
+              ) : shippingMethods.length === 0 ? (
+                <>
+                  <EmptyState
+                    title="No shipping method"
+                    hint="Add a shipping method for this draft order"
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                    }}
+                  >
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => openShippingMethod(null)}
+                    >
+                      Add shipping
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <DataTable
+                  columns={shippingColumns}
+                  rows={shippingMethods}
+                  rowKey={(m: any) => String(m?.id ?? "")}
+                  rowActions={(m: any) => [
+                    {
+                      label: "Edit",
+                      onClick: () => openShippingMethod(m),
+                    },
+                    {
+                      label: "Delete",
+                      danger: true,
+                      onClick: () => {
+                        void removeShippingMethod(m);
+                      },
+                    },
+                  ]}
+                />
+              )}
+            </DetailSection>
+
+            <MetadataSection
+              metadata={draft.metadata}
+              onEdit={() => setDrawer("metadata")}
