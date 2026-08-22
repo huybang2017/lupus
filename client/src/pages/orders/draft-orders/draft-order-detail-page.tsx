@@ -1372,3 +1372,232 @@ function EditPromotionsDrawer({
   onClose,
   onSaved,
 }: {
+  draft: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [codes, setCodes] = useState(
+    ((draft.promo_codes ?? []) as string[]).join(", "),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const promo_codes = codes
+        .split(",")
+        .map((c) => c.trim())
+        .filter((c) => c !== "");
+      await api(`/admin/draft-orders/${draft.id}`, {
+        method: "POST",
+        body: { promo_codes },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Apply promotions"
+      subtitle="Manage promotions that should be applied to the order."
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField
+        label="Promotion codes"
+        hint="Comma-separated promotion codes"
+        value={codes}
+        onChange={setCodes}
+        placeholder="SUMMER10, WELCOME5"
+      />
+    </FormDrawer>
+  );
+}
+
+function AddressDrawer({
+  draft,
+  kind,
+  onClose,
+  onSaved,
+}: {
+  draft: any;
+  kind: "shipping" | "billing";
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const current =
+    kind === "shipping"
+      ? (draft.shipping_address ?? {})
+      : (draft.billing_address ?? {});
+  const [form, setForm] = useState({
+    country_code: current.country_code ?? "",
+    first_name: current.first_name ?? "",
+    last_name: current.last_name ?? "",
+    company: current.company ?? "",
+    address_1: current.address_1 ?? "",
+    address_2: current.address_2 ?? "",
+    city: current.city ?? "",
+    postal_code: current.postal_code ?? "",
+    province: current.province ?? "",
+    phone: current.phone ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: string, v: string) => setForm((s) => ({ ...s, [k]: v }));
+  const hasAddress =
+    current && (current.address_1 || current.city || current.first_name);
+  const title =
+    kind === "shipping"
+      ? hasAddress
+        ? "Edit shipping address"
+        : "Add shipping address"
+      : "Edit billing address";
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const address: Record<string, string> = {};
+      for (const [k, v] of Object.entries(form)) {
+        const t = v.trim();
+        if (t !== "") address[k] = t;
+      }
+      const body =
+        kind === "shipping"
+          ? { shipping_address: address }
+          : { billing_address: address };
+      await api(`/admin/draft-orders/${draft.id}`, { method: "POST", body });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title={title}
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <SelectField
+        label="Country"
+        value={form.country_code}
+        onChange={(v) => set("country_code", v)}
+        options={COUNTRIES.map((c) => ({ value: c.id, label: c.label }))}
+        placeholder="Select country"
+        searchable
+      />
+      <FormGrid cols={2}>
+        <TextField
+          label="First name"
+          value={form.first_name}
+          onChange={(v) => set("first_name", v)}
+        />
+        <TextField
+          label="Last name"
+          value={form.last_name}
+          onChange={(v) => set("last_name", v)}
+        />
+      </FormGrid>
+      <TextField
+        label="Company"
+        optional
+        value={form.company}
+        onChange={(v) => set("company", v)}
+      />
+      <TextField
+        label="Address"
+        value={form.address_1}
+        onChange={(v) => set("address_1", v)}
+      />
+      <TextField
+        label="Apartment, suite, etc."
+        optional
+        value={form.address_2}
+        onChange={(v) => set("address_2", v)}
+      />
+      <FormGrid cols={2}>
+        <TextField
+          label="Postal code"
+          value={form.postal_code}
+          onChange={(v) => set("postal_code", v)}
+        />
+        <TextField
+          label="City"
+          value={form.city}
+          onChange={(v) => set("city", v)}
+        />
+      </FormGrid>
+      <TextField
+        label="Province / State"
+        optional
+        value={form.province}
+        onChange={(v) => set("province", v)}
+      />
+      <TextField
+        label="Phone"
+        optional
+        value={form.phone}
+        onChange={(v) => set("phone", v)}
+      />
+    </FormDrawer>
+  );
+}
+
+function ShippingMethodDrawer({
+  draft,
+  method,
+  currency,
+  onClose,
+  onSaved,
+}: {
+  draft: any;
+  method: any | null;
+  currency?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isEdit = !!method?.id;
+  const hasItems = (draft?.items ?? []).length > 0;
+  const [options, setOptions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [optionsErr, setOptionsErr] = useState<string | null>(null);
+  const [pick, setPick] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
+  const [editName, setEditName] = useState(String(method?.name ?? ""));
+  const [amount, setAmount] = useState(
+    method?.amount !== null && method?.amount !== undefined
+      ? String(method.amount)
+      : "",
+  );
+  const [data, setData] = useState<Record<string, string>>(() => ({
+    ...(method?.data && typeof method.data === "object" ? method.data : {}),
+  }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api<{ shipping_options: any[] }>(
+      `/admin/draft-orders/${draft?.id}/shipping-options`,
+    )
