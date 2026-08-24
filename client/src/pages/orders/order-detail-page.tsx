@@ -1108,3 +1108,225 @@ export function OrderDetailPage() {
                             color: "var(--fg-subtle)",
                             minWidth: 0,
                             overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {customerId}
+                        </span>
+                      </span>
+                    </Link>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 6,
+                          background: "var(--hover-bg)",
+                          border: "1px solid var(--card-border)",
+                          color: "var(--fg-subtle)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {initialsOf(displayName, order?.email ?? "")}
+                      </span>
+                      <span
+                        style={{
+                          minWidth: 0,
+                          flex: 1,
+                          fontWeight: 600,
+                          overflowWrap: "anywhere",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {displayName}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Contact
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      minWidth: 0,
+                    }}
+                  >
+                    {order?.email ? (
+                      <CopyText value={String(order.email)} />
+                    ) : (
+                      <span>–</span>
+                    )}
+                    {orderPhone ? (
+                      <CopyText value={String(orderPhone)} />
+                    ) : null}
+                  </div>
+                </div>
+                {company ? (
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        color: "var(--fg-subtle)",
+                        fontSize: 12,
+                        marginBottom: 4,
+                      }}
+                    >
+                      Company
+                    </div>
+                    <div
+                      style={{
+                        minWidth: 0,
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {String(company)}
+                    </div>
+                  </div>
+                ) : null}
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Shipping address
+                  </div>
+                  {shipLines.length ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {shipLines.map((l: string, i: number) => (
+                          <div
+                            key={i}
+                            style={{
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {l}
+                          </div>
+                        ))}
+                      </div>
+                      <CopyButton
+                        value={shipLines.join("\n")}
+                        title="Copy shipping address"
+                      />
+                    </div>
+                  ) : (
+                    <span>–</span>
+                  )}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Billing address
+                  </div>
+                  {billingSame ? (
+                    <span>Same as shipping address</span>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {billLines.map((l: string, i: number) => (
+                          <div
+                            key={i}
+                            style={{
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {l}
+                          </div>
+                        ))}
+                      </div>
+                      <CopyButton
+                        value={billLines.join("\n")}
+                        title="Copy billing address"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </DetailSection>
+
+            <DetailSection title="Activity">
+              <Timeline events={events} />
+            </DetailSection>
+          </div>
+        </div>
+      ) : null}
+
+      {fulfillOpen && order ? (
+        <FulfillDrawer
+          order={order}
+          onClose={() => setFulfillOpen(false)}
+          onDone={onFulfillDone}
+        />
+      ) : null}
+      {emailOpen && order ? (
+        <EmailDrawer
+          orderId={order.id}
+          initial={order.email ?? ""}
+          onClose={() => setEmailOpen(false)}
+          onDone={onEmailDone}
+        />
+      ) : null}
+      {addrKind && order ? (
+        <AddressDrawer
+          orderId={order.id}
+          kind={addrKind}
+          initial={
+            addrKind === "shipping"
+              ? order.shipping_address
+              : order.billing_address
+          }
+          onClose={() => setAddrKind(null)}
+          onDone={onAddrDone}
+        />
+      ) : null}
+      {transferOpen && order ? (
+        <TransferDrawer
