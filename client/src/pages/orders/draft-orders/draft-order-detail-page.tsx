@@ -1830,3 +1830,225 @@ function ShippingMethodDrawer({
               <TextField
                 label="Name"
                 placeholder="Standard shipping"
+                value={customName}
+                onChange={setCustomName}
+              />
+              <NumberField
+                label="Amount"
+                hint="Amount in the smallest currency unit, e.g. cents"
+                value={customAmount}
+                onChange={setCustomAmount}
+                min={0}
+              />
+            </div>
+          ) : null}
+          {isCalculated
+            ? dataKeys.map((k) => (
+                <TextField
+                  key={k}
+                  label={k}
+                  value={data[k] ?? ""}
+                  onChange={(v) => setData((s) => ({ ...s, [k]: v }))}
+                />
+              ))
+            : null}
+        </>
+      )}
+    </FormDrawer>
+  );
+}
+
+function TransferDrawer({
+  draft,
+  onClose,
+  onSaved,
+}: {
+  draft: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customerId, setCustomerId] = useState(draft.customer_id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/customers?limit=100&offset=0")
+      .then((d: any) => setCustomers(parseList(d, 100).items))
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    if (!customerId) {
+      setErr("Select a customer.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/draft-orders/${draft.id}`, {
+        method: "POST",
+        body: { customer_id: customerId },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Transfer ownership"
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <SelectField
+        label="Customer"
+        hint="The customer to transfer this draft order to."
+        value={customerId}
+        onChange={setCustomerId}
+        options={customers.map((c: any) => ({
+          value: c.id,
+          label:
+            [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email,
+          sub: c.email,
+        }))}
+        placeholder="Select customer"
+        searchable
+      />
+    </FormDrawer>
+  );
+}
+
+function EmailDrawer({
+  draft,
+  onClose,
+  onSaved,
+}: {
+  draft: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [email, setEmail] = useState(
+    draft.email ?? draft.customer?.email ?? "",
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!email.trim()) {
+      setErr("Enter an email.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/draft-orders/${draft.id}`, {
+        method: "POST",
+        body: { email: email.trim() },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit email"
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField
+        label="Email"
+        type="email"
+        placeholder="john@doe.com"
+        value={email}
+        onChange={setEmail}
+      />
+    </FormDrawer>
+  );
+}
+
+function SalesChannelDrawer({
+  draft,
+  onClose,
+  onSaved,
+}: {
+  draft: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [channels, setChannels] = useState<any[]>([]);
+  const [channelId, setChannelId] = useState(
+    draft.sales_channel_id ?? draft.sales_channel?.id ?? "",
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/sales-channels?limit=100&offset=0")
+      .then((d: any) => setChannels(parseList(d, 100).items))
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    if (!channelId) {
+      setErr("Select a sales channel.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/draft-orders/${draft.id}`, {
+        method: "POST",
+        body: { sales_channel_id: channelId },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit sales channel"
+      onClose={onClose}
+      onSubmit={() => {
+        void save();
+      }}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <SelectField
+        label="Sales Channel"
+        hint="Choose sales channel"
+        value={channelId}
+        onChange={setChannelId}
+        options={channels.map((c: any) => ({
+          value: c.id,
+          label: c.name ?? c.id,
+        }))}
+        placeholder="Select sales channel"
+        searchable
+      />
+    </FormDrawer>
+  );
+}
