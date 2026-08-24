@@ -1330,3 +1330,225 @@ export function OrderDetailPage() {
       ) : null}
       {transferOpen && order ? (
         <TransferDrawer
+          orderId={order.id}
+          onClose={() => setTransferOpen(false)}
+          onDone={onTransferDone}
+        />
+      ) : null}
+      {refund ? (
+        <RefundDrawer
+          collectionId={refund.collectionId}
+          maxMinor={refund.maxMinor}
+          currency={currency}
+          onClose={() => setRefund(null)}
+          onDone={onRefundDone}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CostRow({
+  label,
+  value,
+  bold,
+  semibold,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+  semibold?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        padding: "8px 0",
+        fontSize: 13,
+        minWidth: 0,
+      }}
+    >
+      <span
+        style={{
+          color: "var(--fg-subtle)",
+          minWidth: 0,
+          overflowWrap: "anywhere",
+          wordBreak: "break-word",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{ fontWeight: bold ? 700 : semibold ? 600 : 400, flexShrink: 0 }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function CollapseRow({
+  label,
+  value,
+  collapsible,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string;
+  value: string;
+  collapsible?: boolean;
+  open?: boolean;
+  onToggle?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div
+        role={collapsible ? "button" : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        aria-expanded={collapsible ? open : undefined}
+        onClick={collapsible ? onToggle : undefined}
+        onKeyDown={
+          collapsible
+            ? (e) => {
+                if (e.key === "Enter") onToggle?.();
+              }
+            : undefined
+        }
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: "8px 0",
+          fontSize: 13,
+          minWidth: 0,
+          cursor: collapsible ? "pointer" : "default",
+        }}
+      >
+        <span
+          style={{
+            color: "var(--fg-subtle)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            minWidth: 0,
+          }}
+        >
+          {collapsible ? (
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: 12,
+                flexShrink: 0,
+                transform: open ? "rotate(90deg)" : "none",
+                transition: "transform .12s",
+                color: "var(--fg-muted)",
+              }}
+            >
+              ▸
+            </span>
+          ) : null}
+          <span
+            style={{
+              minWidth: 0,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+            }}
+          >
+            {label}
+          </span>
+        </span>
+        <span style={{ flexShrink: 0 }}>{value}</span>
+      </div>
+      {collapsible && open ? (
+        <div style={{ padding: "0 0 8px 18px", minWidth: 0 }}>{children}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function buildTimeline(
+  order: any,
+  payments: any[],
+  fulfillments: any[],
+  pc: any,
+  currency: string | undefined,
+): TimelineEvent[] {
+  if (!order) return [];
+  const total = fmtMoney(order.total, currency);
+  const placed: TimelineEvent = {
+    id: "placed",
+    title: "Order placed",
+    at: order.created_at ?? new Date().toISOString(),
+    amount: total,
+  };
+  const rest: TimelineEvent[] = [];
+  const anyCaptured =
+    payments.some(
+      (p: any) =>
+        payDerivedStatus(p) === "captured" ||
+        payDerivedStatus(p) === "refunded",
+    ) || Number(pc?.captured_amount ?? 0) > 0;
+  if (!anyCaptured) {
+    const at = payments[0]?.created_at ?? order.created_at;
+    if (at)
+      rest.push({
+        id: "awaiting",
+        title: "Awaiting payment",
+        at,
+        amount: total,
+      });
+  }
+  let hasRefundEvent = false;
+  for (const p of payments) {
+    const st = payDerivedStatus(p);
+    const at = p?.updated_at ?? p?.created_at;
+    if (!at) continue;
+    if (st === "captured")
+      rest.push({
+        id: `pay-captured-${p.id}`,
+        title: "Payment captured",
+        at,
+        amount: fmtMoney(p.amount, currency),
+      });
+    else if (st === "canceled")
+      rest.push({
+        id: `pay-canceled-${p.id}`,
+        title: "Payment canceled",
+        at,
+        amount: fmtMoney(p.amount, currency),
+      });
+    else if (st === "refunded") {
+      hasRefundEvent = true;
+      rest.push({
+        id: `pay-refunded-${p.id}`,
+        title: "Payment refunded",
+        at,
+        amount: fmtMoney(p.amount, currency),
+      });
+    }
+  }
+  if (
+    !hasRefundEvent &&
+    Number(pc?.refunded_amount ?? 0) > 0 &&
+    (pc?.updated_at ?? pc?.created_at)
+  ) {
+    rest.push({
+      id: "pay-refunded-collection",
+      title: "Payment refunded",
+      at: pc.updated_at ?? pc.created_at,
+      amount: fmtMoney(pc.refunded_amount, currency),
+    });
+  }
+  for (const f of fulfillments) {
+    const qty = (f?.items ?? []).reduce(
+      (s: number, i: any) => s + Number(i?.quantity ?? 0),
+      0,
+    );
+    if (f?.shipped_at)
