@@ -220,3 +220,225 @@ export function OrderDetailPage() {
   }
 
   async function deliverFulfillment(f: any) {
+    if (
+      !(await confirm({
+        description:
+          "You are about to mark fulfillment as delivered. This action cannot be undone.",
+      }))
+    )
+      return;
+    await post(`/admin/fulfillments/${f.id}/deliver`);
+  }
+
+  async function cancelFulfillment(f: any) {
+    if (
+      !(await confirm({
+        description:
+          "You are about to cancel a fulfillment. This action cannot be undone.",
+      }))
+    )
+      return;
+    await post(`/admin/fulfillments/${f.id}/cancel`);
+  }
+
+  const currency = order?.currency_code;
+  const pc =
+    order?.payment_collection ?? (order?.payment_collections ?? [])[0] ?? null;
+  const payments: any[] = order?.payments ?? [];
+  const fulfillments: any[] = order?.fulfillments ?? [];
+  const items: any[] = order?.items ?? [];
+  const displayId = order?.display_id ?? id;
+  const canceled = Boolean(order?.canceled_at) || order?.status === "canceled";
+
+  const pending = Number(order?.pending_difference ?? 0);
+  const itemSub = Number(
+    order?.item_subtotal ?? order?.item_total ?? order?.subtotal ?? 0,
+  );
+  const shipSub = Number(
+    order?.shipping_subtotal ?? order?.shipping_total ?? 0,
+  );
+  const taxTotal = Number(order?.tax_total ?? 0);
+  const discountTotal = Number(order?.discount_total ?? 0);
+  const orderTotalPre = itemSub + shipSub + taxTotal;
+  const totalAfterDiscount = orderTotalPre + discountTotal;
+  const paidTotal = Number(pc?.captured_amount ?? 0);
+  const creditTotal = Number(order?.credit_line_total ?? 0);
+  const outstanding = Math.max(0, pending);
+  const refundOwed = pending < 0 ? -pending : 0;
+  const shippingMethods: any[] = order?.shipping_methods ?? [];
+
+  const fulfilledQty: Record<string, number> = {};
+  for (const f of fulfillments) {
+    if (f?.canceled_at) continue;
+    for (const fi of f?.items ?? []) {
+      const lid = fi?.line_item_id ?? fi?.id;
+      if (lid)
+        fulfilledQty[lid] =
+          (fulfilledQty[lid] ?? 0) + Number(fi?.quantity ?? 0);
+    }
+  }
+  const unfulfilled = items
+    .map((li: any) => ({
+      li,
+      remaining: Number(li?.quantity ?? 0) - (fulfilledQty[li?.id] ?? 0),
+    }))
+    .filter((x) => x.remaining > 0);
+
+  const customer = order?.customer ?? null;
+  const customerId = order?.customer_id ?? customer?.id ?? "";
+  const nameParts = [customer?.first_name, customer?.last_name]
+    .filter(Boolean)
+    .join(" ");
+  const displayName = nameParts || customer?.email || order?.email || "–";
+  const orderPhone =
+    order?.shipping_address?.phone ?? order?.billing_address?.phone ?? "";
+  const company =
+    order?.shipping_address?.company ?? order?.billing_address?.company ?? "";
+  const shipLines = addrLines(order?.shipping_address);
+  const billLines = addrLines(order?.billing_address);
+  const billingSame =
+    !order?.billing_address ||
+    sameAddress(order?.shipping_address, order?.billing_address);
+
+  const events = buildTimeline(order, payments, fulfillments, pc, currency);
+
+  function openRefundForPayment(p: any) {
+    if (!pc) return;
+    if (payDerivedStatus(p) !== "captured") {
+      setErr("Only captured payments can be refunded.");
+      return;
+    }
+    const already = Number(pc?.refunded_amount ?? 0);
+    if (already >= Number(p?.amount ?? 0)) {
+      setErr("This payment has already been fully refunded.");
+      return;
+    }
+    setRefund({
+      collectionId: pc.id,
+      maxMinor: Number(p?.amount ?? 0) - already,
+    });
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        <Link
+          to="/r/orders"
+          style={{
+            color: "var(--fg-subtle)",
+            textDecoration: "none",
+            fontSize: 13,
+          }}
+        >
+          ← Orders
+        </Link>
+      </div>
+
+      {err ? <Alert>{err}</Alert> : null}
+      {busy ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 8 }}>
+          <Spinner />
+        </div>
+      ) : null}
+      {!order && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+
+      {order ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) 300px",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <section className="card" style={{ padding: "20px 24px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  minWidth: 0,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      minWidth: 0,
+                    }}
+                  >
+                    <h1
+                      style={{
+                        margin: 0,
+                        fontSize: 18,
+                        fontWeight: 700,
+                        minWidth: 0,
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      #{displayId}
+                    </h1>
+                    <CopyButton
+                      value={String(displayId)}
+                      title="Copy order id"
+                    />
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "var(--fg-subtle)",
+                      marginTop: 4,
+                      minWidth: 0,
+                      overflowWrap: "anywhere",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {fmtDateTime(order.created_at)}
+                    {order.sales_channel?.name
+                      ? ` from ${order.sales_channel.name}`
+                      : ""}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexShrink: 0,
+                  }}
+                >
+                  {order.status === "canceled" ? (
+                    <Badge value="Canceled" />
+                  ) : null}
+                  <Badge value={order.payment_status} />
+                  <Badge value={order.fulfillment_status} />
+                  <span
+                    style={
+                      canceled
+                        ? { opacity: 0.5, pointerEvents: "none" }
+                        : undefined
+                    }
+                    aria-disabled={canceled ? true : undefined}
+                    title={canceled ? "Order is canceled" : undefined}
+                  >
+                    <RowMenu
+                      items={[
+                        { label: "Cancel", danger: true, onClick: cancelOrder },
+                      ]}
+                    />
