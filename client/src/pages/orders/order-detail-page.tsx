@@ -442,3 +442,225 @@ export function OrderDetailPage() {
                         { label: "Cancel", danger: true, onClick: cancelOrder },
                       ]}
                     />
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <DetailSection title="Summary">
+              <div>
+                {items.map((li: any, idx: number) => (
+                  <div
+                    key={li.id ?? idx}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      padding: "12px 0",
+                      borderTop:
+                        idx === 0 ? "none" : "1px solid var(--card-border)",
+                      minWidth: 0,
+                    }}
+                  >
+                    {li.thumbnail ? (
+                      <img
+                        src={String(li.thumbnail)}
+                        alt=""
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 8,
+                          objectFit: "cover",
+                          flexShrink: 0,
+                        }}
+                      />
+                    ) : null}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          minWidth: 0,
+                          overflowWrap: "anywhere",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {String(li.title ?? "–")}
+                      </div>
+                      {li.variant_sku ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            marginTop: 2,
+                            minWidth: 0,
+                          }}
+                        >
+                          <span
+                            className="mono"
+                            style={{
+                              minWidth: 0,
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {String(li.variant_sku)}
+                          </span>
+                          <CopyButton
+                            value={String(li.variant_sku)}
+                            title="Copy SKU"
+                          />
+                        </div>
+                      ) : null}
+                      {li.variant_title ? (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--fg-subtle)",
+                            marginTop: 2,
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {String(li.variant_title)}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 16,
+                        flexShrink: 0,
+                        textAlign: "right",
+                        fontSize: 13,
+                      }}
+                    >
+                      <div style={{ minWidth: 70 }}>
+                        {fmtMoney(li.unit_price, currency)}
+                      </div>
+                      <div
+                        style={{ minWidth: 40, color: "var(--fg-subtle)" }}
+                      >{`${Number(li.quantity ?? 0)} x`}</div>
+                      <div style={{ minWidth: 80, fontWeight: 700 }}>
+                        {fmtMoney(
+                          li.subtotal ??
+                            li.total ??
+                            Number(li.quantity ?? 0) *
+                              Number(li.unit_price ?? 0),
+                          currency,
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  borderTop: "1px solid var(--card-border)",
+                  marginTop: 8,
+                  paddingTop: 4,
+                }}
+              >
+                <CostRow
+                  label="Item Subtotal"
+                  value={fmtMoney(itemSub, currency)}
+                />
+                <CollapseRow
+                  label="Shipping Subtotal"
+                  value={fmtMoney(shipSub, currency)}
+                  collapsible
+                  open={shipOpen}
+                  onToggle={() => setShipOpen((o) => !o)}
+                >
+                  {shippingMethods.length === 0 ? (
+                    <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+                      –
+                    </div>
+                  ) : (
+                    shippingMethods.map((m: any, i: number) => (
+                      <div
+                        key={m?.id ?? i}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          fontSize: 13,
+                          padding: "4px 0",
+                        }}
+                      >
+                        <span
+                          style={{
+                            color: "var(--fg-subtle)",
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {String(m?.name ?? "Shipping")}
+                        </span>
+                        <span>{fmtMoney(m?.amount, currency)}</span>
+                      </div>
+                    ))
+                  )}
+                </CollapseRow>
+                {taxTotal !== 0 ? (
+                  <CollapseRow
+                    label="Tax Total"
+                    value={fmtMoney(taxTotal, currency)}
+                    collapsible
+                    open={taxOpen}
+                    onToggle={() => setTaxOpen((o) => !o)}
+                  >
+                    <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+                      –
+                    </div>
+                  </CollapseRow>
+                ) : (
+                  <CostRow
+                    label="Tax Total"
+                    value={fmtMoney(taxTotal, currency)}
+                  />
+                )}
+                <CostRow
+                  label="Order Total"
+                  value={fmtMoney(orderTotalPre, currency)}
+                  bold
+                />
+              </div>
+
+              <div
+                style={{
+                  borderTop: "1px solid var(--card-border)",
+                  marginTop: 4,
+                  paddingTop: 4,
+                }}
+              >
+                {discountTotal !== 0 ? (
+                  <CollapseRow
+                    label="Discount Total"
+                    value={fmtMoney(discountTotal, currency)}
+                    collapsible
+                    open={discOpen}
+                    onToggle={() => setDiscOpen((o) => !o)}
+                  >
+                    <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+                      –
+                    </div>
+                  </CollapseRow>
+                ) : (
+                  <CostRow
+                    label="Discount Total"
+                    value={fmtMoney(discountTotal, currency)}
+                  />
+                )}
+                <CostRow
+                  label="Total After Discount"
+                  value={fmtMoney(totalAfterDiscount, currency)}
+                  bold
+                />
+              </div>
+
