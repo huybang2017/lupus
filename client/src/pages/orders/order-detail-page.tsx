@@ -664,3 +664,225 @@ export function OrderDetailPage() {
                 />
               </div>
 
+              <div
+                style={{
+                  borderTop: "1px dashed var(--card-border)",
+                  marginTop: 4,
+                  paddingTop: 4,
+                }}
+              >
+                <CostRow
+                  label="Paid Total"
+                  value={fmtMoney(paidTotal, currency)}
+                />
+                {creditTotal > 0 ? (
+                  <CostRow
+                    label="Credit Lines Total"
+                    value={fmtMoney(creditTotal, currency)}
+                  />
+                ) : null}
+                <CostRow
+                  label="Outstanding amount"
+                  value={fmtMoney(outstanding, currency)}
+                  semibold
+                />
+              </div>
+
+              {((pending > 0 && pc) || pending < 0) && pc ? (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: 8,
+                    marginTop: 12,
+                  }}
+                >
+                  {pending > 0 && pc ? (
+                    <button
+                      className="btn btn-secondary"
+                      disabled={busy}
+                      onClick={markPaid}
+                    >
+                      Mark as paid
+                    </button>
+                  ) : null}
+                  {pending < 0 ? (
+                    <button
+                      className="btn btn-secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        setRefund({ collectionId: pc.id, maxMinor: refundOwed })
+                      }
+                    >
+                      Refund {fmtMoney(refundOwed, currency)}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </DetailSection>
+
+            <DetailSection
+              title="Payments"
+              action={<Badge value={order.payment_status} />}
+            >
+              {!pc ? (
+                <EmptyState title="No payment collection" hint="" />
+              ) : (
+                <div>
+                  {payments.map((p: any, idx: number) => (
+                    <div
+                      key={p.id ?? idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: "12px 0",
+                        borderTop:
+                          idx === 0 ? "none" : "1px solid var(--card-border)",
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            minWidth: 0,
+                          }}
+                        >
+                          <span
+                            className="mono"
+                            style={{
+                              minWidth: 0,
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {String(p.id)}
+                          </span>
+                          <CopyButton
+                            value={String(p.id)}
+                            title="Copy payment id"
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--fg-subtle)",
+                            marginTop: 2,
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {fmtDateTime(p.created_at)}
+                          {p.provider_id ? ` · ${p.provider_id}` : ""}
+                        </div>
+                      </div>
+                      <Badge value={payDerivedStatus(p)} />
+                      <div
+                        style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}
+                      >
+                        {fmtMoney(p.amount, currency)}
+                      </div>
+                      <RowMenu
+                        items={[
+                          {
+                            label: "Refund",
+                            onClick: () => openRefundForPayment(p),
+                          },
+                        ]}
+                      />
+                    </div>
+                  ))}
+                  {payments.length === 0 ? (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "var(--fg-subtle)",
+                        padding: "8px 0",
+                      }}
+                    >
+                      <span className="mono">{String(pc.id)}</span>
+                      {pc.status ? ` · ${pc.status}` : ""}
+                    </div>
+                  ) : null}
+                  <div
+                    style={{
+                      borderTop: "1px solid var(--card-border)",
+                      marginTop: 4,
+                      paddingTop: 4,
+                    }}
+                  >
+                    <CostRow
+                      label="Total paid by customer"
+                      value={fmtMoney(paidTotal, currency)}
+                    />
+                    {pending > 0 ? (
+                      <CostRow
+                        label="Total pending"
+                        value={fmtMoney(pending, currency)}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              )}
+            </DetailSection>
+
+            <DetailSection title="Fulfillment">
+              {unfulfilled.length > 0 ? (
+                <div style={{ marginBottom: fulfillments.length > 0 ? 12 : 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>
+                      Unfulfilled items
+                    </div>
+                    <RowMenu
+                      items={[
+                        {
+                          label: "Fulfill items",
+                          onClick: () => setFulfillOpen(true),
+                        },
+                      ]}
+                    />
+                  </div>
+                  {unfulfilled.map((u) => (
+                    <div
+                      key={u.li.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        fontSize: 13,
+                        padding: "6px 0",
+                        borderTop: "1px solid var(--card-border)",
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflowWrap: "anywhere",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {String(u.li.title ?? "–")}
+                      </span>
+                      <span
+                        style={{ color: "var(--fg-subtle)", flexShrink: 0 }}
+                      >
+                        x {u.remaining}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
