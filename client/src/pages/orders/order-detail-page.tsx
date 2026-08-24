@@ -886,3 +886,225 @@ export function OrderDetailPage() {
                   ))}
                 </div>
               ) : null}
+              {fulfillments.length === 0 && unfulfilled.length === 0 ? (
+                <EmptyState
+                  title="Not fulfilled"
+                  hint="Create a fulfillment for this order"
+                />
+              ) : (
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
+                >
+                  {fulfillments.map((f: any) => {
+                    const fItems: any[] = f?.items ?? [];
+                    const titles =
+                      fItems
+                        .map((i: any) => i?.title)
+                        .filter(Boolean)
+                        .join(", ") || `${fItems.length} items`;
+                    return (
+                      <div
+                        key={f.id}
+                        className="card"
+                        style={{ padding: "10px 14px" }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            minWidth: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              minWidth: 0,
+                            }}
+                          >
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 12,
+                                minWidth: 0,
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
+                              }}
+                            >
+                              {String(f.id)}
+                            </span>
+                            <CopyButton
+                              value={String(f.id)}
+                              title="Copy fulfillment id"
+                            />
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Badge value={fulfillmentStatus(f)} />
+                            <RowMenu
+                              items={[
+                                {
+                                  label: "Cancel",
+                                  danger: true,
+                                  onClick: () => cancelFulfillment(f),
+                                },
+                              ]}
+                            />
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--fg-subtle)",
+                            marginTop: 4,
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {titles}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          {!f.shipped_at ? (
+                            <button
+                              className="btn btn-secondary"
+                              disabled={busy}
+                              onClick={() => shipFulfillment(f)}
+                            >
+                              Mark as shipped
+                            </button>
+                          ) : null}
+                          {!f.delivered_at ? (
+                            <button
+                              className="btn btn-secondary"
+                              disabled={busy}
+                              onClick={() => deliverFulfillment(f)}
+                            >
+                              Mark as delivered
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </DetailSection>
+
+            <EditableMetadata metadata={order?.metadata} path={`/admin/orders/${id}`} onSaved={load} />
+
+            <JsonSection data={order} />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            <DetailSection
+              title="Customer"
+              action={
+                <RowMenu
+                  items={[
+                    {
+                      label: "Transfer ownership",
+                      onClick: () => setTransferOpen(true),
+                    },
+                    {
+                      label: "Edit shipping address",
+                      divider: true,
+                      onClick: () => setAddrKind("shipping"),
+                    },
+                    {
+                      label: "Edit billing address",
+                      onClick: () => setAddrKind("billing"),
+                    },
+                    {
+                      label: "Edit email",
+                      divider: true,
+                      onClick: () => setEmailOpen(true),
+                    },
+                  ]}
+                />
+              }
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  minWidth: 0,
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    ID
+                  </div>
+                  {customerId ? (
+                    <Link
+                      to={`/r/customers/${customerId}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        minWidth: 0,
+                        color: "inherit",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 6,
+                          background: "var(--hover-bg)",
+                          border: "1px solid var(--card-border)",
+                          color: "var(--fg-subtle)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {initialsOf(displayName, order?.email ?? "")}
+                      </span>
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span
+                          style={{
+                            display: "block",
+                            fontWeight: 600,
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {displayName}
+                        </span>
+                        <span
+                          className="mono"
+                          style={{
+                            display: "block",
+                            fontSize: 12,
+                            color: "var(--fg-subtle)",
+                            minWidth: 0,
+                            overflowWrap: "anywhere",
