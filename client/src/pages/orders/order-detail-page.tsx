@@ -1552,3 +1552,225 @@ function buildTimeline(
       0,
     );
     if (f?.shipped_at)
+      rest.push({
+        id: `ship-${f.id}`,
+        title: "Items shipped",
+        description: `${qty} items`,
+        at: f.shipped_at,
+      });
+    if (f?.delivered_at)
+      rest.push({
+        id: `deliver-${f.id}`,
+        title: "Items delivered",
+        description: `${qty} items`,
+        at: f.delivered_at,
+      });
+    if (f?.canceled_at)
+      rest.push({
+        id: `fcancel-${f.id}`,
+        title: "Fulfillment canceled",
+        description: `${qty} items`,
+        at: f.canceled_at,
+      });
+  }
+  if (order.canceled_at)
+    rest.push({
+      id: "order-canceled",
+      title: "Order canceled",
+      at: order.canceled_at,
+    });
+  const dated = rest.filter((e) => !!e.at);
+  dated.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  return [...dated, placed];
+}
+
+function FulfillDrawer({
+  order,
+  onClose,
+  onDone,
+}: {
+  order: any;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [qty, setQty] = useState<Record<string, number>>(() => {
+    const q: Record<string, number> = {};
+    for (const li of order.items ?? []) q[li.id] = li.quantity ?? 0;
+    return q;
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const items = Object.entries(qty)
+        .filter(([, q]) => q > 0)
+        .map(([line_item_id, quantity]) => ({ line_item_id, quantity }));
+      if (items.length === 0) {
+        setErr("Select at least one line item quantity.");
+        setBusy(false);
+        return;
+      }
+      await api(`/admin/orders/${order.id}/fulfillments`, {
+        method: "POST",
+        body: { items },
+      });
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Create fulfillment"
+      subtitle={`Order #${order.display_id ?? order.id}`}
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Create"
+    >
+      {(order.items ?? []).map((li: any) => (
+        <div
+          key={li.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 0",
+            borderTop: "1px solid var(--card-border)",
+            fontSize: 13,
+          }}
+        >
+          <span style={{ flex: 1, fontWeight: 500 }}>{li.title}</span>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              color: "var(--fg-subtle)",
+              fontSize: 12,
+            }}
+          >
+            Qty
+            <NumberField
+              min={0}
+              max={li.quantity}
+              value={String(qty[li.id] ?? 0)}
+              onChange={(v) =>
+                setQty((s) => ({
+                  ...s,
+                  [li.id]: Math.max(
+                    0,
+                    Math.min(li.quantity, Math.round(Number(v) || 0)),
+                  ),
+                }))
+              }
+              style={{ width: 70 }}
+            />
+          </label>
+        </div>
+      ))}
+    </FormDrawer>
+  );
+}
+
+function EmailDrawer({
+  orderId,
+  initial,
+  onClose,
+  onDone,
+}: {
+  orderId: string;
+  initial: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [email, setEmail] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!email.trim() || !email.includes("@")) {
+      setErr("Enter a valid email address.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/orders/${orderId}`, {
+        method: "POST",
+        body: { email: email.trim() },
+      });
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Edit email"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <TextField
+        label="Email"
+        type="email"
+        value={email}
+        onChange={setEmail}
+        placeholder="customer@example.com"
+      />
+    </FormDrawer>
+  );
+}
+
+function AddressDrawer({
+  orderId,
+  kind,
+  initial,
+  onClose,
+  onDone,
+}: {
+  orderId: string;
+  kind: "shipping" | "billing";
+  initial: any;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [country, setCountry] = useState(
+    String(initial?.country_code ?? "").toLowerCase(),
+  );
+  const [firstName, setFirstName] = useState(String(initial?.first_name ?? ""));
+  const [lastName, setLastName] = useState(String(initial?.last_name ?? ""));
+  const [company, setCompany] = useState(String(initial?.company ?? ""));
+  const [address1, setAddress1] = useState(String(initial?.address_1 ?? ""));
+  const [address2, setAddress2] = useState(String(initial?.address_2 ?? ""));
+  const [postal, setPostal] = useState(String(initial?.postal_code ?? ""));
+  const [city, setCity] = useState(String(initial?.city ?? ""));
+  const [province, setProvince] = useState(String(initial?.province ?? ""));
+  const [phone, setPhone] = useState(String(initial?.phone ?? ""));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    const address = {
+      first_name: firstName.trim() || null,
+      last_name: lastName.trim() || null,
+      company: company.trim() || null,
+      address_1: address1.trim() || null,
+      address_2: address2.trim() || null,
+      city: city.trim() || null,
+      country_code: country ? country.toUpperCase() : null,
+      province: province.trim() || null,
+      postal_code: postal.trim() || null,
+      phone: phone.trim() || null,
