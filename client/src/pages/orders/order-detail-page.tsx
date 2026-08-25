@@ -1774,3 +1774,218 @@ function AddressDrawer({
       province: province.trim() || null,
       postal_code: postal.trim() || null,
       phone: phone.trim() || null,
+    };
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/orders/${orderId}`, {
+        method: "POST",
+        body:
+          kind === "shipping"
+            ? { shipping_address: address }
+            : { billing_address: address },
+      });
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title={
+        kind === "shipping" ? "Edit shipping address" : "Edit billing address"
+      }
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <SelectField
+        label="Country"
+        value={country}
+        onChange={setCountry}
+        options={COUNTRIES.map((c) => ({ value: c.id, label: c.label }))}
+        placeholder="Select country"
+        searchable
+      />
+      <FormGrid>
+        <TextField
+          label="First name"
+          value={firstName}
+          onChange={setFirstName}
+        />
+        <TextField label="Last name" value={lastName} onChange={setLastName} />
+      </FormGrid>
+      <TextField
+        label="Company"
+        optional
+        value={company}
+        onChange={setCompany}
+      />
+      <TextField label="Address" value={address1} onChange={setAddress1} />
+      <TextField
+        label="Apartment, suite, etc."
+        optional
+        value={address2}
+        onChange={setAddress2}
+      />
+      <FormGrid>
+        <TextField label="Postal code" value={postal} onChange={setPostal} />
+        <TextField label="City" value={city} onChange={setCity} />
+      </FormGrid>
+      <TextField
+        label="Province / State"
+        optional
+        value={province}
+        onChange={setProvince}
+      />
+      <TextField label="Phone" optional value={phone} onChange={setPhone} />
+    </FormDrawer>
+  );
+}
+
+function TransferDrawer({
+  orderId,
+  onClose,
+  onDone,
+}: {
+  orderId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api("/admin/customers?limit=100&offset=0")
+      .then((d) => setCustomers(parseList(d).items))
+      .catch((e) => setErr(errMsg(e)));
+  }, []);
+
+  async function save() {
+    if (!customerId) {
+      setErr("Select a customer.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/orders/${orderId}/transfer`, {
+        method: "POST",
+        body: { customer_id: customerId },
+      });
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Transfer ownership"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      disabled={!customerId}
+      error={err}
+      submitLabel="Save"
+    >
+      <SelectField
+        label="Customer"
+        value={customerId}
+        onChange={setCustomerId}
+        options={customers.map((c: any) => {
+          const name = [c?.first_name, c?.last_name].filter(Boolean).join(" ");
+          return {
+            value: String(c.id),
+            label: name
+              ? `${name} (${c?.email ?? ""})`
+              : String(c?.email ?? c.id),
+          };
+        })}
+        placeholder="Select customer"
+        searchable
+        hint="The customer to transfer this order to."
+      />
+    </FormDrawer>
+  );
+}
+
+function RefundDrawer({
+  collectionId,
+  maxMinor,
+  currency,
+  onClose,
+  onDone,
+}: {
+  collectionId: string;
+  maxMinor: number;
+  currency: string | undefined;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const confirm = useConfirm();
+  const [amount, setAmount] = useState(
+    (Math.max(0, maxMinor) / 100).toFixed(2),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    const cents = Math.round(Number(amount) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setErr("Enter a valid amount greater than zero.");
+      return;
+    }
+    if (cents > Math.max(0, maxMinor)) {
+      setErr(`Amount cannot exceed ${fmtMoney(maxMinor, currency)}.`);
+      return;
+    }
+    if (
+      !(await confirm({
+        title: "Refund payment",
+        description: `Payment of ${fmtMoney(cents, currency)} will be refunded.`,
+        confirmLabel: "Confirm",
+        variant: "danger",
+      }))
+    )
+      return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/payments/${collectionId}/refund`, {
+        method: "POST",
+        body: { amount: cents },
+      });
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer
+      title="Refund payment"
+      onClose={onClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+      submitLabel="Save"
+    >
+      <NumberField
+        label="Amount"
+        value={amount}
+        onChange={setAmount}
+        min={0}
+        hint={`Maximum refundable amount is ${fmtMoney(maxMinor, currency)}.`}
+      />
+    </FormDrawer>
+  );
+}
