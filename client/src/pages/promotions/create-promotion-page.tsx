@@ -424,3 +424,216 @@ export function CreatePromotionPage() {
         const spend = camp.budgetType === "spend";
         body.campaign = {
           name: camp.name.trim(),
+          campaign_identifier: identifier,
+          ...(camp.description.trim() ? { description: camp.description.trim() } : {}),
+          ...(toISO(camp.startsAt) ? { starts_at: toISO(camp.startsAt) } : {}),
+          ...(toISO(camp.endsAt) ? { ends_at: toISO(camp.endsAt) } : {}),
+          budget: {
+            type: camp.budgetType,
+            ...(camp.budgetLimit.trim() ? { limit: Number(camp.budgetLimit) } : {}),
+            ...(spend && currency ? { currency_code: currency } : {}),
+          },
+        };
+      }
+      const res = await api<{ promotion: any }>("/admin/promotions", { method: "POST", body });
+      navigate(`/r/promotions/${res.promotion.id}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  const lastTab = tab === "campaign";
+  const selectedCampaign = campaigns.find((c) => c.id === campaignId);
+  const stack = { display: "flex", flexDirection: "column", gap: 32 } as const;
+  const adornment = {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "0 12px",
+    border: "1px solid var(--field-border)",
+    background: "var(--hover-bg)",
+    fontSize: 13,
+    color: "var(--fg-subtle)",
+  } as const;
+
+  return (
+    <WizardShell
+      tabs={TABS}
+      tab={tab}
+      onTab={goTo}
+      closeTo="/r/promotions"
+      onRequestClose={() => void leave()}
+      footer={
+        <FormActions
+          onCancel={() => void leave()}
+          onSubmit={lastTab ? save : () => goTo(tab === "type" ? "details" : "campaign")}
+          submitLabel={lastTab ? "Save" : "Continue"}
+          busy={busy}
+        />
+      }
+    >
+      {err ? <Alert>{err}</Alert> : null}
+
+      {tab === "type" ? (
+        <RadioGroupField
+          label="Type"
+          value={templateId}
+          onChange={setTemplateId}
+          options={TEMPLATES.map((t) => ({ id: t.id, label: t.title, hint: t.description }))}
+        />
+      ) : null}
+
+      {tab === "details" ? (
+        <div style={stack}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--fg-base)" }}>Promotion Details</h1>
+            <span className="badge" style={{ fontSize: 11 }}>{template.title}</span>
+          </div>
+
+          <RadioGroupField
+            label="Method"
+            cols={2}
+            value={isAutomatic}
+            onChange={setIsAutomatic}
+            options={[
+              { id: "false", label: "Promotion code", hint: "Customers must enter this code at checkout" },
+              { id: "true", label: "Automatic", hint: "Customers will see this promotion at checkout" },
+            ]}
+          />
+          <RadioGroupField
+            label="Status"
+            cols={2}
+            value={status}
+            onChange={setStatus}
+            options={[
+              { id: "draft", label: "Draft", hint: "Customers will not be able to use the code yet" },
+              { id: "active", label: "Active", hint: "Customers will be able to use the code" },
+            ]}
+          />
+
+          <div style={{ maxWidth: 360 }}>
+            <TextField
+              label="Code"
+              placeholder="SUMMER15"
+              hint="The code your customers will enter during checkout."
+              value={code}
+              error={touchedCode || showErrors ? codeErr : undefined}
+              onChange={(v) => {
+                setCode(v);
+                setTouchedCode(true);
+              }}
+            />
+          </div>
+
+          {template.taxInclusiveToggle ? (
+            <>
+              {divider}
+              <ToggleField
+                checked={taxInclusive}
+                onChange={setTaxInclusive}
+                title="Does promotion include taxes?"
+                hint="Enable this field to apply the promotion after taxes"
+                switchSide="right"
+              />
+            </>
+          ) : null}
+
+          {divider}
+          {attrsError ? (
+            <Alert>
+              Couldn't load the condition attributes ({attrsError}).{" "}
+              <button type="button" className="btn btn-secondary" onClick={() => setReloadKey((k) => k + 1)}>
+                Retry
+              </button>
+            </Alert>
+          ) : null}
+          <PromotionRulesField
+            title="Who can use this code?"
+            description="Which customer is allowed to use the promotion code? Promotion code can be used by all customers if left untouched."
+            ruleType="rules"
+            rows={rules}
+            onChange={setRules}
+            attributes={attrs.rules}
+            showErrors={showErrors}
+          />
+
+          {template.showValue ? (
+            <>
+              {divider}
+              <div style={{ maxWidth: 360 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg-base)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  Promotion Value
+                  {isFixed && !currency ? (
+                    <span
+                      title="Select the currency code to enable setting the amount"
+                      aria-label="Select the currency code to enable setting the amount"
+                      style={{ color: "var(--fg-muted)", fontSize: 12, cursor: "help" }}
+                    >
+                      â“˜
+                    </span>
+                  ) : null}
+                </div>
+                <div style={{ display: "flex", alignItems: "stretch" }}>
+                  {isFixed ? (
+                    <span style={{ ...adornment, borderRight: "none", borderRadius: "8px 0 0 8px", opacity: currency ? 1 : 0.55 }}>
+                      {(currency || "usd").toUpperCase()}
+                    </span>
+                  ) : null}
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={isFixed ? undefined : 100}
+                    step={isFixed ? 1 : "any"}
+                    aria-label="Promotion Value"
+                    disabled={isFixed && !currency}
+                    title={isFixed && !currency ? "Select the currency code to enable setting the amount" : undefined}
+                    style={{
+                      flex: 1,
+                      textAlign: isFixed ? "left" : "right",
+                      borderRadius: isFixed ? 0 : "8px 0 0 8px",
+                      borderColor: showErrors && valueErr ? "#ef4444" : undefined,
+                    }}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                  />
+                  <span style={{ ...adornment, borderLeft: "none", borderRadius: "0 8px 8px 0", opacity: isFixed && !currency ? 0.55 : 1 }}>
+                    {isFixed ? currencySymbol(currency || "usd") : "%"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginTop: 6 }}>
+                  {isFixed
+                    ? "The amount to be discounted, in minor units (e.g. 1000 = 10.00)."
+                    : "The percentage to discount off the amount. eg. 8%"}
+                </div>
+                {showErrors && valueErr ? (
+                  <div role="alert" style={{ fontSize: 12, color: "#ef4444", marginTop: 4 }}>
+                    {valueErr}
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+
+          {showMaxQuantity ? (
+            <>
+              {isBuyGet ? divider : null}
+              <div style={{ maxWidth: 360 }}>
+                <NumberField
+                  label="Maximum Quantity"
+                  min={1}
+                  step={1}
+                  placeholder="3"
+                  hint="Maximum quantity of items this promotion applies to."
+                  value={maxQuantity}
+                  error={showErrors ? maxErr : undefined}
+                  onChange={setMaxQuantity}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {template.allocations.length > 0 ? (
+            <RadioGroupField
+              label="Allocation"
+              hint="Each enforces the quantity limit per item, while Once enforces the quantity limit across the entire cart"
