@@ -637,3 +637,215 @@ export function CreatePromotionPage() {
             <RadioGroupField
               label="Allocation"
               hint="Each enforces the quantity limit per item, while Once enforces the quantity limit across the entire cart"
+              cols={template.allocations.length as 2}
+              value={allocation}
+              onChange={(v) => setAllocation(v as Allocation)}
+              options={template.allocations.map((a) => ({ id: a, label: ALLOCATION_COPY[a].label, hint: ALLOCATION_COPY[a].hint }))}
+            />
+          ) : null}
+
+          {isBuyGet ? (
+            <>
+              {divider}
+              <PromotionRulesField
+                title="What needs to be in the cart to unlock the promotion?"
+                description="If these conditions match, we enable the promotion on the target items."
+                ruleType="buy-rules"
+                rows={buyRules}
+                onChange={setBuyRules}
+                attributes={attrs["buy-rules"]}
+                showErrors={showErrors}
+              />
+            </>
+          ) : null}
+
+          {showTarget ? (
+            <>
+              {divider}
+              <PromotionRulesField
+                title="What items will the promotion be applied to?"
+                description="The promotion will be applied to items that match the following conditions."
+                ruleType="target-rules"
+                rows={targetRules}
+                onChange={setTargetRules}
+                attributes={attrs["target-rules"]}
+                showErrors={showErrors}
+              />
+            </>
+          ) : null}
+
+          {divider}
+          <div style={{ maxWidth: 360 }}>
+            <NumberField
+              label="Usage Limit"
+              min={1}
+              step={1}
+              placeholder="100"
+              hint="Maximum number of times this promotion can be used across all orders. Leave empty for unlimited usage."
+              value={limit}
+              error={showErrors ? limitErr : undefined}
+              onChange={setLimit}
+            />
+          </div>
+          {!attrsReady ? (
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <Spinner size={18} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === "campaign" ? (
+        <div style={stack}>
+          <RadioGroupField
+            label="Campaign"
+            value={campaignChoice}
+            onChange={(v) => {
+              setCampaignChoice(v);
+              setShowCampaignErrors(false);
+            }}
+            options={[
+              { id: "none", label: "Without Campaign", hint: "Proceed without associating promotion with campaign" },
+              { id: "existing", label: "Existing Campaign", hint: "Add promotion to an existing campaign." },
+              { id: "new", label: "New Campaign", hint: "Create a new campaign for this promotion." },
+            ]}
+          />
+
+          {campaignChoice === "existing" ? (
+            <div>
+              {sectionLabel("Existing Campaign")}
+              {campaigns.length === 0 ? (
+                <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+                  No existing campaigns. You can create one to track multiple promotions and set budget limits.
+                </div>
+              ) : (
+                <select
+                  className="input"
+                  style={{ width: "100%", borderColor: showCampaignErrors && !campaignId ? "#ef4444" : undefined }}
+                  aria-label="Existing Campaign"
+                  value={campaignId}
+                  onChange={(e) => setCampaignId(e.target.value)}
+                >
+                  <option value="">Select campaign</option>
+                  {campaigns.map((c) => {
+                    // a spend budget is in one currency: only promotions in that currency may join
+                    const mismatch = !!c.currency_code && String(c.currency_code).toLowerCase() !== currency.toLowerCase();
+                    return (
+                      <option key={c.id} value={c.id} disabled={mismatch}>
+                        {String(c.name ?? c.id).toUpperCase()}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+              {showCampaignErrors && !campaignId ? (
+                <div role="alert" style={{ fontSize: 12, color: "#ef4444", marginTop: 4 }}>
+                  Required field
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {campaignChoice === "existing" && selectedCampaign ? (
+            <div>
+              <h2 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 600 }}>Campaign details</h2>
+              {[
+                ["Identifier", selectedCampaign.identifier ?? selectedCampaign.campaign_identifier ?? "-"],
+                ["Description", selectedCampaign.description || "-"],
+                ["Start date", selectedCampaign.starts_at ? new Date(selectedCampaign.starts_at).toLocaleString() : "-"],
+                ["End date", selectedCampaign.ends_at ? new Date(selectedCampaign.ends_at).toLocaleString() : "-"],
+                [
+                  "Budget",
+                  selectedCampaign.budget_limit != null
+                    ? `Spend Â· ${Number(selectedCampaign.budget_limit).toLocaleString()} ${String(selectedCampaign.currency_code ?? "").toUpperCase()}`
+                    : selectedCampaign.usage_limit != null
+                      ? `Usage Â· ${Number(selectedCampaign.usage_limit).toLocaleString()}`
+                      : "-",
+                ],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", padding: "4px 0", fontSize: 13, color: "var(--fg-subtle)" }}>
+                  <span style={{ fontWeight: 600 }}>{k}</span>
+                  <span>{v}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {campaignChoice === "new" ? (
+            <div style={stack}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Create Campaign</h2>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--fg-subtle)" }}>Create a promotional campaign.</p>
+              </div>
+              <FormGrid cols={2} gap={16}>
+                <TextField
+                  label="Name"
+                  value={camp.name}
+                  error={showCampaignErrors ? newCampErr.name : undefined}
+                  onChange={(v) => setCamp((s) => ({ ...s, name: v }))}
+                />
+                <TextField
+                  label="Identifier"
+                  value={camp.identifierTouched ? camp.identifier : slugify(camp.name)}
+                  error={showCampaignErrors ? newCampErr.identifier : undefined}
+                  onChange={(v) => setCamp((s) => ({ ...s, identifier: v, identifierTouched: true }))}
+                />
+              </FormGrid>
+              <TextAreaField
+                label="Description"
+                optional
+                rows={3}
+                value={camp.description}
+                onChange={(v) => setCamp((s) => ({ ...s, description: v }))}
+              />
+              <FormGrid cols={2} gap={16}>
+                <DateTimeField label="Start date" optional value={camp.startsAt} onChange={(v) => setCamp((s) => ({ ...s, startsAt: v }))} />
+                <DateTimeField
+                  label="End date"
+                  optional
+                  value={camp.endsAt}
+                  error={newCampErr.dates}
+                  onChange={(v) => setCamp((s) => ({ ...s, endsAt: v }))}
+                />
+              </FormGrid>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Campaign Budget</h2>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--fg-subtle)" }}>Create a budget for the campaign.</p>
+              </div>
+              <RadioGroupField
+                label="Type"
+                cols={2}
+                value={camp.budgetType}
+                onChange={(v) => setCamp((s) => ({ ...s, budgetType: v }))}
+                options={[
+                  { id: "usage", label: "Usage", hint: "Set a limit on how many times the promotion can be used." },
+                  {
+                    id: "spend",
+                    label: "Spend",
+                    hint: currency
+                      ? "Set a limit on the total discounted amount of all promotion usages."
+                      : "Add a currency condition to the promotion to enable a spend budget.",
+                    disabled: !currency,
+                  },
+                ]}
+              />
+              <FormGrid cols={2} gap={16}>
+                {camp.budgetType === "spend" ? (
+                  <TextField label="Currency" value={currency.toUpperCase()} onChange={() => {}} disabled />
+                ) : null}
+                <NumberField
+                  label="Limit"
+                  min={0}
+                  step={1}
+                  value={camp.budgetLimit}
+                  error={showCampaignErrors ? newCampErr.limit : undefined}
+                  onChange={(v) => setCamp((s) => ({ ...s, budgetLimit: v }))}
+                />
+              </FormGrid>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </WizardShell>
+  );
+}
