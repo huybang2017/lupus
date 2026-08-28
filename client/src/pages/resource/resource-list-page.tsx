@@ -418,3 +418,212 @@ export function ResourceListPage() {
   }
 
   return (
+    <div>
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "16px 20px",
+          }}
+        >
+          <div>
+            <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+              {r.label}
+            </h1>
+            {r.subtitle ? (
+              <p
+                style={{
+                  margin: "2px 0 0",
+                  fontSize: 13,
+                  color: "var(--fg-subtle)",
+                }}
+              >
+                {r.subtitle}
+              </p>
+            ) : null}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {(r.headerLinks ?? []).map((l) => (
+              <button
+                key={l.to}
+                className="btn btn-secondary"
+                onClick={() => navigate(l.to)}
+              >
+                {l.label}
+              </button>
+            ))}
+            {r.noTransfer ? null : (
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDrawer("export")}
+              >
+                Export
+              </button>
+            )}
+            {!r.noTransfer && (r.createPath || r.createPage) ? (
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDrawer("import")}
+              >
+                Import
+              </button>
+            ) : null}
+            {r.slug === "categories" ? (
+              <Link
+                className="btn btn-secondary"
+                to="/r/categories/organize"
+                style={{ textDecoration: "none" }}
+              >
+                Organize
+              </Link>
+            ) : null}
+            {r.createPage ? (
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate(r.createPage!)}
+              >
+                {r.createLabel ?? "Create"}
+              </button>
+            ) : r.createPath ? (
+              <button
+                className="btn btn-primary"
+                onClick={() => setDrawer("create")}
+              >
+                {r.createLabel ?? "Create"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <TableToolbar
+          style={{ padding: "0 20px 12px", borderBottom: "none" }}
+          left={<FilterBar defs={filterDefs} filters={filters} />}
+          right={
+            r.search ? (
+              <TableSearch
+                value={draft}
+                onChange={setDraft}
+                onSubmit={applySearch}
+                placeholder="Search"
+                width={220}
+              />
+            ) : null
+          }
+        />
+        {actionErr ? (
+          <div style={{ padding: "0 20px 12px" }}>
+            <Alert>{actionErr}</Alert>
+          </div>
+        ) : null}
+        {selected.length > 0 && r.deletePath ? (
+          <TableBulkBar count={selected.length}>
+            <button
+              className="btn btn-secondary"
+              disabled={bulkBusy}
+              onClick={bulkDelete}
+            >
+              {bulkBusy ? "Deleting…" : "Delete selected"}
+            </button>
+          </TableBulkBar>
+        ) : null}
+        <DataTable
+          columns={columns}
+          rows={items}
+          rowKey={(row: any) => row.id ?? JSON.stringify(row)}
+          onRowClick={r.detailPath ? (row: any) => row.id && navigate(detailUrl(base, r.slug, row.id)) : undefined}
+          loading={query.isPending}
+          error={
+            query.isError
+              ? query.error instanceof Error
+                ? query.error.message
+                : String(query.error)
+              : null
+          }
+          emptyTitle={q !== "" || filters.count > 0 ? "No results found" : "No records"}
+          emptyHint={
+            q !== "" || filters.count > 0
+              ? `No ${r.label.toLowerCase()} match your filter criteria.`
+              : "There are no records to show"
+          }
+          selectable={!!r.deletePath && !r.noSelect}
+          selected={selected}
+          onToggleRow={toggleOne}
+          onToggleAll={() => toggleAll()}
+          rowActions={rowActions}
+          caption={r.label}
+          sort={searchParams.get("order") ?? ""}
+          onSort={(next) => {
+            const p = new URLSearchParams(searchParams);
+            if (next) p.set("order", next);
+            else p.delete("order");
+            p.set("page", "1");
+            setSearchParams(p);
+          }}
+        />
+        <TablePager
+          page={page}
+          limit={PAGE_SIZE}
+          count={count}
+          onPage={setPage}
+        />
+      </div>
+
+      {drawer === "export" ? (
+        <ExportDrawer
+          resource={r}
+          rows={items}
+          params={listParams}
+          onClose={() => setDrawer(null)}
+        />
+      ) : null}
+      {drawer === "import" ? (
+        <ImportDrawer
+          resource={r}
+          onClose={() => setDrawer(null)}
+          onDone={() => query.refetch()}
+        />
+      ) : null}
+      {drawer === "create" ? (
+        <ResourceForm
+          resource={r}
+          mode="create"
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            setPage(1);
+            query.refetch();
+          }}
+        />
+      ) : null}
+      {drawer !== null &&
+      typeof drawer === "object" &&
+      "edit" in drawer &&
+      r.renderEdit
+        ? r.renderEdit(
+            drawer.edit,
+            () => setDrawer(null),
+            () => {
+              setDrawer(null);
+              query.refetch();
+            },
+          )
+        : null}
+      {drawer !== null &&
+      typeof drawer === "object" &&
+      "edit" in drawer &&
+      !r.renderEdit ? (
+        <ResourceForm
+          resource={r}
+          mode="edit"
+          initial={drawer.edit}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            query.refetch();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
