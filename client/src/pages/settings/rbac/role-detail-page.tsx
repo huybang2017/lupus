@@ -182,3 +182,187 @@ export function RoleDetailPage() {
       ) : null}
       {picker ? (
         <PolicyPicker
+          roleId={id}
+          current={policies.map((p: any) => p.id)}
+          onClose={() => setPicker(false)}
+          onSaved={() => {
+            setPicker(false);
+            load();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function RenameForm({
+  role,
+  onClose,
+  onSaved,
+}: {
+  role: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const confirm = useConfirm();
+  const {
+    values,
+    set,
+    error: err,
+    setError: setErr,
+    busy,
+    setBusy,
+    validate,
+    fieldErrors,
+    dirty,
+  } = useFormState({ name: role.name ?? "" });
+
+  async function save() {
+    setErr(null);
+    if (
+      !validate({
+        name: (v) => requiredText(`${v}`.trim(), "Name is required."),
+      })
+    )
+      return;
+    setBusy(true);
+    try {
+      await api(`/admin/rbac/roles/${role.id}`, {
+        method: "POST",
+        body: { name: values.name.trim() },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestClose() {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Unsaved changes",
+        description:
+          "You have unsaved changes. Are you sure you want to discard them?",
+        variant: "primary",
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+      }))
+    )
+      return;
+    onClose();
+  }
+
+  return (
+    <FormDrawer
+      confirmDiscard={false}
+      title="Rename role"
+      onClose={requestClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+    >
+      <TextField
+        label="Name"
+        required
+        value={values.name}
+        error={fieldErrors.name}
+        onChange={(v) => set("name", v)}
+      />
+    </FormDrawer>
+  );
+}
+
+function PolicyPicker({
+  roleId,
+  current,
+  onClose,
+  onSaved,
+}: {
+  roleId: string;
+  current: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const confirm = useConfirm();
+  const [policies, setPolicies] = useState<any[]>([]);
+  const {
+    values,
+    set,
+    error: err,
+    setError: setErr,
+    busy,
+    setBusy,
+    dirty,
+  } = useFormState({ picked: current });
+  const { picked } = values;
+
+  useEffect(() => {
+    api("/admin/rbac/policies?limit=100&offset=0")
+      .then((d: any) => setPolicies(parseList(d, 200).items))
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const add = picked.filter((x) => !current.includes(x));
+      const remove = current.filter((x) => !picked.includes(x));
+      if (add.length > 0)
+        await api(`/admin/rbac/roles/${roleId}/policies`, {
+          method: "POST",
+          body: { policies: add },
+        });
+      for (const pid of remove) {
+        await api(`/admin/rbac/roles/${roleId}/policies/${pid}`, {
+          method: "DELETE",
+        });
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestClose() {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Unsaved changes",
+        description:
+          "You have unsaved changes. Are you sure you want to discard them?",
+        variant: "primary",
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+      }))
+    )
+      return;
+    onClose();
+  }
+
+  return (
+    <FormDrawer
+      confirmDiscard={false}
+      title="Manage policies"
+      onClose={requestClose}
+      onSubmit={save}
+      busy={busy}
+      error={err}
+    >
+      <CheckListField
+        options={policies
+          .slice(0, 100)
+          .map((p: any) => ({ id: p.id, label: p.name ?? p.id }))}
+        checked={picked}
+        onToggle={(pid) => set("picked", toggleInList(picked, pid))}
+        searchable
+        searchPlaceholder="Search policies…"
+      />
+    </FormDrawer>
+  );
+}
