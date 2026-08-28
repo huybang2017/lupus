@@ -257,3 +257,262 @@ export function EditApiKeyDrawer({ apiKey, onClose, onSaved }: { apiKey: any; on
     try {
       await api(`/admin/api-keys/${apiKey.id}`, { method: "POST", body: { title: title.trim() } });
       onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer title="Edit API Key" onClose={onClose} onSubmit={save} busy={busy} error={err}>
+      <TextField label="Title" value={title} onChange={setTitle} error={show ? titleError : undefined} />
+    </FormDrawer>
+  );
+}
+
+// ------------------------------------------------------------------ detail
+
+export function ApiKeyDetailPage({ type }: { type: ApiKeyType }) {
+  const t = TYPES[type];
+  const { id = "" } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const [key, setKey] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [channelSearch, setChannelSearch] = useState({ draft: "", q: "" });
+
+  function load() {
+    api<{ api_key: any }>(`/admin/api-keys/${id}`)
+      .then((d) => {
+        setKey(d.api_key);
+        setErr(null);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }
+  useEffect(load, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function run(fn: () => Promise<unknown>, after?: () => void) {
+    setErr(null);
+    try {
+      await fn();
+      after ? after() : load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function removeChannels(ids: string[], name?: string) {
+    const ok = await confirm({
+      title: "Are you sure?",
+      description: name
+        ? `You are about to remove the sales channel ${name} from the API key. This action cannot be undone.`
+        : `You are about to remove ${ids.length} ${ids.length === 1 ? "sales channel" : "sales channels"} from the API key. This action cannot be undone.`,
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    await run(() => api(`/admin/api-keys/${id}/sales-channels`, { method: "POST", body: { remove: ids } }), () => {
+      setSelected([]);
+      load();
+    });
+  }
+
+  const channels: any[] = (key?.sales_channels ?? []).filter(
+    (c: any) => !channelSearch.q || `${c.name} ${c.description ?? ""}`.toLowerCase().includes(channelSearch.q.toLowerCase()),
+  );
+  const isRevoked = key ? revoked(key) : false;
+
+  return (
+    <div style={{ maxWidth: 960 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, fontSize: 13 }}>
+        <Link to={t.list} style={{ color: "var(--fg-subtle)", textDecoration: "none" }}>
+          {t.plural}
+        </Link>
+        <span style={{ color: "var(--fg-muted)" }}>›</span>
+        <span style={{ fontWeight: 600 }}>{key?.title ?? id}</span>
+      </div>
+      {err ? <Alert>{err}</Alert> : null}
+      {!key && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+      {key ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <DetailSection
+            title={key.title}
+            action={
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <KeyStatus k={key} badge />
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setEditing(true) },
+                    ...(isRevoked
+                      ? []
+                      : [
+                          {
+                            label: "Revoke",
+                            danger: true,
+                            onClick: () => void askRevoke(confirm, key).then(async (ok) => { if (ok) await run(() => api(`/admin/api-keys/${id}/revoke`, { method: "POST", body: {} })) }),
+                          },
+                        ]),
+                    {
+                      label: "Delete",
+                      danger: true,
+                      disabled: !isRevoked,
+                      hint: "Revoke the key before deleting it",
+                      onClick: () => void askDelete(confirm, key).then(async (ok) => { if (ok) await run(() => api(`/admin/api-keys/${id}`, { method: "DELETE" }), () => navigate(t.list, { replace: true })) }),
+                    },
+                  ]}
+                />
+              </div>
+            }
+          >
+            <KV
+              rows={[
+                ["Title", key.title],
+                ["Key", <TokenCell key="t" k={key} full />],
+                ["Type", type === "publishable" ? "Publishable" : "Secret"],
+                ["Last used at", key.last_used_at ? fmtDate(key.last_used_at) : dash],
+                ["Created by", key.created_by ?? dash],
+                ...(key.revoked_at ? [["Revoked at", fmtDate(key.revoked_at)] as [string, any], ["Revoked by", key.revoked_by ?? dash] as [string, any]] : []),
+              ]}
+            />
+          </DetailSection>
+
+          {type === "publishable" ? (
+            <section className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px" }}>
+                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Sales Channels</h2>
+                <RowMenu items={[{ label: "Add", onClick: () => navigate(`${t.list}/${id}/sales-channels`) }]} />
+              </div>
+              <TableToolbar
+                style={{ padding: "0 24px 12px", borderBottom: "none" }}
+                right={
+                  <TableSearch
+                    value={channelSearch.draft}
+                    onChange={(draft) => setChannelSearch((s) => ({ ...s, draft }))}
+                    onSubmit={() => setChannelSearch((s) => ({ ...s, q: s.draft.trim() }))}
+                    width={220}
+                    placeholder="Search"
+                  />
+                }
+              />
+              {selected.length > 0 ? (
+                <TableBulkBar count={selected.length}>
+                  <button className="btn btn-secondary" onClick={() => void removeChannels(selected)}>
+                    Remove
+                  </button>
+                </TableBulkBar>
+              ) : null}
+              <DataTable
+                columns={[
+                  { key: "name", label: "Name", render: (c: any) => c.name },
+                  { key: "description", label: "Description", render: (c: any) => c.description || dash },
+                ]}
+                rows={channels}
+                selectable
+                selected={selected}
+                onToggleRow={(cid) => setSelected((s) => toggleInList(s, cid))}
+                onToggleAll={(checked) => setSelected(checked ? channels.map((c: any) => c.id) : [])}
+                rowActions={(c: any) => [{ label: "Remove", danger: true, onClick: () => void removeChannels([c.id], c.name) }]}
+                emptyTitle={channelSearch.q ? "No results found" : "No records"}
+                emptyHint={channelSearch.q ? "No sales channels match your search." : "There are no records to show"}
+              />
+            </section>
+          ) : null}
+
+          <JsonSection data={key} />
+        </div>
+      ) : null}
+      {key && editing ? (
+        <EditApiKeyDrawer
+          apiKey={key}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            load();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// Lupus "Add sales channels" for a publishable key: every channel, those already linked checked.
+export function ApiKeySalesChannelsPage() {
+  const { id = "" } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const back = `${TYPES.publishable.list}/${id}`;
+  const [draft, setDraft] = useState("");
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [initial, setInitial] = useState<string[] | null>(null);
+  const [checked, setChecked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const { items, count, loading, error } = useServerList<any>("/admin/sales-channels", { page, limit: 50, q });
+
+  useEffect(() => {
+    api<{ api_key: any }>(`/admin/api-keys/${id}`)
+      .then((d) => {
+        const ids = (d.api_key.sales_channels ?? []).map((c: any) => c.id as string);
+        setInitial(ids);
+        setChecked(ids);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [id]);
+
+  async function save() {
+    const before = initial ?? [];
+    const add = checked.filter((c) => !before.includes(c));
+    const remove = before.filter((c) => !checked.includes(c));
+    if (add.length === 0 && remove.length === 0) {
+      navigate(back);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/api-keys/${id}/sales-channels`, { method: "POST", body: { add, remove } });
+      navigate(back);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  const pageIds = items.map((c: any) => c.id as string);
+
+  return (
+    <WizardShell
+      tabs={[]}
+      tab=""
+      onTab={() => {}}
+      closeTo={back}
+      wide
+      footer={<FormActions onCancel={() => navigate(back)} onSubmit={save} submitLabel="Save" busy={busy} />}
+    >
+      {err ? <Alert>{err}</Alert> : null}
+      <TableToolbar right={<TableSearch value={draft} onChange={setDraft} onSubmit={() => { setQ(draft.trim()); setPage(1); }} width={220} placeholder="Search" />} />
+      <DataTable
+        columns={[
+          { key: "name", label: "Name", render: (c: any) => c.name },
+          { key: "description", label: "Description", render: (c: any) => c.description || dash },
+          { key: "status", label: "Status", render: (c: any) => <StatusCell color={c.is_disabled ? "grey" : "green"}>{c.is_disabled ? "Disabled" : "Enabled"}</StatusCell> },
+        ]}
+        rows={items}
+        loading={loading || initial === null}
+        error={error}
+        selectable
+        selected={checked}
+        onToggleRow={(cid) => setChecked((s) => toggleInList(s, cid))}
+        onToggleAll={(on) => setChecked((s) => (on ? [...new Set([...s, ...pageIds])] : s.filter((c) => !pageIds.includes(c))))}
+        emptyTitle={q ? "No results found" : "No records"}
+        emptyHint={q ? "No sales channels match your search." : "There are no records to show"}
+      />
+      <TablePager page={page} limit={50} count={count} onPage={setPage} />
+    </WizardShell>
+  );
+}
