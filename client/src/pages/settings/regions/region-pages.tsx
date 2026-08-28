@@ -185,3 +185,190 @@ export function RegionsListPage() {
               ),
             },
             {
+              key: "countries",
+              label: "Countries",
+              render: (r: any) => ((r.countries ?? []).length ? summarize((r.countries as any[]).map((c) => c.display_name).sort((a, b) => a.localeCompare(b))) : dash),
+            },
+            {
+              key: "payment_providers",
+              label: "Payment providers",
+              render: (r: any) => ((r.payment_providers ?? []).length ? summarize((r.payment_providers as any[]).map((p) => formatProvider(p.id))) : dash),
+            },
+          ]}
+          rows={items}
+          loading={loading}
+          error={error}
+          sort={order}
+          onSort={(next) => { setOrder(next); setPage(1); }}
+          rowActions={(r: any) => [
+            { label: "Edit", onClick: () => setEditing(r) },
+            { label: "Delete", danger: true, onClick: () => void remove(r) },
+          ]}
+          emptyTitle={q ? "No results" : "No regions"}
+          emptyHint={q ? "No regions match the current filter criteria." : "Create a region for the areas that you sell in."}
+        />
+        <TablePager page={page} limit={20} count={count} onPage={setPage} />
+      </section>
+      {editing ? <EditRegionDrawer region={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} /> : null}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ create
+
+// Lupus "Create Region".
+export function CreateRegionPage() {
+  const navigate = useNavigate();
+  const currencies = useCurrencyOptions();
+  const providers = useProviders();
+  const [name, setName] = useState("");
+  const [currency, setCurrency] = useState("");
+  const [auto, setAuto] = useState(true);
+  const [inclusive, setInclusive] = useState(false);
+  const [countries, setCountries] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [picker, setPicker] = useState(false);
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const nameError = name.trim() === "" ? REQUIRED : undefined;
+  const currencyError = currency === "" ? "Select a currency" : undefined;
+  const providerError = picked.length === 0 ? "Select at least one payment provider" : undefined;
+  const dirty = name.trim() !== "" || currency !== "" || countries.length > 0 || picked.length > 0 || inclusive || !auto;
+  const leave = useLeaveGuard(dirty, LIST, busy);
+
+  async function save() {
+    if (nameError || currencyError || providerError) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api<{ region: { id: string } }>("/admin/regions", {
+        method: "POST",
+        body: { name: name.trim(), currency_code: currency, automatic_taxes: auto, is_tax_inclusive: inclusive, countries, payment_providers: picked },
+      });
+      navigate(`${LIST}/${res.region.id}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <WizardShell
+      tabs={[]}
+      tab=""
+      onTab={() => {}}
+      closeTo={LIST}
+      onRequestClose={() => void leave()}
+      footer={<FormActions onCancel={() => void leave()} onSubmit={save} submitLabel="Save" busy={busy} />}
+    >
+      {err ? <Alert>{err}</Alert> : null}
+      <FormSection title="Create Region" subtitle="Manage tax rates and providers for a set of countries.">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <TextField label="Name" value={name} onChange={setName} error={show ? nameError : undefined} />
+          <SelectField label="Currency" value={currency} onChange={setCurrency} options={currencies} placeholder="Select" searchable allowClear={false} error={show ? currencyError : undefined} />
+        </div>
+        <ToggleField title="Automatic Taxes" hint="When enabled, taxes will only be calculated at checkout based on the shipping address." checked={auto} onChange={setAuto} switchSide="right" />
+        <ToggleField title="Tax inclusive pricing" hint="When enabled, prices in the region will be tax inclusive." checked={inclusive} onChange={setInclusive} switchSide="right" />
+        <hr style={{ border: 0, borderTop: "1px solid var(--card-border)", margin: "4px 0" }} />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Countries</div>
+          <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginBottom: 10 }}>Add the countries included in this region.</div>
+          {countries.length > 0 ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {countries.map((c) => (
+                <span key={c} className="badge badge-gray">
+                  {countryName(c)}
+                  <button aria-label={`Remove ${countryName(c)}`} onClick={() => setCountries((s) => s.filter((x) => x !== c))} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", marginLeft: 4 }}>
+                    ✕
+                  </button>
+                </span>
+              ))}
+              <button className="btn" style={{ background: "transparent", color: "var(--fg-muted)" }} onClick={() => setCountries([])}>
+                Clear all
+              </button>
+            </div>
+          ) : null}
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setPicker(true)}>
+              Add countries
+            </button>
+          </div>
+        </div>
+        <hr style={{ border: 0, borderTop: "1px solid var(--card-border)", margin: "4px 0" }} />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Providers</div>
+          <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginBottom: 10 }}>Add which payment providers are available in this region.</div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Payment Providers</div>
+          <CheckListField options={providers} checked={picked} onToggle={(id) => setPicked((s) => toggleInList(s, id))} emptyHint="No payment providers" />
+          {show && providerError ? (
+            <div role="alert" style={{ marginTop: 6, fontSize: 12, color: "#ef4444" }}>
+              {providerError}
+            </div>
+          ) : null}
+        </div>
+      </FormSection>
+      {picker ? (
+        <CountryPickerDrawer
+          title="Add countries"
+          initial={countries}
+          onClose={() => setPicker(false)}
+          onSave={(codes) => {
+            setCountries(codes);
+            setPicker(false);
+          }}
+        />
+      ) : null}
+    </WizardShell>
+  );
+}
+
+// ------------------------------------------------------------------ edit
+
+// Lupus "Edit Region".
+export function EditRegionDrawer({ region, onClose, onSaved }: { region: any; onClose: () => void; onSaved: () => void }) {
+  const currencies = useCurrencyOptions();
+  const providers = useProviders();
+  const [name, setName] = useState<string>(region.name ?? "");
+  const [currency, setCurrency] = useState<string>(String(region.currency_code ?? ""));
+  const [auto, setAuto] = useState<boolean>(!!region.automatic_taxes);
+  const [inclusive, setInclusive] = useState<boolean>(!!region.is_tax_inclusive);
+  const [picked, setPicked] = useState<string[]>((region.payment_providers ?? []).map((p: any) => p.id));
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const nameError = name.trim() === "" ? REQUIRED : undefined;
+  // the region's current currency stays selectable even if the store no longer lists it
+  const options = currencies.some((c) => c.value === currency) || !currency ? currencies : [{ value: currency, label: currency.toUpperCase() }, ...currencies];
+
+  async function save() {
+    if (nameError) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/admin/regions/${region.id}`, {
+        method: "POST",
+        body: { name: name.trim(), currency_code: currency, automatic_taxes: auto, is_tax_inclusive: inclusive, payment_providers: picked },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDrawer title="Edit Region" onClose={onClose} onSubmit={save} busy={busy} error={err}>
+      <TextField label="Name" value={name} onChange={setName} error={show ? nameError : undefined} />
+      <SelectField label="Currency" value={currency} onChange={setCurrency} options={options} searchable allowClear={false} />
+      <ToggleField title="Automatic Taxes" hint="When enabled, taxes will only be calculated at checkout based on the shipping address." checked={auto} onChange={setAuto} switchSide="right" />
+      <ToggleField title="Tax inclusive pricing" hint="When enabled, prices in the region will be tax inclusive." checked={inclusive} onChange={setInclusive} switchSide="right" />
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Payment Providers</div>
+        <CheckListField options={providers} checked={picked} onToggle={(id) => setPicked((s) => toggleInList(s, id))} emptyHint="No payment providers" />
