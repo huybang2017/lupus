@@ -372,3 +372,190 @@ export function EditRegionDrawer({ region, onClose, onSaved }: { region: any; on
       <div>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Payment Providers</div>
         <CheckListField options={providers} checked={picked} onToggle={(id) => setPicked((s) => toggleInList(s, id))} emptyHint="No payment providers" />
+      </div>
+    </FormDrawer>
+  );
+}
+
+// ------------------------------------------------------------------ detail
+
+// Lupus region detail: general, countries (add / remove), metadata.
+export function RegionDetailPage() {
+  const { id = "" } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const [region, setRegion] = useState<any>(null);
+  const [currencyName, setCurrencyName] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<null | "edit" | "countries" | "metadata">(null);
+  const [selected, setSelected] = useState<string[]>([]);
+
+  function load() {
+    api<{ region: any }>(`/admin/regions/${id}`)
+      .then((d) => {
+        setRegion(d.region);
+        setErr(null);
+        api<{ currency: { name: string } }>(`/admin/currencies/${d.region.currency_code}`).then((c) => setCurrencyName(c.currency.name)).catch(() => undefined);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }
+  useEffect(load, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const countries: any[] = useMemo(() => [...(region?.countries ?? [])].sort((a, b) => a.display_name.localeCompare(b.display_name)), [region]);
+  const search = useTableSearch(countries, (c: any, needle: string) => !needle || `${c.display_name} ${c.iso_2}`.toLowerCase().includes(needle));
+  const paging = useTablePaging(search.filtered, { limit: 10 });
+
+  async function del() {
+    const ok = await confirm({
+      title: "Are you sure?",
+      description: `You are about to delete the region ${region.name}. This action cannot be undone.`,
+      confirmLabel: "Delete",
+      verifyText: region.name,
+    });
+    if (!ok) return;
+    try {
+      await api(`/admin/regions/${id}`, { method: "DELETE" });
+      navigate(LIST, { replace: true });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function removeCountries(codes: string[], single?: any) {
+    const ok = await confirm({
+      title: "Are you sure?",
+      description: single
+        ? `You are about to remove the country ${single.display_name} from the region. This action cannot be undone.`
+        : `You are about to remove ${codes.length} ${codes.length === 1 ? "country" : "countries"} from the region. This action cannot be undone.`,
+      confirmLabel: "Remove",
+      verifyText: single ? single.display_name : "Remove",
+    });
+    if (!ok) return;
+    try {
+      await api(`/admin/regions/${id}`, { method: "POST", body: { countries: countries.filter((c) => !codes.includes(c.iso_2)).map((c) => c.iso_2) } });
+      setSelected([]);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const saved = () => {
+    setDrawer(null);
+    load();
+  };
+
+  return (
+    <div style={{ maxWidth: 960 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, fontSize: 13 }}>
+        <Link to={LIST} style={{ color: "var(--fg-subtle)", textDecoration: "none" }}>
+          Regions
+        </Link>
+        <span style={{ color: "var(--fg-muted)" }}>›</span>
+        <span style={{ fontWeight: 600 }}>{region?.name ?? id}</span>
+      </div>
+      {err ? <Alert>{err}</Alert> : null}
+      {!region && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+      {region ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <DetailSection
+            title={region.name}
+            action={
+              <RowMenu
+                items={[
+                  { label: "Edit", onClick: () => setDrawer("edit") },
+                  { label: "Delete", danger: true, onClick: () => void del() },
+                ]}
+              />
+            }
+          >
+            <KV
+              rows={[
+                [
+                  "Currency",
+                  <span key="c" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <span className="badge badge-gray">{String(region.currency_code).toUpperCase()}</span>
+                    {currencyName}
+                  </span>,
+                ],
+                ["Automatic Taxes", region.automatic_taxes ? "True" : "False"],
+                ["Tax inclusive pricing", region.is_tax_inclusive ? "True" : "False"],
+                ["Payment Providers", (region.payment_providers ?? []).length ? summarize((region.payment_providers as any[]).map((p) => formatProvider(p.id)), 3) : "-"],
+              ]}
+            />
+          </DetailSection>
+
+          <section className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px" }}>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Countries</h2>
+              <RowMenu items={[{ label: "Add countries", onClick: () => setDrawer("countries") }]} />
+            </div>
+            <TableToolbar
+              style={{ padding: "0 24px 12px", borderBottom: "none" }}
+              right={<TableSearch value={search.draft} onChange={search.setDraft} onSubmit={() => { search.submit(); paging.setPage(1); }} width={220} placeholder="Search" />}
+            />
+            {selected.length > 0 ? (
+              <TableBulkBar count={selected.length}>
+                <button className="btn btn-secondary" onClick={() => void removeCountries(selected)}>
+                  Remove
+                </button>
+              </TableBulkBar>
+            ) : null}
+            <DataTable
+              columns={[
+                { key: "name", label: "Name", render: (c: any) => c.display_name },
+                { key: "iso_2", label: "Code", render: (c: any) => String(c.iso_2).toUpperCase() },
+              ]}
+              rows={paging.pageRows}
+              rowKey={(c: any) => c.iso_2}
+              selectable
+              selected={selected}
+              onToggleRow={(code) => setSelected((s) => toggleInList(s, code))}
+              onToggleAll={(checked) => setSelected(checked ? paging.pageRows.map((c: any) => c.iso_2) : [])}
+              rowActions={(c: any) => [{ label: "Remove", danger: true, onClick: () => void removeCountries([c.iso_2], c) }]}
+              emptyTitle={search.draft ? "No results found" : "No records"}
+              emptyHint={search.draft ? "No countries match your search." : "There are no records to show"}
+            />
+            <TablePager page={paging.page} limit={paging.limit} count={search.filtered.length} onPage={paging.setPage} />
+          </section>
+
+          <MetadataSection metadata={region.metadata} onEdit={() => setDrawer("metadata")} />
+          <JsonSection data={region} />
+        </div>
+      ) : null}
+
+      {region && drawer === "edit" ? <EditRegionDrawer region={region} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {region && drawer === "countries" ? (
+        <CountryPickerDrawer
+          title="Add countries"
+          selfId={id}
+          initial={countries.map((c) => c.iso_2)}
+          onClose={() => setDrawer(null)}
+          onSave={async (codes) => {
+            try {
+              await api(`/admin/regions/${id}`, { method: "POST", body: { countries: codes } });
+              saved();
+            } catch (e) {
+              setErr(e instanceof Error ? e.message : String(e));
+              setDrawer(null);
+            }
+          }}
+        />
+      ) : null}
+      {region && drawer === "metadata" ? (
+        <MetadataDrawer
+          metadata={region.metadata}
+          onClose={() => setDrawer(null)}
+          onSaved={saved}
+          save={async (metadata) => {
+            await api(`/admin/regions/${id}`, { method: "POST", body: { metadata } });
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
