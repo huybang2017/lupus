@@ -368,3 +368,186 @@ function OverrideCard({ rate, onEdit, onDelete }: { rate: any; onEdit: () => voi
           <span>{fmtRate(rate.rate)}</span>
           <span style={{ color: "var(--fg-subtle)" }}>{(rate.rules ?? []).length} {(rate.rules ?? []).length === 1 ? "target" : "targets"}</span>
           {rate.is_combinable ? <span className="badge badge-gray">Combinable</span> : null}
+          <RowMenu items={[{ label: "Edit", onClick: onEdit }, { label: "Delete", danger: true, onClick: onDelete }]} />
+        </div>
+      </div>
+      {open ? (
+        <div style={{ borderTop: "1px solid var(--card-border)", padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+          {groups.map((g) => (
+            <div key={g.reference} style={{ display: "flex", gap: 12 }}>
+              <div style={{ width: 130, color: "var(--fg-subtle)", flexShrink: 0 }}>{g.title}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {g.rules.map((r: any) => (
+                  <span key={r.id} className="badge badge-gray">
+                    {names[`${r.reference}:${r.reference_id}`] ?? r.reference_id}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Lupus tax region detail: general (default rate, provider), provinces, tax overrides.
+export function TaxRegionDetailPage() {
+  const { id = "" } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const [region, setRegion] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<null | { kind: "edit" } | { kind: "province" } | { kind: "default"; rate?: any } | { kind: "override"; rate?: any }>(null);
+
+  function load() {
+    api<{ tax_region: any }>(`/admin/tax-regions/${id}`)
+      .then((d) => {
+        setRegion(d.tax_region);
+        setErr(null);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }
+  useEffect(load, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const def = region ? defaultRateOf(region) : null;
+  const overrides: any[] = useMemo(() => (region?.tax_rates ?? []).filter((t: any) => !t.is_default), [region]);
+  const isProvince = !!region?.parent_id;
+
+  async function run(fn: () => Promise<unknown>, after?: () => void) {
+    setErr(null);
+    try {
+      await fn();
+      after ? after() : load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function deleteRegion() {
+    const ok = await confirm({
+      title: "Are you sure?",
+      description: `You are about to delete the tax region ${regionName(region)}${isProvince ? "" : " and its provinces"}. This action cannot be undone.`,
+      confirmLabel: "Delete",
+      verifyText: regionName(region),
+    });
+    if (ok) await run(() => api(`/admin/tax-regions/${id}`, { method: "DELETE" }), () => navigate(isProvince ? `${LIST}/${region.parent_id}` : LIST, { replace: true }));
+  }
+
+  async function deleteRate(rate: any) {
+    const ok = await confirm({ title: "Are you sure?", description: `You are about to delete the tax rate ${rate.name}. This action cannot be undone.`, confirmLabel: "Delete" });
+    if (ok) await run(() => api(`/admin/tax-rates/${rate.id}`, { method: "DELETE" }));
+  }
+
+  const saved = () => {
+    setDrawer(null);
+    load();
+  };
+
+  return (
+    <div style={{ maxWidth: 960 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, fontSize: 13 }}>
+        <Link to={LIST} style={{ color: "var(--fg-subtle)", textDecoration: "none" }}>
+          Tax Regions
+        </Link>
+        {isProvince && region.parent ? (
+          <>
+            <span style={{ color: "var(--fg-muted)" }}>›</span>
+            <Link to={`${LIST}/${region.parent_id}`} style={{ color: "var(--fg-subtle)", textDecoration: "none" }}>
+              {regionName(region.parent)}
+            </Link>
+          </>
+        ) : null}
+        <span style={{ color: "var(--fg-muted)" }}>›</span>
+        <span style={{ fontWeight: 600 }}>{region ? regionName(region) : id}</span>
+      </div>
+      {err ? <Alert>{err}</Alert> : null}
+      {!region && !err ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={22} />
+        </div>
+      ) : null}
+      {region ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <DetailSection
+            title={regionName(region)}
+            action={
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {!def ? <StatusBadge color="orange">No default rate</StatusBadge> : null}
+                <RowMenu
+                  items={[
+                    { label: "Edit", onClick: () => setDrawer({ kind: "edit" }) },
+                    def ? { label: "Edit default rate", onClick: () => setDrawer({ kind: "default", rate: def }) } : { label: "Create default rate", onClick: () => setDrawer({ kind: "default" }) },
+                    { label: "Delete", danger: true, onClick: () => void deleteRegion() },
+                  ]}
+                />
+              </div>
+            }
+          >
+            <KV
+              rows={[
+                ["Default tax rate", def ? `${def.name} · ${def.code} · ${fmtRate(def.rate)}` : dash],
+                ["Tax provider", region.provider_id],
+              ]}
+            />
+          </DetailSection>
+
+          {!isProvince ? (
+            <section className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px" }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Provinces</h2>
+                  <p style={{ margin: "2px 0 0", fontSize: 13, color: "var(--fg-subtle)" }}>Sub-regions of {regionName(region)} with their own tax rates.</p>
+                </div>
+                <button className="btn btn-secondary" onClick={() => setDrawer({ kind: "province" })}>
+                  Create
+                </button>
+              </div>
+              <DataTable
+                columns={[
+                  {
+                    key: "province",
+                    label: "Province",
+                    render: (c: any) => (
+                      <Link to={`${LIST}/${c.id}`} style={{ color: "var(--fg-interactive)", textDecoration: "none", fontWeight: 600 }}>
+                        {regionName(c)}
+                      </Link>
+                    ),
+                  },
+                  { key: "rate", label: "Default rate", render: (c: any) => (defaultRateOf(c) ? `${defaultRateOf(c).name} · ${fmtRate(defaultRateOf(c).rate)}` : <StatusBadge color="orange">No default rate</StatusBadge>) },
+                ]}
+                rows={region.children}
+                emptyTitle="No provinces"
+                emptyHint="Without provinces, the country's rates apply everywhere in it."
+              />
+            </section>
+          ) : null}
+
+          <section className="card" style={{ padding: "20px 24px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Tax Overrides</h2>
+                <p style={{ margin: "2px 0 0", fontSize: 13, color: "var(--fg-subtle)" }}>Rates that apply to specific products, product types or shipping options instead of the default.</p>
+              </div>
+              <button className="btn btn-secondary" onClick={() => setDrawer({ kind: "override" })}>
+                Create
+              </button>
+            </div>
+            {overrides.length === 0 ? (
+              <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>No tax overrides yet.</div>
+            ) : (
+              overrides.map((rate) => <OverrideCard key={rate.id} rate={rate} onEdit={() => setDrawer({ kind: "override", rate })} onDelete={() => void deleteRate(rate)} />)
+            )}
+          </section>
+
+          <JsonSection data={region} />
+        </div>
+      ) : null}
+
+      {region && drawer?.kind === "edit" ? <EditTaxRegionDrawer region={region} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {region && drawer?.kind === "province" ? <ProvinceDrawer parent={region} onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {region && drawer?.kind === "default" ? <RateDrawer region={region} rate={drawer.rate} mode="default" onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+      {region && drawer?.kind === "override" ? <RateDrawer region={region} rate={drawer.rate} mode="override" onClose={() => setDrawer(null)} onSaved={saved} /> : null}
+    </div>
+  );
+}
