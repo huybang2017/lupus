@@ -183,3 +183,188 @@ function ProvinceDrawer({ parent, onClose, onSaved }: { parent: any; onClose: ()
 }
 
 // Searchable multi-select over one of the catalog lists (products, product types, shipping options).
+interface Picked {
+  id: string;
+  label: string;
+}
+
+function EntityPicker({ title, path, listKey, labelOf, value, onChange }: { title: string; path: string; listKey: string; labelOf: (row: any) => string; value: Picked[]; onChange: (v: Picked[]) => void }) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<any[]>([]);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      api<Record<string, any>>(`${path}?limit=10&offset=0${text ? `&q=${encodeURIComponent(text)}` : ""}`)
+        .then((d) => setRows(d[listKey] ?? []))
+        .catch(() => setRows([]));
+    }, 200);
+    return () => window.clearTimeout(timer.current);
+  }, [open, text, path, listKey]);
+
+  const picked = new Set(value.map((v) => v.id));
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{title}</div>
+      {value.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+          {value.map((v) => (
+            <span key={v.id} className="badge badge-gray">
+              {v.label}
+              <button type="button" aria-label={`Remove ${v.label}`} onClick={() => onChange(value.filter((x) => x.id !== v.id))} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", marginLeft: 4 }}>
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <input className="input" placeholder={`Search ${title.toLowerCase()}`} value={text} onFocus={() => setOpen(true)} onChange={(e) => { setText(e.target.value); setOpen(true); }} />
+      {open ? (
+        <div style={{ border: "1px solid var(--card-border)", borderRadius: 8, marginTop: 4, maxHeight: 180, overflowY: "auto" }}>
+          {rows.filter((r) => !picked.has(r.id)).length === 0 ? (
+            <div style={{ padding: 10, fontSize: 12, color: "var(--fg-subtle)" }}>No results</div>
+          ) : (
+            rows
+              .filter((r) => !picked.has(r.id))
+              .map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    onChange([...value, { id: r.id, label: labelOf(r) }]);
+                    setText("");
+                  }}
+                  style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: "8px 10px", fontSize: 13, cursor: "pointer" }}
+                >
+                  {labelOf(r)}
+                </button>
+              ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const TARGETS = [
+  { reference: "product", title: "Products", path: "/admin/products", listKey: "products", labelOf: (r: any) => r.title as string },
+  { reference: "product_type", title: "Product Types", path: "/admin/product-types", listKey: "product_types", labelOf: (r: any) => r.value as string },
+  { reference: "shipping_option", title: "Shipping Options", path: "/admin/shipping-options", listKey: "shipping_options", labelOf: (r: any) => r.name as string },
+] as const;
+
+// Names for the ids a rate's rules point at.
+function useTargetNames(rules: { reference: string; reference_id: string }[]) {
+  const [names, setNames] = useState<Record<string, string>>({});
+  const key = rules.map((r) => `${r.reference}:${r.reference_id}`).join(",");
+  useEffect(() => {
+    let live = true;
+    for (const t of TARGETS) {
+      const ids = rules.filter((r) => r.reference === t.reference).map((r) => r.reference_id);
+      if (ids.length === 0) continue;
+      const qs = ids.map((i) => `id=${encodeURIComponent(i)}`).join("&");
+      api<Record<string, any>>(`${t.path}?limit=100&${qs}`)
+        .then((d) => {
+          if (!live) return;
+          setNames((cur) => ({ ...cur, ...Object.fromEntries((d[t.listKey] ?? []).map((row: any) => [`${t.reference}:${row.id}`, t.labelOf(row)])) }));
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      live = false;
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return names;
+}
+
+// Create / edit a rate: the region's default rate, or an override with the things it applies to.
+function RateDrawer({ region, rate, mode, onClose, onSaved }: { region: any; rate?: any; mode: "default" | "override"; onClose: () => void; onSaved: () => void }) {
+  const editing = !!rate;
+  const [name, setName] = useState<string>(rate?.name ?? "");
+  const [code, setCode] = useState<string>(rate?.code ?? "");
+  const [pct, setPct] = useState<string>(rate?.rate === undefined || rate?.rate === null ? "" : String(rate.rate));
+  const [combinable, setCombinable] = useState<boolean>(!!rate?.is_combinable);
+  const names = useTargetNames(rate?.rules ?? []);
+  const [picked, setPicked] = useState<Record<string, Picked[]>>(() =>
+    Object.fromEntries(TARGETS.map((t) => [t.reference, (rate?.rules ?? []).filter((r: any) => r.reference === t.reference).map((r: any) => ({ id: r.reference_id, label: r.reference_id }))])),
+  );
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // swap ids for names once they have loaded
+  const labelled = (ref: string) => picked[ref].map((p) => ({ ...p, label: names[`${ref}:${p.id}`] ?? p.label }));
+  const nameError = name.trim() === "" ? REQUIRED : undefined;
+  const codeError = code.trim() === "" ? REQUIRED : undefined;
+  const rateError = pct.trim() === "" ? REQUIRED : Number.isFinite(Number(pct)) && Number(pct) >= 0 && Number(pct) <= 100 ? undefined : "Enter a percentage between 0 and 100";
+  const ruleCount = TARGETS.reduce((n, t) => n + picked[t.reference].length, 0);
+  const rulesError = mode === "override" && ruleCount === 0 ? "Pick at least one product, product type or shipping option" : undefined;
+
+  async function save() {
+    if (nameError || codeError || rateError || rulesError) {
+      setShow(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const rules = mode === "override" ? TARGETS.flatMap((t) => picked[t.reference].map((p) => ({ reference: t.reference, reference_id: p.id }))) : undefined;
+    try {
+      if (editing) {
+        await api(`/admin/tax-rates/${rate.id}`, { method: "POST", body: { name: name.trim(), code: code.trim(), rate: Number(pct), is_combinable: combinable, ...(rules ? { rules } : {}) } });
+      } else {
+        await api("/admin/tax-rates", {
+          method: "POST",
+          body: { tax_region_id: region.id, name: name.trim(), code: code.trim(), rate: Number(pct), is_default: mode === "default", is_combinable: combinable, ...(rules ? { rules } : {}) },
+        });
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  const title = mode === "default" ? (editing ? "Edit Default Tax Rate" : "Create Default Tax Rate") : editing ? "Edit Tax Override" : "Create Tax Override";
+  return (
+    <FormDrawer title={title} onClose={onClose} onSubmit={save} busy={busy} error={err}>
+      <TextField label="Name" value={name} onChange={setName} error={show ? nameError : undefined} />
+      <TextField label="Rate (%)" value={pct} onChange={setPct} error={show ? rateError : undefined} />
+      <TextField label="Code" value={code} onChange={setCode} error={show ? codeError : undefined} />
+      {mode === "override" ? (
+        <>
+          <ToggleField title="Combinable" hint="A combinable rate is added to the default rate instead of replacing it." checked={combinable} onChange={setCombinable} switchSide="right" />
+          <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>Applies to</div>
+          {TARGETS.map((t) => (
+            <EntityPicker key={t.reference} title={t.title} path={t.path} listKey={t.listKey} labelOf={t.labelOf} value={labelled(t.reference)} onChange={(v) => setPicked((cur) => ({ ...cur, [t.reference]: v }))} />
+          ))}
+          {show && rulesError ? (
+            <div role="alert" style={{ fontSize: 12, color: "#ef4444" }}>
+              {rulesError}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </FormDrawer>
+  );
+}
+
+// ------------------------------------------------------------------ detail
+
+function OverrideCard({ rate, onEdit, onDelete }: { rate: any; onEdit: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const names = useTargetNames(open ? rate.rules : []);
+  const groups = TARGETS.map((t) => ({ ...t, rules: (rate.rules ?? []).filter((r: any) => r.reference === t.reference) })).filter((g) => g.rules.length > 0);
+  return (
+    <div style={{ border: "1px solid var(--card-border)", borderRadius: 8, marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px" }}>
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, textAlign: "left", fontSize: 13 }}>
+          <span style={{ color: "var(--fg-muted)" }}>{open ? "▾" : "▸"}</span>
+          <span style={{ fontWeight: 600 }}>{rate.name}</span>
+          <span style={{ color: "var(--fg-subtle)" }}>{rate.code}</span>
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+          <span>{fmtRate(rate.rate)}</span>
+          <span style={{ color: "var(--fg-subtle)" }}>{(rate.rules ?? []).length} {(rate.rules ?? []).length === 1 ? "target" : "targets"}</span>
+          {rate.is_combinable ? <span className="badge badge-gray">Combinable</span> : null}
