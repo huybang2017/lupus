@@ -174,3 +174,179 @@ export namespace HttpTypes {
     is_automatic?: boolean
     application_method?: { type?: string; value?: number; currency_code?: string | null; target_type?: string; allocation?: string | null }
     [key: string]: any
+  }
+
+  export interface StorePaymentSession {
+    id: string
+    provider_id: string
+    status?: string
+    data?: Record<string, any>
+    [key: string]: any
+  }
+
+  export interface StorePaymentCollection {
+    id: string
+    status?: string
+    amount?: number
+    currency_code?: string
+    payment_sessions?: StorePaymentSession[]
+    payments?: { id: string; provider_id: string; amount: number; created_at?: string; data?: Record<string, any> }[]
+    [key: string]: any
+  }
+
+  export interface StoreCartShippingMethod {
+    id: string
+    name: string
+    amount: number
+    total?: number
+    shipping_option_id?: string | null
+    data?: Record<string, any>
+    [key: string]: any
+  }
+
+  export interface StoreCartShippingOption {
+    id: string
+    name: string
+    amount?: number
+    price_type?: string
+    calculated_price?: { calculated_amount: number; original_amount?: number; currency_code?: string }
+    insufficient_inventory?: boolean
+    data?: Record<string, any> | null
+    service_zone?: { fulfillment_set?: { type?: string; location?: { address?: StoreCartAddress | null } } }
+    type?: { id?: string; label?: string; code?: string }
+    [key: string]: any
+  }
+
+  export interface StoreCartLineItem {
+    id: string
+    cart_id?: string
+    title: string
+    product_title?: string | null
+    product_handle?: string | null
+    product_id?: string | null
+    variant_id?: string | null
+    variant_title?: string | null
+    variant?: { id: string; sku?: string | null; title?: string | null; options?: StoreProductVariant["options"] } | null
+    thumbnail?: string | null
+    quantity: number
+    unit_price: number
+    compare_at_unit_price?: number | null
+    original_unit_price?: number
+    subtotal?: number
+    total?: number
+    original_total?: number
+    tax_total?: number
+    discount_total?: number
+    requires_shipping?: boolean
+    [key: string]: any
+  }
+
+  export interface StoreCart {
+    id: string
+    region_id?: string | null
+    customer_id?: string | null
+    email?: string | null
+    currency_code: string
+    region?: StoreRegion | null
+    items?: StoreCartLineItem[]
+    shipping_address?: StoreCartAddress | null
+    billing_address?: StoreCartAddress | null
+    shipping_methods?: StoreCartShippingMethod[]
+    promotions?: StorePromotion[]
+    payment_collection?: StorePaymentCollection | null
+    subtotal: number
+    item_subtotal?: number
+    item_total?: number
+    total: number
+    tax_total: number
+    discount_total: number
+    shipping_subtotal?: number
+    shipping_total: number
+    gift_card_total?: number
+    metadata?: Metadata
+    [key: string]: any
+  }
+
+  export interface StoreUpdateCart {
+    email?: string
+    region_id?: string
+    shipping_address?: StoreCartAddress
+    billing_address?: StoreCartAddress
+    promo_codes?: string[]
+    locale?: string
+    metadata?: Metadata
+  }
+
+  export interface StoreOrderLineItem extends StoreCartLineItem {
+    order_id?: string
+  }
+
+  export interface StoreOrder {
+    id: string
+    display_id: number
+    status?: string
+    email?: string | null
+    currency_code: string
+    created_at: string
+    items?: StoreOrderLineItem[]
+    shipping_address?: StoreCartAddress | null
+    billing_address?: StoreCartAddress | null
+    shipping_methods?: StoreCartShippingMethod[]
+    payment_collections?: StorePaymentCollection[]
+    payment_status?: string
+    fulfillment_status?: string
+    subtotal: number
+    item_subtotal?: number
+    total: number
+    tax_total: number
+    discount_total: number
+    shipping_total: number
+    gift_card_total: number
+    [key: string]: any
+  }
+
+  export interface StoreCustomerAddress {
+    id: string
+    address_name?: string | null
+    is_default_shipping?: boolean
+    is_default_billing?: boolean
+    first_name?: string | null
+    last_name?: string | null
+    company?: string | null
+    address_1?: string | null
+    address_2?: string | null
+    city?: string | null
+    country_code?: string | null
+    province?: string | null
+    postal_code?: string | null
+    phone?: string | null
+    [key: string]: any
+  }
+
+  export interface StoreCustomer {
+    id: string
+    email: string
+    first_name?: string | null
+    last_name?: string | null
+    phone?: string | null
+    company_name?: string | null
+    has_account?: boolean
+    addresses: StoreCustomerAddress[]
+    orders?: StoreOrder[]
+    metadata?: Metadata
+    [key: string]: any
+  }
+
+  export interface StoreUpdateCustomer {
+    first_name?: string
+    last_name?: string
+    phone?: string
+    company_name?: string
+    email?: string
+  }
+}
+
+export type StoreCart = HttpTypes.StoreCart
+export type StoreCustomer = HttpTypes.StoreCustomer
+export type StorePrice = HttpTypes.StorePrice
+export type StoreCartShippingOption = HttpTypes.StoreCartShippingOption
