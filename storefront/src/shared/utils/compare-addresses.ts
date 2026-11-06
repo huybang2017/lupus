@@ -2,8 +2,15 @@ const FIELDS = ["first_name", "last_name", "address_1", "company", "postal_code"
 
 type Address = Record<string, unknown>
 
-// Same comparison as the starter (lodash isEqual over a pick of the address fields); a missing field
-// and an empty one differ there too, so the shapes are compared as they are.
+const normalize = (value: unknown) =>
+  typeof value === "string" ? value.trim() : value ?? ""
+
+// The API can return an optional field as null, undefined, or an empty string.
+// They all mean the same thing to a shopper and must not open a second address form.
 export default function compareAddresses(address1: object, address2: object) {
-  return FIELDS.every((f) => (address1 as Address)[f] === (address2 as Address)[f])
+  return FIELDS.every(
+    (field) =>
+      normalize((address1 as Address)[field]) ===
+      normalize((address2 as Address)[field])
+  )
 }

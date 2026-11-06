@@ -29,8 +29,9 @@ const DeleteButton = ({
       )}
     >
       <button
-        className="flex gap-x-1 text-ui-fg-subtle hover:text-ui-fg-base cursor-pointer"
+        className="flex cursor-pointer gap-x-1 text-brand-ink/65 hover:text-brand-clay"
         onClick={() => handleDelete(id)}
+        aria-label={children ? undefined : "Xóa sách khỏi giỏ"}
       >
         {isDeleting ? <Spinner className="animate-spin" /> : <Trash />}
         <span>{children}</span>

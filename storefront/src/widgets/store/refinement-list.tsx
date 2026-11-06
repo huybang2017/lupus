@@ -63,7 +63,11 @@ const RefinementList = ({
     })
 
   return (
-    <div className="flex flex-col gap-12 py-4 mb-8 small:px-0 pl-6 small:min-w-[250px] small:ml-[1.675rem]">
+    <aside className="surface-card mb-2 flex w-full flex-col gap-8 p-5 lg:sticky lg:top-32 lg:w-[245px] lg:min-w-[245px] lg:p-6">
+      <div className="border-b border-brand-sand pb-4">
+        <p className="font-display text-xl font-semibold text-brand-forest">Lọc tủ sách</p>
+        <p className="mt-1 text-xs text-brand-ink/50">Tìm lựa chọn hợp với bạn</p>
+      </div>
       <SortProducts
         sortBy={sortBy}
         setQueryParams={setQueryParams}
@@ -75,7 +79,7 @@ const RefinementList = ({
           setOptionValueIds={setOptionValueIds}
         />
       )}
-    </div>
+    </aside>
   )
 }
 

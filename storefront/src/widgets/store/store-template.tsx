@@ -19,18 +19,25 @@ const StoreTemplate = ({
   const sort = sortBy || "created_at"
 
   return (
-    <div
-      className="flex flex-col small:flex-row small:items-start py-6 content-container"
-      data-testid="category-container"
-    >
-      <RefinementList sortBy={sort} />
-      <div className="w-full">
-        <div className="mb-8 text-2xl-semi">
-          <h1 data-testid="store-page-title">All products</h1>
+    <main data-testid="category-container">
+      <div className="border-b border-brand-sand/70 bg-brand-paper">
+        <div className="content-container py-12 sm:py-16">
+          <p className="eyebrow">Thư viện của Lupus</p>
+          <h1 className="mt-3 font-display text-4xl font-semibold tracking-tight text-brand-forest sm:text-5xl" data-testid="store-page-title">
+            Tất cả sách
+          </h1>
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-brand-ink/60 sm:text-base">
+            Chọn một cuốn cho buổi chiều yên tĩnh, một ý tưởng mới hoặc hành trình tiếp theo của bạn.
+          </p>
         </div>
-        <PaginatedProducts sortBy={sort} page={pageNumber} countryCode={countryCode} optionValueIds={optionValueIds} />
       </div>
-    </div>
+      <div className="content-container flex flex-col items-start gap-8 py-10 lg:flex-row lg:gap-12 lg:py-14">
+        <RefinementList sortBy={sort} />
+        <div className="w-full min-w-0">
+          <PaginatedProducts sortBy={sort} page={pageNumber} countryCode={countryCode} optionValueIds={optionValueIds} />
+        </div>
+      </div>
+    </main>
   )
 }
 

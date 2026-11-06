@@ -6,6 +6,7 @@ import Addresses from "@/widgets/checkout/addresses"
 import Payment from "@/widgets/checkout/payment"
 import Review from "@/widgets/checkout/review"
 import Shipping from "@/widgets/checkout/shipping"
+import { PageLoadError, PageLoading } from "@/widgets/common/page-state"
 
 export default function CheckoutForm({
   cart,
@@ -19,7 +20,7 @@ export default function CheckoutForm({
     ? [cart.id, cart.region?.id, cart.shipping_address?.country_code, cart.shipping_address?.postal_code, cart.subtotal, cart.items?.length].join("|")
     : ""
 
-  const { data } = useAsync(async () => {
+  const { data, error, loading, reload } = useAsync(async () => {
     if (!cart) {
       return null
     }
@@ -31,8 +32,29 @@ export default function CheckoutForm({
     return null
   }
 
+  if (loading) {
+    return <PageLoading compact message="Đang tìm phương thức giao hàng và thanh toán…" />
+  }
+
+  if (error) {
+    return (
+      <PageLoadError
+        compact
+        title="Chưa thể chuẩn bị thanh toán"
+        description="Không thể tải phương thức giao hàng hoặc thanh toán. Vui lòng kiểm tra cấu hình cửa hàng rồi thử lại."
+        onRetry={reload}
+      />
+    )
+  }
+
   if (!data || !data.shippingMethods || !data.paymentMethods) {
-    return null
+    return (
+      <PageLoadError
+        compact
+        title="Thiếu cấu hình thanh toán"
+        description="Cửa hàng chưa có đủ phương thức giao hàng hoặc thanh toán cho khu vực này."
+      />
+    )
   }
 
   return (

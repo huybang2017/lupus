@@ -4,6 +4,7 @@ import { listCollections } from "@/entities/collections"
 import { Text, clx } from "@/widgets/common/ui"
 
 import LocalizedClientLink from "@/widgets/common/localized-client-link"
+import BrandMark from "@/widgets/common/brand-mark"
 
 export default function Footer() {
   const { data } = useAsync(() => Promise.all([listCollections().catch(() => ({ collections: [] })), listCategories().catch(() => [])]), [])
@@ -11,22 +12,28 @@ export default function Footer() {
   const productCategories = data?.[1]
 
   return (
-    <footer className="border-t border-ui-border-base w-full">
+    <footer className="mt-20 w-full bg-brand-forest text-brand-cream">
       <div className="content-container flex flex-col w-full">
-        <div className="flex flex-col gap-y-6 xsmall:flex-row items-start justify-between py-40">
-          <div>
+        <div className="grid gap-12 py-16 md:grid-cols-[1.2fr_2fr] lg:py-20">
+          <div className="max-w-md">
             <LocalizedClientLink
               href="/"
-              className="txt-compact-xlarge-plus text-ui-fg-subtle hover:text-ui-fg-base uppercase"
+              className="inline-flex rounded-full"
             >
-              Lupus Store
+              <BrandMark inverse />
             </LocalizedClientLink>
+            <p className="mt-6 font-display text-2xl leading-relaxed text-brand-cream/90">
+              Một cuốn sách đúng lúc có thể mở ra cả một chân trời mới.
+            </p>
+            <div className="mt-7 max-w-sm text-sm leading-7 text-brand-cream/65">
+              <p>Nhà sách trực tuyến dành cho những người muốn đọc chậm, chọn kỹ và tìm đúng cuốn sách cho mình.</p>
+            </div>
           </div>
-          <div className="text-small-regular gap-10 md:gap-x-16 grid grid-cols-2 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-10 text-sm md:grid-cols-3 md:gap-x-16">
             {productCategories && productCategories?.length > 0 && (
               <div className="flex flex-col gap-y-2">
-                <span className="txt-small-plus txt-ui-fg-base">
-                  Categories
+                <span className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-gold">
+                  Thể loại
                 </span>
                 <ul
                   className="grid grid-cols-1 gap-2"
@@ -46,13 +53,13 @@ export default function Footer() {
 
                     return (
                       <li
-                        className="flex flex-col gap-2 text-ui-fg-subtle txt-small"
+                        className="flex flex-col gap-2 text-brand-cream/65"
                         key={c.id}
                       >
                         <LocalizedClientLink
                           className={clx(
-                            "hover:text-ui-fg-base",
-                            children && "txt-small-plus"
+                            "transition-colors hover:text-white",
+                            children && "font-semibold text-brand-cream/90"
                           )}
                           href={`/categories/${c.handle}`}
                           data-testid="category-link"
@@ -60,12 +67,12 @@ export default function Footer() {
                           {c.name}
                         </LocalizedClientLink>
                         {children && (
-                          <ul className="grid grid-cols-1 ml-3 gap-2">
+                          <ul className="grid grid-cols-1 ml-3 gap-2 border-l border-white/15 pl-3">
                             {children &&
                               children.map((child) => (
                                 <li key={child.id}>
                                   <LocalizedClientLink
-                                    className="hover:text-ui-fg-base"
+                                    className="transition-colors hover:text-white"
                                     href={`/categories/${child.handle}`}
                                     data-testid="category-link"
                                   >
@@ -83,12 +90,12 @@ export default function Footer() {
             )}
             {collections && collections.length > 0 && (
               <div className="flex flex-col gap-y-2">
-                <span className="txt-small-plus txt-ui-fg-base">
-                  Collections
+                <span className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-gold">
+                  Tuyển tập
                 </span>
                 <ul
                   className={clx(
-                    "grid grid-cols-1 gap-2 text-ui-fg-subtle txt-small",
+                    "grid grid-cols-1 gap-2 text-brand-cream/65",
                     {
                       "grid-cols-2": (collections?.length || 0) > 3,
                     }
@@ -97,7 +104,7 @@ export default function Footer() {
                   {collections?.slice(0, 6).map((c) => (
                     <li key={c.id}>
                       <LocalizedClientLink
-                        className="hover:text-ui-fg-base"
+                        className="transition-colors hover:text-white"
                         href={`/collections/${c.handle}`}
                       >
                         {c.title}
@@ -108,24 +115,24 @@ export default function Footer() {
               </div>
             )}
             <div className="flex flex-col gap-y-2">
-              <span className="txt-small-plus txt-ui-fg-base">Lupus</span>
-              <ul className="grid grid-cols-1 gap-y-2 text-ui-fg-subtle txt-small">
+              <span className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-gold">Đồng hành cùng bạn</span>
+              <ul className="grid grid-cols-1 gap-y-2 text-brand-cream/65">
                 <li>
-                  <span className="txt-ui-fg-subtle">GitHub</span>
+                  <span>Giao hàng toàn quốc</span>
                 </li>
                 <li>
-                  <span className="txt-ui-fg-subtle">Documentation</span>
+                  <span>Hỗ trợ khi sách lỗi hoặc sai đơn</span>
                 </li>
                 <li>
-                  <span className="txt-ui-fg-subtle">Source code</span>
+                  <span>Sách chọn lọc chính hãng</span>
                 </li>
               </ul>
             </div>
           </div>
         </div>
-        <div className="flex w-full mb-16 justify-between text-ui-fg-muted">
-          <Text className="txt-compact-small">
-            © {new Date().getFullYear()} Lupus Store. All rights reserved.
+        <div className="flex w-full border-t border-white/10 py-7 justify-between text-brand-cream/50">
+          <Text className="text-xs">
+            © {new Date().getFullYear()} Lupus Books. Tất cả quyền được bảo lưu.
           </Text>
         </div>
       </div>

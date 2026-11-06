@@ -6,25 +6,24 @@ import TransferImage from "@/widgets/order/transfer-image"
 
 export function TransferPage() {
   const { id = "", token = "" } = useParams()
-  usePageTitle("Order transfer")
+  usePageTitle("Chuyển giao đơn hàng")
 
   return (
-    <div className="flex flex-col gap-y-4 items-start w-2/5 mx-auto mt-10 mb-20">
+    <div className="mx-auto my-12 flex w-[calc(100%_-_3rem)] max-w-2xl flex-col items-start gap-y-5 rounded-2xl border border-brand-gold/40 bg-brand-paper p-6 text-brand-ink shadow-sm small:p-10">
       <TransferImage />
-      <div className="flex flex-col gap-y-6">
-        <Heading level="h1" className="text-xl text-zinc-900">
-          Transfer request for order {id}
+      <div className="flex flex-col gap-y-5">
+        <Heading level="h1" className="font-serif text-2xl text-brand-forest">
+          Yêu cầu chuyển giao đơn hàng {id}
         </Heading>
-        <Text className="text-zinc-600">
-          You&#39;ve received a request to transfer ownership of your order ({id}). If you agree to this request, you can approve the transfer by
-          clicking the button below.
+        <Text className="text-brand-ink/70">
+          Bạn nhận được yêu cầu chuyển quyền sở hữu đơn hàng ({id}). Nếu đồng ý, hãy xác nhận bằng nút bên dưới.
         </Text>
-        <div className="w-full h-px bg-zinc-200" />
-        <Text className="text-zinc-600">
-          If you accept, the new owner will take over all responsibilities and permissions associated with this order.
+        <div className="h-px w-full bg-brand-gold/40" />
+        <Text className="text-brand-ink/70">
+          Khi bạn chấp nhận, chủ sở hữu mới sẽ tiếp nhận toàn bộ quyền và trách nhiệm liên quan đến đơn hàng này.
         </Text>
-        <Text className="text-zinc-600">If you do not recognize this request or wish to retain ownership, no further action is required.</Text>
-        <div className="w-full h-px bg-zinc-200" />
+        <Text className="text-brand-ink/70">Nếu không nhận ra yêu cầu này hoặc muốn giữ quyền sở hữu, bạn có thể từ chối chuyển giao.</Text>
+        <div className="h-px w-full bg-brand-gold/40" />
         <TransferActions id={id} token={token} />
       </div>
     </div>

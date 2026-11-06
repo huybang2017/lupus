@@ -7,6 +7,7 @@ import OrderDetails from "@/widgets/order/order-details"
 import ShippingDetails from "@/widgets/order/shipping-details"
 import PaymentDetails from "@/widgets/order/payment-details"
 import { HttpTypes } from "@/shared/types/http"
+import VietQrPayment from "@/widgets/order/vietqr-payment"
 
 type OrderCompletedTemplateProps = {
   order: HttpTypes.StoreOrder
@@ -15,23 +16,28 @@ type OrderCompletedTemplateProps = {
 export default function OrderCompletedTemplate({
   order,
 }: OrderCompletedTemplateProps) {
+  const usesVietQr = order.payment_collections?.[0]?.payment_sessions?.some(
+    (session) => session.provider_id === "pp_vietqr"
+  )
+
   return (
-    <div className="py-6 min-h-[calc(100vh-64px)]">
+    <div className="min-h-[calc(100vh-64px)] bg-brand-cream py-8 text-brand-ink small:py-12">
       <div className="content-container flex flex-col justify-center items-center gap-y-10 max-w-4xl h-full w-full">
         <div
-          className="flex flex-col gap-4 max-w-4xl h-full bg-white w-full py-10"
+          className="flex h-full w-full max-w-4xl flex-col gap-5 rounded-2xl border border-brand-gold/40 bg-brand-paper p-6 shadow-sm small:p-10"
           data-testid="order-complete-container"
         >
           <Heading
             level="h1"
-            className="flex flex-col gap-y-3 text-ui-fg-base text-3xl mb-4"
+            className="mb-4 flex flex-col gap-y-2 font-serif text-3xl text-brand-forest"
           >
-            <span>Thank you!</span>
-            <span>Your order was placed successfully.</span>
+            <span>Cảm ơn bạn!</span>
+            <span>Đơn sách đã được đặt thành công.</span>
           </Heading>
-          <OrderDetails order={order} />
+          <OrderDetails order={order} showStatus />
+          {usesVietQr && <VietQrPayment orderId={order.id} />}
           <Heading level="h2" className="flex flex-row text-3xl-regular">
-            Summary
+            Tóm tắt đơn hàng
           </Heading>
           <Items order={order} />
           <CartTotals totals={order} />

@@ -39,23 +39,23 @@ const Addresses = ({
   const [message, formAction] = useActionState(setAddresses, null)
 
   return (
-    <div className="bg-white">
+    <div className="rounded-2xl border border-brand-gold/35 bg-brand-paper p-5 shadow-book sm:p-7">
       <div className="flex flex-row items-center justify-between mb-6">
         <Heading
           level="h2"
-          className="flex flex-row text-3xl-regular gap-x-2 items-baseline"
+          className="font-editorial flex flex-row text-3xl-regular gap-x-2 items-baseline text-brand-ink"
         >
-          Shipping Address
-          {!isOpen && <CheckCircleSolid />}
+          Địa chỉ giao hàng
+          {!isOpen && <CheckCircleSolid className="text-brand-forest" />}
         </Heading>
         {!isOpen && cart?.shipping_address && (
           <Text>
             <button
               onClick={handleEdit}
-              className="text-ui-fg-interactive hover:text-ui-fg-interactive-hover"
+              className="font-medium text-brand-clay hover:text-brand-clay-dark"
               data-testid="edit-address-button"
             >
-              Edit
+              Chỉnh sửa
             </button>
           </Text>
         )}
@@ -71,19 +71,23 @@ const Addresses = ({
             />
 
             {!sameAsBilling && (
-              <div>
+              <div className="mt-8 rounded-2xl border border-brand-sand bg-brand-cream/45 p-4 sm:p-6">
                 <Heading
-                  level="h2"
-                  className="text-3xl-regular gap-x-4 pb-6 pt-8"
+                  level="h3"
+                  className="font-editorial text-2xl text-brand-ink"
                 >
-                  Billing address
+                  Địa chỉ xuất hóa đơn khác
                 </Heading>
+
+                <Text className="mb-6 mt-2 text-sm text-brand-ink/65">
+                  Chỉ cần điền phần này khi thông tin xuất hóa đơn khác địa chỉ giao hàng.
+                </Text>
 
                 <BillingAddress cart={cart} />
               </div>
             )}
             <SubmitButton className="mt-6" data-testid="submit-address-button">
-              Continue to delivery
+              Tiếp tục chọn giao hàng
             </SubmitButton>
             <ErrorMessage error={message} data-testid="address-error-message" />
           </div>
@@ -93,13 +97,13 @@ const Addresses = ({
           <div className="text-small-regular">
             {cart && cart.shipping_address ? (
               <div className="flex items-start gap-x-8">
-                <div className="flex items-start gap-x-1 w-full">
+                <div className="grid w-full grid-cols-1 gap-5 sm:grid-cols-3">
                   <div
-                    className="flex flex-col w-1/3"
+                    className="flex flex-col"
                     data-testid="shipping-address-summary"
                   >
-                    <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                      Shipping Address
+                    <Text className="txt-medium-plus text-brand-ink mb-1">
+                      Địa chỉ giao hàng
                     </Text>
                     <Text className="txt-medium text-ui-fg-subtle">
                       {cart.shipping_address.first_name}{" "}
@@ -119,11 +123,11 @@ const Addresses = ({
                   </div>
 
                   <div
-                    className="flex flex-col w-1/3 "
+                    className="flex flex-col"
                     data-testid="shipping-contact-summary"
                   >
-                    <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                      Contact
+                    <Text className="txt-medium-plus text-brand-ink mb-1">
+                      Thông tin liên hệ
                     </Text>
                     <Text className="txt-medium text-ui-fg-subtle">
                       {cart.shipping_address.phone}
@@ -134,16 +138,16 @@ const Addresses = ({
                   </div>
 
                   <div
-                    className="flex flex-col w-1/3"
+                    className="flex flex-col"
                     data-testid="billing-address-summary"
                   >
-                    <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                      Billing Address
+                    <Text className="txt-medium-plus text-brand-ink mb-1">
+                      Thông tin xuất hóa đơn
                     </Text>
 
                     {sameAsBilling ? (
                       <Text className="txt-medium text-ui-fg-subtle">
-                        Billing and delivery address are the same.
+                        Dùng địa chỉ giao hàng.
                       </Text>
                     ) : (
                       <>
@@ -175,7 +179,7 @@ const Addresses = ({
           </div>
         </div>
       )}
-      <Divider className="mt-8" />
+      <Divider className="mt-8 border-brand-gold/30" />
     </div>
   )
 }

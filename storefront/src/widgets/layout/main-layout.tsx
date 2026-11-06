@@ -28,7 +28,9 @@ export function MainLayout() {
 
       {cart && <FreeShippingPriceNudge variant="popup" cart={cart} shippingOptions={shippingOptions ?? []} />}
       <NotFoundBoundary key={location.pathname} fallback={<NotFoundPage />}>
-        <Outlet />
+        <div className="min-h-[60vh]">
+          <Outlet />
+        </div>
       </NotFoundBoundary>
       <Footer />
     </>

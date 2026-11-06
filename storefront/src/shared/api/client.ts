@@ -50,7 +50,7 @@ const inflight = new Map<string, Promise<unknown>>()
 /** Same message shape as the starter's error helper: capitalised, ending with a period. */
 export function errorMessage(message: string): string {
   const m = message.trim()
-  return m ? m.charAt(0).toUpperCase() + m.slice(1) + (/[.!?]$/.test(m) ? "" : ".") : "Something went wrong."
+  return m ? m.charAt(0).toUpperCase() + m.slice(1) + (/[.!?]$/.test(m) ? "" : ".") : "Đã có lỗi xảy ra."
 }
 
 export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
@@ -72,18 +72,23 @@ export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promis
   }
 
   const run = (async () => {
-    const res = await fetch(url, {
-      method,
-      credentials: "include",
-      headers: {
-        ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(PUBLISHABLE_KEY ? { "x-publishable-api-key": PUBLISHABLE_KEY } : {}),
-        ...(locale ? { "x-lupus-locale": locale } : {}),
-        ...opts.headers,
-      },
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    })
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method,
+        credentials: "include",
+        headers: {
+          ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(PUBLISHABLE_KEY ? { "x-publishable-api-key": PUBLISHABLE_KEY } : {}),
+          ...(locale ? { "x-lupus-locale": locale } : {}),
+          ...opts.headers,
+        },
+        body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      })
+    } catch {
+      throw new ApiError("Không thể kết nối đến máy chủ. Vui lòng thử lại.", 0)
+    }
     const text = await res.text()
     let json: any = null
     try {
@@ -92,7 +97,7 @@ export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promis
       json = null
     }
     if (!res.ok) {
-      throw new ApiError(errorMessage(json?.message ?? res.statusText ?? "Request failed"), res.status)
+      throw new ApiError(errorMessage(json?.message ?? "Yêu cầu không thành công"), res.status)
     }
     return json as T
   })()

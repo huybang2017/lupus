@@ -16,6 +16,26 @@ import { HttpTypes } from "@/shared/types/http"
 import { usePathname, useRouter, useSearchParams } from "@/shared/navigation/router"
 import { useCallback, useEffect, useState } from "react"
 
+const getPaymentTitle = (providerId: string) => {
+  if (providerId === "pp_system_default" || providerId === "manual") {
+    return "Thanh toán khi nhận hàng (COD)"
+  }
+
+  if (providerId === "pp_stripe_stripe") {
+    return "Thẻ tín dụng hoặc ghi nợ"
+  }
+
+  if (providerId === "pp_vietqr") {
+    return "Chuyển khoản VietQR"
+  }
+
+  if (providerId === "pp_demo_bank") {
+    return "Thanh toán thẻ ngân hàng"
+  }
+
+  return paymentInfoMap[providerId]?.title || providerId
+}
+
 const Payment = ({
   cart,
   availablePaymentMethods,
@@ -109,36 +129,36 @@ const Payment = ({
   }, [isOpen])
 
   return (
-    <div className="bg-white">
+    <div className="rounded-2xl border border-brand-gold/35 bg-brand-paper p-5 shadow-book sm:p-7">
       <div className="flex flex-row items-center justify-between mb-6">
         <Heading
           level="h2"
           className={clx(
-            "flex flex-row text-3xl-regular gap-x-2 items-baseline",
+            "font-editorial flex flex-row text-3xl-regular gap-x-2 items-baseline text-brand-ink",
             {
               "opacity-50 pointer-events-none select-none":
                 !isOpen && !paymentReady,
             }
           )}
         >
-          Payment
-          {!isOpen && paymentReady && <CheckCircleSolid />}
+          Thanh toán
+          {!isOpen && paymentReady && <CheckCircleSolid className="text-brand-forest" />}
         </Heading>
         {!isOpen && paymentReady && (
           <Text>
             <button
               onClick={handleEdit}
-              className="text-ui-fg-interactive hover:text-ui-fg-interactive-hover"
+              className="font-medium text-brand-clay hover:text-brand-clay-dark"
               data-testid="edit-payment-button"
             >
-              Edit
+              Chỉnh sửa
             </button>
           </Text>
         )}
       </div>
       <div>
         <div className={isOpen ? "block" : "hidden"}>
-          {!paidByGiftcard && availablePaymentMethods?.length && (
+          {!paidByGiftcard && availablePaymentMethods.length > 0 && (
             <>
               <RadioGroup
                 value={selectedPaymentMethod}
@@ -157,16 +177,22 @@ const Payment = ({
             </>
           )}
 
+          {!paidByGiftcard && !availablePaymentMethods?.length && (
+            <div className="rounded-xl border border-brand-gold/40 bg-brand-cream/70 p-4 text-sm leading-6 text-brand-ink/70" role="status">
+              Chưa có phương thức thanh toán cho khu vực này. Vui lòng kiểm tra cấu hình thanh toán trong trang quản trị.
+            </div>
+          )}
+
           {paidByGiftcard && (
-            <div className="flex flex-col w-1/3">
+            <div className="flex flex-col w-full sm:w-1/3">
               <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                Payment method
+                Phương thức thanh toán
               </Text>
               <Text
                 className="txt-medium text-ui-fg-subtle"
                 data-testid="payment-method-summary"
               >
-                Gift card
+                Thẻ quà tặng
               </Text>
             </div>
           )}
@@ -188,29 +214,28 @@ const Payment = ({
             data-testid="submit-payment-button"
           >
             {!activeSession && isStripeLike(selectedPaymentMethod)
-              ? "Enter payment details"
-              : "Continue to review"}
+              ? "Nhập thông tin thanh toán"
+              : "Tiếp tục kiểm tra đơn"}
           </Button>
         </div>
 
         <div className={isOpen ? "hidden" : "block"}>
           {cart && paymentReady && activeSession ? (
             <div className="flex items-start gap-x-1 w-full">
-              <div className="flex flex-col w-1/3">
+              <div className="flex flex-col w-full sm:w-1/3">
                 <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                  Payment method
+                  Phương thức thanh toán
                 </Text>
                 <Text
                   className="txt-medium text-ui-fg-subtle"
                   data-testid="payment-method-summary"
                 >
-                  {paymentInfoMap[activeSession?.provider_id]?.title ||
-                    activeSession?.provider_id}
+                  {getPaymentTitle(activeSession?.provider_id)}
                 </Text>
               </div>
-              <div className="flex flex-col w-1/3">
+              <div className="flex flex-col w-full sm:w-1/3">
                 <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                  Payment details
+                  Chi tiết thanh toán
                 </Text>
                 <div
                   className="flex gap-2 txt-medium text-ui-fg-subtle items-center"
@@ -221,26 +246,30 @@ const Payment = ({
                       <CreditCard />
                     )}
                   </Container>
-                  <Text>Another step will appear</Text>
+                  <Text>
+                    {activeSession.provider_id === "pp_demo_bank"
+                      ? "Nhập thông tin thẻ ở bước kiểm tra đơn"
+                      : "Sẽ được xác nhận ở bước tiếp theo"}
+                  </Text>
                 </div>
               </div>
             </div>
           ) : paidByGiftcard ? (
-            <div className="flex flex-col w-1/3">
+            <div className="flex flex-col w-full sm:w-1/3">
               <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                Payment method
+                Phương thức thanh toán
               </Text>
               <Text
                 className="txt-medium text-ui-fg-subtle"
                 data-testid="payment-method-summary"
               >
-                Gift card
+                Thẻ quà tặng
               </Text>
             </div>
           ) : null}
         </div>
       </div>
-      <Divider className="mt-8" />
+      <Divider className="mt-8 border-brand-gold/30" />
     </div>
   )
 }

@@ -10,17 +10,17 @@ type ShippingDetailsProps = {
 
 const ShippingDetails = ({ order }: ShippingDetailsProps) => {
   return (
-    <div>
-      <Heading level="h2" className="flex flex-row text-3xl-regular my-6">
-        Delivery
+    <div className="text-brand-ink">
+      <Heading level="h2" className="my-6 flex flex-row font-serif text-2xl font-semibold text-brand-forest">
+        Giao hàng
       </Heading>
-      <div className="flex items-start gap-x-8">
+      <div className="grid grid-cols-1 gap-6 small:grid-cols-3 small:gap-x-8">
         <div
-          className="flex flex-col w-1/3"
+          className="flex flex-col"
           data-testid="shipping-address-summary"
         >
           <Text className="txt-medium-plus text-ui-fg-base mb-1">
-            Shipping Address
+            Địa chỉ giao hàng
           </Text>
           <Text className="txt-medium text-ui-fg-subtle">
             {order.shipping_address?.first_name}{" "}
@@ -40,10 +40,10 @@ const ShippingDetails = ({ order }: ShippingDetailsProps) => {
         </div>
 
         <div
-          className="flex flex-col w-1/3 "
+          className="flex flex-col"
           data-testid="shipping-contact-summary"
         >
-          <Text className="txt-medium-plus text-ui-fg-base mb-1">Contact</Text>
+          <Text className="txt-medium-plus text-ui-fg-base mb-1">Liên hệ</Text>
           <Text className="txt-medium text-ui-fg-subtle">
             {order.shipping_address?.phone}
           </Text>
@@ -51,10 +51,10 @@ const ShippingDetails = ({ order }: ShippingDetailsProps) => {
         </div>
 
         <div
-          className="flex flex-col w-1/3"
+          className="flex flex-col"
           data-testid="shipping-method-summary"
         >
-          <Text className="txt-medium-plus text-ui-fg-base mb-1">Method</Text>
+          <Text className="txt-medium-plus text-ui-fg-base mb-1">Phương thức</Text>
           <Text className="txt-medium text-ui-fg-subtle">
             {(order.shipping_methods?.[0] as { name?: string })?.name} (
             {convertToLocale({

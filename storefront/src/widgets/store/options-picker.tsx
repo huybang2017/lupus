@@ -6,6 +6,7 @@ import { ChevronDownMini } from "@/widgets/common/icons"
 import { apiFetch } from "@/shared/api/client"
 import { HttpTypes } from "@/shared/types/http"
 import clsx from "clsx"
+import { isElectronicBookValue } from "@/shared/utils/book-format"
 
 type OptionsPickerProps = {
   selectedValueIds: string[]
@@ -57,14 +58,14 @@ const OptionsPicker = ({
     <div className="flex flex-col gap-y-4">
       <div className="flex items-center justify-between px-1">
         <span className="txt-compact-small-plus text-ui-fg-subtle">
-          Options
+          Định dạng & ngôn ngữ
         </span>
       </div>
       <Accordion.Root
         type="multiple"
         value={openItems}
         onValueChange={(values) => setOpenItems(values as string[])}
-        className="flex flex-col gap-y-3 pr-6"
+        className="flex flex-col gap-y-2"
       >
         {options.map((option) => {
           const values =
@@ -75,7 +76,7 @@ const OptionsPicker = ({
               }))
               .filter(
                 (value): value is { id: string; label: string } =>
-                  !!value.id && !!value.label
+                  !!value.id && !!value.label && !isElectronicBookValue(value.label)
               ) || []
 
           if (!values.length) {
@@ -106,7 +107,7 @@ const OptionsPicker = ({
                 <Accordion.Trigger className="flex w-full items-center justify-between py-3 text-left">
                   <div className="flex items-center gap-2">
                     <span className="txt-compact-small-plus text-ui-fg-base">
-                      {option.title || "Option"}
+                      {option.title || "Tùy chọn"}
                     </span>
                     <span className="txt-compact-small-plus text-ui-fg-muted">
                       ({selectedCount})
@@ -134,11 +135,11 @@ const OptionsPicker = ({
                         key={value.id}
                         onClick={() => toggleValue(value.id)}
                         className={clsx(
-                          "border-ui-border-base border text-small-regular h-10 rounded-rounded px-3 flex items-center transition-colors duration-150",
+                          "flex h-9 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150",
                           {
-                            "border-ui-border-interactive text-ui-fg-base":
+                            "border-brand-forest bg-brand-forest text-white":
                               isSelected,
-                            "text-ui-fg-muted hover:text-ui-fg-base":
+                            "border-brand-sand bg-brand-paper text-brand-ink/60 hover:border-brand-moss hover:text-brand-forest":
                               !isSelected,
                           }
                         )}

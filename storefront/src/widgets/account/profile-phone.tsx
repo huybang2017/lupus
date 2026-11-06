@@ -46,8 +46,8 @@ const ProfilePhone: React.FC<MyInformationProps> = ({ customer }) => {
   return (
     <form action={formAction} className="w-full">
       <AccountInfo
-        label="Phone"
-        currentInfo={`${customer.phone}`}
+        label="Số điện thoại"
+        currentInfo={customer.phone || "Chưa cập nhật"}
         isSuccess={successState}
         isError={!!state.error}
         errorMessage={state.error || undefined}
@@ -56,7 +56,7 @@ const ProfilePhone: React.FC<MyInformationProps> = ({ customer }) => {
       >
         <div className="grid grid-cols-1 gap-y-2">
           <Input
-            label="Phone"
+            label="Số điện thoại"
             name="phone"
             type="tel"
             autoComplete="phone"

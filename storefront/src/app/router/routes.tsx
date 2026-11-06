@@ -15,6 +15,7 @@ import { CheckoutPage } from "@/pages/checkout/checkout-page"
 import { GlobalNotFoundPage } from "@/pages/error/global-not-found-page"
 import { NotFoundPage } from "@/pages/error/not-found-page"
 import { OrderConfirmedPage } from "@/pages/order/order-confirmed-page"
+import { PaymentSuccessPage } from "@/pages/order/payment-success-page"
 import { TransferAcceptPage } from "@/pages/order/transfer-accept-page"
 import { TransferDeclinePage } from "@/pages/order/transfer-decline-page"
 import { TransferPage } from "@/pages/order/transfer-page"
@@ -45,6 +46,7 @@ export function AppRoutes() {
               <Route path="orders" element={<AccountOrdersPage />} />
               <Route path="orders/details/:id" element={<AccountOrderDetailPage />} />
             </Route>
+            <Route path="order/:id/payment-success" element={<PaymentSuccessPage />} />
             <Route path="order/:id/confirmed" element={<OrderConfirmedPage />} />
             <Route path="order/:id/transfer/:token" element={<TransferPage />} />
             <Route path="order/:id/transfer/:token/accept" element={<TransferAcceptPage />} />

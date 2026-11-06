@@ -105,7 +105,7 @@ async function completeLogin(email: string, password: string): Promise<CustomerA
   }
 
   if (result.mfa_required || !result.token) {
-    return { state: "error", error: "Authentication requires additional steps that aren't supported." }
+    return { state: "error", error: "Tài khoản yêu cầu bước xác thực bổ sung hiện chưa được hỗ trợ." }
   }
 
   const token = result.token
@@ -128,7 +128,7 @@ async function completeLogin(email: string, password: string): Promise<CustomerA
 
   const customer = await retrieveCustomer()
   if (!customer) {
-    return { state: "error", error: "Could not load the customer account." }
+    return { state: "error", error: "Không thể tải thông tin tài khoản khách hàng." }
   }
 
   try {
@@ -209,7 +209,7 @@ export const updateCustomerAddress = async (currentState: Record<string, unknown
   const addressId = (currentState.addressId as string) || (formData.get("addressId") as string)
 
   if (!addressId) {
-    return { success: false, error: "Address ID is required" }
+    return { success: false, error: "Thiếu mã địa chỉ cần cập nhật." }
   }
 
   const address = readAddress(formData)

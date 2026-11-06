@@ -21,6 +21,8 @@ type MobileActionsProps = {
   isAdding?: boolean
   show: boolean
   optionsDisabled: boolean
+  unavailableValuesForOption: (optionId: string) => string[]
+  quantity: number
 }
 
 const MobileActions: React.FC<MobileActionsProps> = ({
@@ -33,6 +35,8 @@ const MobileActions: React.FC<MobileActionsProps> = ({
   isAdding,
   show,
   optionsDisabled,
+  unavailableValuesForOption,
+  quantity,
 }) => {
   const { state, open, close } = useToggleState()
 
@@ -111,7 +115,7 @@ const MobileActions: React.FC<MobileActionsProps> = ({
                   <span>
                     {variant
                       ? Object.values(options).join(" / ")
-                      : "Select Options"}
+                      : "Chọn phiên bản"}
                   </span>
                   <ChevronDown />
                 </div>
@@ -124,10 +128,10 @@ const MobileActions: React.FC<MobileActionsProps> = ({
                 data-testid="mobile-cart-button"
               >
                 {!variant
-                  ? "Select variant"
+                  ? "Chọn phiên bản"
                   : !inStock
-                  ? "Out of stock"
-                  : "Add to cart"}
+                  ? "Tạm hết hàng"
+                  : `Thêm ${quantity} vào giỏ`}
               </Button>
             </div>
           </div>
@@ -183,6 +187,7 @@ const MobileActions: React.FC<MobileActionsProps> = ({
                                 updateOption={updateOptions}
                                 title={option.title ?? ""}
                                 disabled={optionsDisabled}
+                                unavailableValues={unavailableValuesForOption(option.id)}
                               />
                             </div>
                           )

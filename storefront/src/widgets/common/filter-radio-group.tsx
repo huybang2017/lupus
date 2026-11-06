@@ -1,4 +1,3 @@
-import { EllipseMiniSolid } from "@/widgets/common/icons"
 import { Label, RadioGroup, Text, clx } from "@/widgets/common/ui"
 type FilterRadioGroupProps = {
   title: string
@@ -19,36 +18,36 @@ const FilterRadioGroup = ({
   "data-testid": dataTestId,
 }: FilterRadioGroupProps) => {
   return (
-    <div className="flex gap-x-3 flex-col gap-y-3">
-      <Text className="txt-compact-small-plus text-ui-fg-muted">{title}</Text>
-      <RadioGroup data-testid={dataTestId}>
+    <div className="flex flex-col gap-y-3">
+      <Text className="text-xs font-semibold uppercase tracking-[0.12em] text-brand-ink/50">{title}</Text>
+      <RadioGroup className="gap-1" data-testid={dataTestId}>
         {items?.map((i) => (
           <div
             key={i.value}
-            className={clx("flex gap-x-2 items-center", {
-              "ml-[-23px]": i.value === value,
-            })}
+            className="relative flex items-center"
           >
-            {i.value === value && <EllipseMiniSolid />}
             <RadioGroup.Item
               checked={i.value === value}
               onChange={() => handleChange(i.value)}
-              className="hidden peer"
+              className="peer sr-only"
               id={i.value}
               value={i.value}
             />
             <Label
               htmlFor={i.value}
               className={clx(
-                "!txt-compact-small !transform-none text-ui-fg-subtle hover:cursor-pointer",
+                "w-full !transform-none cursor-pointer rounded-xl px-3 py-2.5 text-sm font-medium text-brand-ink/60 transition-colors hover:bg-brand-mist hover:text-brand-forest peer-focus-visible:ring-2 peer-focus-visible:ring-brand-clay",
                 {
-                  "text-ui-fg-base": i.value === value,
+                  "bg-brand-mist text-brand-forest": i.value === value,
                 }
               )}
               data-testid="radio-label"
               data-active={i.value === value}
             >
-              {i.label}
+              <span className="flex items-center gap-2">
+                <span className={clx("h-1.5 w-1.5 rounded-full bg-brand-sand", { "bg-brand-clay": i.value === value })} />
+                {i.label}
+              </span>
             </Label>
           </div>
         ))}

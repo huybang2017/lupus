@@ -33,10 +33,12 @@ function fmtMoney(v: unknown, currency?: string) {
   if (!Number.isFinite(n)) return String(v);
   const code = String(currency || "EUR").toUpperCase();
   try {
-    return new Intl.NumberFormat("en-US", {
+    const formatter = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: code,
-    }).format(n / 100);
+    });
+    const digits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+    return formatter.format(n / 10 ** digits);
   } catch {
     return `${(n / 100).toFixed(2)} ${code}`;
   }
@@ -203,9 +205,9 @@ export function OrderDetailPage() {
     const amount = fmtMoney(pending, currency);
     if (
       !(await confirm({
-        title: "Mark as paid",
-        description: `Payment of ${amount} will be marked as paid.`,
-        confirmLabel: "Confirm",
+        title: "Xác nhận đã nhận tiền",
+        description: `Khoản thanh toán ${amount} sẽ được ghi nhận là đã thanh toán.`,
+        confirmLabel: "Xác nhận",
         variant: "primary",
       }))
     )
@@ -703,7 +705,7 @@ export function OrderDetailPage() {
                       disabled={busy}
                       onClick={markPaid}
                     >
-                      Mark as paid
+                      Xác nhận đã nhận tiền
                     </button>
                   ) : null}
                   {pending < 0 ? (

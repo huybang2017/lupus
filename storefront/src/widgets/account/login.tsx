@@ -14,20 +14,21 @@ const Login = ({ setCurrentView }: Props) => {
 
   return (
     <div
-      className="max-w-sm w-full flex flex-col items-center"
+      className="flex w-full max-w-md flex-col items-center rounded-2xl border border-brand-gold/40 bg-brand-paper p-6 text-brand-ink shadow-sm small:p-10"
       data-testid="login-page"
     >
-      <h1 className="text-large-semi uppercase mb-6">Welcome back</h1>
-      <p className="text-center text-base-regular text-ui-fg-base mb-8">
-        Sign in to access an enhanced shopping experience.
+      <span className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-brand-clay">Lupus Books</span>
+      <h1 className="mb-4 font-serif text-3xl font-semibold text-brand-forest">Mừng bạn trở lại</h1>
+      <p className="mb-8 text-center text-base-regular text-brand-ink/70">
+        Đăng nhập để tiếp tục hành trình đọc và theo dõi những đơn sách của bạn.
       </p>
       {message?.state === "verification_required" && (
         <div
           className="w-full mb-6 text-center text-base-regular text-ui-fg-base bg-ui-bg-subtle border border-ui-border-base rounded-rounded p-4"
           data-testid="login-verification-message"
         >
-          We sent a verification link to <strong>{message.email}</strong>.
-          Please verify your email, then sign in.
+          Chúng tôi đã gửi liên kết xác minh đến <strong>{message.email}</strong>.
+          Vui lòng xác minh email rồi đăng nhập.
         </div>
       )}
       <form className="w-full" action={formAction}>
@@ -36,13 +37,13 @@ const Login = ({ setCurrentView }: Props) => {
             label="Email"
             name="email"
             type="email"
-            title="Enter a valid email address."
+            title="Vui lòng nhập địa chỉ email hợp lệ."
             autoComplete="email"
             required
             data-testid="email-input"
           />
           <Input
-            label="Password"
+            label="Mật khẩu"
             name="password"
             type="password"
             autoComplete="current-password"
@@ -55,17 +56,17 @@ const Login = ({ setCurrentView }: Props) => {
           data-testid="login-error-message"
         />
         <SubmitButton data-testid="sign-in-button" className="w-full mt-6">
-          Sign in
+          Đăng nhập
         </SubmitButton>
       </form>
-      <span className="text-center text-ui-fg-base text-small-regular mt-6">
-        Not a member?{" "}
+      <span className="mt-6 text-center text-small-regular text-brand-ink/70">
+        Chưa có tài khoản?{" "}
         <button
           onClick={() => setCurrentView(LOGIN_VIEW.REGISTER)}
-          className="underline"
+          className="font-semibold text-brand-clay underline underline-offset-4"
           data-testid="register-button"
         >
-          Join us
+          Đăng ký ngay
         </button>
         .
       </span>

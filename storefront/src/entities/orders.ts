@@ -18,7 +18,7 @@ export const createTransferRequest = async (_state: TransferState, formData: For
   const id = formData.get("order_id") as string
 
   if (!id) {
-    return { success: false, error: "Order ID is required", order: null }
+    return { success: false, error: "Thiếu mã đơn hàng.", order: null }
   }
 
   return apiFetch<{ order: HttpTypes.StoreOrder }>(`/store/orders/${id}/transfer/request`, { method: "POST", body: {} })

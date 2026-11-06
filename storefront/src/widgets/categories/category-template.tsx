@@ -1,6 +1,5 @@
 import { notFound } from "@/shared/navigation/router"
 
-import InteractiveLink from "@/widgets/common/interactive-link"
 import RefinementList from "@/widgets/store/refinement-list"
 import { SortOptions } from "@/widgets/store/sort-products"
 import PaginatedProducts from "@/widgets/store/paginated-products"
@@ -37,60 +36,66 @@ export default function CategoryTemplate({
 
   getParents(category)
 
+  const getCategoryIds = (current: HttpTypes.StoreProductCategory): string[] => [
+    current.id,
+    ...(current.category_children ?? []).flatMap(getCategoryIds),
+  ]
+  const categoryIds = getCategoryIds(category)
+
   return (
-    <div
-      className="flex flex-col small:flex-row small:items-start py-6 content-container"
-      data-testid="category-container"
-    >
-      <RefinementList
-        sortBy={sort}
-        data-testid="sort-by-container"
-        hideOptionsPicker
-      />
-      <div className="w-full">
-        <div className="flex flex-row mb-8 text-2xl-semi gap-4">
+    <main data-testid="category-container">
+      <div className="border-b border-brand-sand/70 bg-brand-paper">
+        <div className="content-container py-12 sm:py-16">
+          <div className="mb-5 flex flex-wrap items-center gap-2 text-xs text-brand-ink/65">
           {parents &&
-            parents.map((parent) => (
-              <span key={parent.id} className="text-ui-fg-subtle">
+            [...parents].reverse().map((parent) => (
+              <span key={parent.id} className="flex items-center gap-2">
                 <LocalizedClientLink
-                  className="mr-4 hover:text-black"
+                  className="transition-colors hover:text-brand-clay"
                   href={`/categories/${parent.handle}`}
                   data-testid="sort-by-link"
                 >
                   {parent.name}
                 </LocalizedClientLink>
-                /
+                <span>/</span>
               </span>
             ))}
-          <h1 data-testid="category-page-title">{category.name}</h1>
-        </div>
+          </div>
+          <p className="eyebrow">Thể loại</p>
+          <h1 className="mt-3 font-display text-4xl font-semibold tracking-tight text-brand-forest sm:text-5xl" data-testid="category-page-title">{category.name}</h1>
         {category.description && (
-          <div className="mb-8 text-base-regular">
+          <div className="mt-4 max-w-2xl text-sm leading-7 text-brand-ink/60 sm:text-base">
             <p>{category.description}</p>
           </div>
         )}
         {category.category_children && (
-          <div className="mb-8 text-base-large">
-            <ul className="grid grid-cols-1 gap-2">
+          <div className="mt-7">
+            <ul className="flex flex-wrap gap-2">
               {category.category_children?.map((c) => (
                 <li key={c.id}>
-                  <InteractiveLink href={`/categories/${c.handle}`}>
+                  <LocalizedClientLink className="inline-flex rounded-full border border-brand-sand bg-brand-cream px-4 py-2 text-xs font-semibold text-brand-forest transition-colors hover:border-brand-forest" href={`/categories/${c.handle}`}>
                     {c.name}
-                  </InteractiveLink>
+                  </LocalizedClientLink>
                 </li>
               ))}
             </ul>
           </div>
         )}
+        </div>
+      </div>
+      <div className="content-container flex flex-col items-start gap-8 py-10 lg:flex-row lg:gap-12 lg:py-14">
+        <RefinementList sortBy={sort} data-testid="sort-by-container" hideOptionsPicker />
+        <div className="w-full min-w-0">
         <PaginatedProducts
           sortBy={sort}
           page={pageNumber}
-          categoryId={category.id}
+          categoryIds={categoryIds}
           countryCode={countryCode}
           optionValueIds={optionValueIds}
           numberOfProducts={category.products?.length ?? 8}
         />
       </div>
-    </div>
+      </div>
+    </main>
   )
 }

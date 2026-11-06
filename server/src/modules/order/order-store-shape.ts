@@ -24,11 +24,14 @@ function addressShape(row: Row | undefined): Row | null {
 }
 
 export async function shapeStoreOrder(order: Row, items: Row[]): Promise<Row> {
-  const [addresses, methods, payments, fulfillments, info] = await Promise.all([
+  const [addresses, methods, payments, sessions, fulfillments, info] = await Promise.all([
     pool.query(`SELECT * FROM order_address WHERE order_id=$1`, [order.id]),
     pool.query(`SELECT * FROM order_shipping_method WHERE order_id=$1 ORDER BY created_at`, [order.id]),
     order.payment_collection_id
       ? pool.query(`SELECT * FROM payment WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`, [order.payment_collection_id])
+      : Promise.resolve({ rows: [] as Row[] }),
+    order.payment_collection_id
+      ? pool.query(`SELECT * FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at`, [order.payment_collection_id])
       : Promise.resolve({ rows: [] as Row[] }),
     pool.query(`SELECT shipped_at, delivered_at FROM fulfillment WHERE order_id=$1 AND deleted_at IS NULL AND canceled_at IS NULL`, [order.id]),
     items.length
@@ -78,7 +81,14 @@ export async function shapeStoreOrder(order: Row, items: Row[]): Promise<Row> {
     billing_address: addressShape(addresses.rows.find((a: Row) => a.kind === "billing")),
     shipping_methods: shapedMethods,
     payment_collections: order.payment_collection_id
-      ? [{ id: order.payment_collection_id, status: order.payment_status ?? null, currency_code: order.currency_code, amount: Number(order.total), payments: payments.rows }]
+      ? [{
+          id: order.payment_collection_id,
+          status: order.payment_status ?? null,
+          currency_code: order.currency_code,
+          amount: Number(order.total),
+          payments: payments.rows,
+          payment_sessions: sessions.rows,
+        }]
       : [],
     fulfillment_status: fulfillmentStatus,
     item_subtotal: shapedItems.reduce((s, i) => s + i.subtotal, 0),

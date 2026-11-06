@@ -89,7 +89,7 @@ cartRouter.post("/store/carts/:id/line-items", async (req, res, next) => {
 
 cartRouter.post("/store/carts/:id/line-items/:lineId", async (req, res, next) => {
   try {
-    const { quantity } = z.object({ quantity: z.number().int() }).parse(req.body)
+    const { quantity } = z.object({ quantity: z.number().int().nonnegative() }).parse(req.body)
     res.json({ cart: await cartService.updateItem(req.params.id, req.params.lineId, quantity) })
   } catch (e) {
     next(e)

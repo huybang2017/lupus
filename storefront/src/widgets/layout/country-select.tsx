@@ -31,7 +31,7 @@ const CountrySelect = ({ toggleState, regions }: CountrySelectProps) => {
   const { countryCode } = useParams()
   const currentPath = usePathname().split(`/${countryCode}`)[1]
 
-  const { state, close } = toggleState
+  const { close } = toggleState
 
   const options = useMemo(() => {
     return regions
@@ -70,9 +70,9 @@ const CountrySelect = ({ toggleState, regions }: CountrySelectProps) => {
             : undefined
         }
       >
-        <ListboxButton className="py-1 w-full">
+        <ListboxButton className="w-full rounded-lg py-1 text-left">
           <div className="txt-compact-small flex items-start gap-x-2">
-            <span>Shipping to:</span>
+            <span>Giao đến:</span>
             {current && (
               <span className="txt-compact-small flex items-center gap-x-2">
                 <ReactCountryFlag
@@ -90,22 +90,20 @@ const CountrySelect = ({ toggleState, regions }: CountrySelectProps) => {
         </ListboxButton>
         <div className="flex relative w-full min-w-[320px]">
           <Transition
-            show={state}
             as={Fragment}
             leave="transition ease-in duration-150"
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
             <ListboxOptions
-              className="absolute -bottom-[calc(100%-36px)] left-0 xsmall:left-auto xsmall:right-0 max-h-[442px] overflow-y-scroll z-[900] bg-white drop-shadow-md text-small-regular uppercase text-black no-scrollbar rounded-rounded w-full"
-              static
+              className="no-scrollbar absolute -bottom-[calc(100%-36px)] left-0 z-[900] max-h-[442px] w-full overflow-y-scroll rounded-xl border border-brand-sand bg-brand-paper text-small-regular text-brand-ink shadow-xl xsmall:left-auto xsmall:right-0"
             >
               {options?.map((o, index) => {
                 return (
                   <ListboxOption
                     key={index}
                     value={o}
-                    className="py-2 hover:bg-gray-200 px-3 cursor-pointer flex items-center gap-x-2"
+                    className="flex cursor-pointer items-center gap-x-2 px-3 py-2 hover:bg-brand-mist"
                   >
                     <ReactCountryFlag
                       svg

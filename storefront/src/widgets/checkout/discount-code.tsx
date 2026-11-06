@@ -53,17 +53,17 @@ const DiscountCode: React.FC<DiscountCodeProps> = ({ cart }) => {
   }
 
   return (
-    <div className="w-full bg-white flex flex-col">
+    <div className="w-full bg-transparent flex flex-col">
       <div className="txt-medium">
         <form action={(a) => addPromotionCode(a)} className="w-full mb-5">
           <Label className="flex gap-x-1 my-2 items-center">
             <button
               onClick={() => setIsOpen(!isOpen)}
               type="button"
-              className="txt-medium text-ui-fg-interactive hover:text-ui-fg-interactive-hover"
+              className="txt-medium font-medium text-brand-clay hover:text-brand-clay-dark"
               data-testid="add-discount-button"
             >
-              Add Promotion Code(s)
+              Thêm mã ưu đãi
             </button>
 
             {/* <Tooltip content="You can add multiple promotion codes">
@@ -75,10 +75,12 @@ const DiscountCode: React.FC<DiscountCodeProps> = ({ cart }) => {
             <>
               <div className="flex w-full gap-x-2">
                 <Input
-                  className="size-full"
+                  className="size-full border-brand-gold/50 bg-brand-paper"
                   id="promotion-input"
                   name="code"
                   type="text"
+                  placeholder="Nhập mã ưu đãi"
+                  aria-label="Mã ưu đãi"
                   autoFocus={false}
                   data-testid="discount-input"
                 />
@@ -86,7 +88,7 @@ const DiscountCode: React.FC<DiscountCodeProps> = ({ cart }) => {
                   variant="secondary"
                   data-testid="discount-apply-button"
                 >
-                  Apply
+                  Áp dụng
                 </SubmitButton>
               </div>
 
@@ -101,8 +103,8 @@ const DiscountCode: React.FC<DiscountCodeProps> = ({ cart }) => {
         {promotions.length > 0 && (
           <div className="w-full flex items-center">
             <div className="flex flex-col w-full">
-              <Heading className="txt-medium mb-2">
-                Promotion(s) applied:
+              <Heading className="txt-medium mb-2 text-brand-ink">
+                Mã ưu đãi đã áp dụng:
               </Heading>
 
               {promotions.map((promotion) => {
@@ -157,7 +159,7 @@ const DiscountCode: React.FC<DiscountCodeProps> = ({ cart }) => {
                       >
                         <Trash size={14} />
                         <span className="sr-only">
-                          Remove discount code from order
+                          Xóa mã ưu đãi khỏi đơn hàng
                         </span>
                       </button>
                     )}

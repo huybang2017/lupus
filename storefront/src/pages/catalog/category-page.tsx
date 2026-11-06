@@ -7,6 +7,7 @@ import { notFound, useSearchParams } from "@/shared/navigation/router"
 import { parseOptionValueIds } from "@/shared/utils/product-option-filters"
 import CategoryTemplate from "@/widgets/categories/category-template"
 import { SortOptions } from "@/widgets/store/sort-products"
+import { PageLoadError, PageLoading } from "@/widgets/common/page-state"
 
 export function CategoryPage() {
   const params = useParams()
@@ -14,11 +15,14 @@ export function CategoryPage() {
   const { countryCode } = useCountryRegion()
   const searchParams = useSearchParams()
 
-  const { data: category, loading } = useAsync(() => getCategoryByHandle(path), [path.join("/")])
-  usePageTitle(category ? `${category.name} | Lupus Store` : undefined, category ? (category.description ?? `${category.name} category.`) : undefined)
+  const { data: category, error, loading, reload } = useAsync(() => getCategoryByHandle(path), [path.join("/")])
+  usePageTitle(category ? `${category.name} | Lupus Books` : undefined, category ? (category.description ?? `Khám phá sách ${category.name} tại Lupus Books.`) : undefined)
 
   if (loading) {
-    return null
+    return <PageLoading message="Đang mở kệ sách theo chủ đề…" />
+  }
+  if (error) {
+    return <PageLoadError title="Chưa thể tải chủ đề sách" onRetry={reload} />
   }
   if (!category) {
     return notFound()

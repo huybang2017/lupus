@@ -7,17 +7,21 @@ import { notFound, useSearchParams } from "@/shared/navigation/router"
 import { parseOptionValueIds } from "@/shared/utils/product-option-filters"
 import CollectionTemplate from "@/widgets/collections/collection-template"
 import { SortOptions } from "@/widgets/store/sort-products"
+import { PageLoadError, PageLoading } from "@/widgets/common/page-state"
 
 export function CollectionPage() {
   const { handle = "" } = useParams()
   const { countryCode } = useCountryRegion()
   const searchParams = useSearchParams()
 
-  const { data: collection, loading } = useAsync(() => getCollectionByHandle(handle), [handle])
-  usePageTitle(collection ? `${collection.title} | Lupus Store` : undefined, collection ? `${collection.title} collection` : undefined)
+  const { data: collection, error, loading, reload } = useAsync(() => getCollectionByHandle(handle), [handle])
+  usePageTitle(collection ? `${collection.title} | Lupus Books` : undefined, collection ? `Tuyển tập ${collection.title} từ Lupus Books.` : undefined)
 
   if (loading) {
-    return null
+    return <PageLoading message="Đang sắp xếp tuyển tập sách…" />
+  }
+  if (error) {
+    return <PageLoadError title="Chưa thể tải tuyển tập" onRetry={reload} />
   }
   if (!collection) {
     return notFound()

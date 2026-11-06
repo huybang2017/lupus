@@ -2,6 +2,7 @@ import { CreditCard } from "@/widgets/common/icons"
 import Bancontact from "@/widgets/common/icons/bancontact"
 import Ideal from "@/widgets/common/icons/ideal"
 import PayPal from "@/widgets/common/icons/paypal"
+import { Landmark, QrCode } from "lucide-react"
 import React from "react"
 
 /* Map of payment provider_id to their title and icon. Add in any payment providers you want to use. */
@@ -31,6 +32,14 @@ export const paymentInfoMap: Record<string, { title: string; icon: React.JSX.Ele
     title: "Manual Payment",
     icon: <CreditCard />,
   },
+  pp_vietqr: {
+    title: "Chuyển khoản VietQR",
+    icon: <QrCode size={18} aria-hidden="true" />,
+  },
+  pp_demo_bank: {
+    title: "Thanh toán thẻ ngân hàng",
+    icon: <Landmark size={18} aria-hidden="true" />,
+  },
   // Add more payment providers here
 }
 
@@ -42,3 +51,7 @@ export const isStripeLike = (providerId?: string) => {
 export const isManual = (providerId?: string) => {
   return providerId?.startsWith("pp_system_default") || providerId === "manual"
 }
+
+export const isVietQR = (providerId?: string) => providerId === "pp_vietqr"
+
+export const isDemoBank = (providerId?: string) => providerId === "pp_demo_bank"

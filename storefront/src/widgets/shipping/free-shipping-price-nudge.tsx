@@ -8,7 +8,7 @@ import {
   StorePrice,
 } from "@/shared/types/http"
 import LocalizedClientLink from "@/widgets/common/localized-client-link"
-import { Button, clx } from "@/widgets/common/ui"
+import { clx } from "@/widgets/common/ui"
 import { useState } from "react"
 import { StoreFreeShippingPrice } from "@/shared/types/ui"
 
@@ -141,7 +141,7 @@ function FreeShippingInline({
   }
 }) {
   return (
-    <div className="bg-neutral-100 p-2 rounded-lg border">
+    <div className="rounded-xl border border-brand-sand bg-brand-cream p-3">
       <div className="space-y-1.5">
         <div className="flex justify-between text-xs text-neutral-600">
           <div>
@@ -149,10 +149,10 @@ function FreeShippingInline({
               <div className="flex items-center gap-1.5">
                 {" "}
                 <CheckCircleSolid className="text-green-500 inline-block" />{" "}
-                Free Shipping unlocked!
+                Bạn đã được miễn phí vận chuyển!
               </div>
             ) : (
-              `Unlock Free Shipping`
+              `Sắp được miễn phí vận chuyển`
             )}
           </div>
 
@@ -161,14 +161,14 @@ function FreeShippingInline({
               "opacity-0 invisible": price.target_reached,
             })}
           >
-            Only{" "}
+            Còn{" "}
             <span className="text-neutral-950">
               {convertToLocale({
                 amount: price.target_remaining,
                 currency_code: cart.currency_code,
               })}
             </span>{" "}
-            away
+            nữa
           </div>
         </div>
         <div className="flex justify-between gap-1">
@@ -200,7 +200,7 @@ function FreeShippingPopup({
   return (
     <div
       className={clx(
-        "fixed bottom-5 right-5 flex flex-col items-end gap-2 transition-all duration-500 ease-in-out z-10",
+        "fixed bottom-24 left-4 right-4 z-[60] flex flex-col items-end gap-2 transition-all duration-500 ease-in-out lg:bottom-4 lg:left-auto lg:right-5",
         {
           "opacity-0 invisible delay-1000": price.target_reached,
           "opacity-0 invisible": isClosed,
@@ -209,15 +209,16 @@ function FreeShippingPopup({
       )}
     >
       <div>
-        <Button
-          className="rounded-full bg-neutral-900 shadow-none outline-none border-none text-[15px] p-2"
+        <button
+          className="grid h-9 w-9 place-items-center rounded-full bg-brand-forest text-white shadow-book"
           onClick={() => setIsClosed(true)}
+          aria-label="Đóng thông báo miễn phí vận chuyển"
         >
           <XMark />
-        </Button>
+        </button>
       </div>
 
-      <div className="w-[400px] bg-black text-white p-6 rounded-lg ">
+      <div className="w-full rounded-2xl bg-brand-forest p-5 text-white shadow-2xl sm:w-[400px] sm:p-6">
         <div className="pb-4">
           <div className="space-y-3">
             <div className="flex justify-between text-[15px] text-neutral-400">
@@ -225,10 +226,10 @@ function FreeShippingPopup({
                 {price.target_reached ? (
                   <div className="flex items-center gap-1.5">
                     <CheckCircleSolid className="text-green-500 inline-block" />{" "}
-                    Free Shipping unlocked!
+                    Bạn đã được miễn phí vận chuyển!
                   </div>
                 ) : (
-                  `Unlock Free Shipping`
+                  `Sắp được miễn phí vận chuyển`
                 )}
               </div>
 
@@ -237,14 +238,14 @@ function FreeShippingPopup({
                   "opacity-0 invisible": price.target_reached,
                 })}
               >
-                Only{" "}
+                Còn{" "}
                 <span className="text-white">
                   {convertToLocale({
                     amount: price.target_remaining,
                     currency_code: cart.currency_code,
                   })}
                 </span>{" "}
-                away
+                nữa
               </div>
             </div>
             <div className="flex justify-between gap-1">
@@ -267,14 +268,14 @@ function FreeShippingPopup({
             className="rounded-2xl bg-transparent shadow-none outline-none border-[1px] border-white text-[15px] py-2.5 px-4"
             href="/cart"
           >
-            View cart
+            Xem giỏ sách
           </LocalizedClientLink>
 
           <LocalizedClientLink
             className="flex-grow rounded-2xl bg-white text-neutral-950 shadow-none outline-none border-[1px] border-white text-[15px] py-2.5 px-4 text-center"
             href="/store"
           >
-            View products
+            Chọn thêm sách
           </LocalizedClientLink>
         </div>
       </div>

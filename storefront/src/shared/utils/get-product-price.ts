@@ -1,6 +1,7 @@
 import { HttpTypes } from "@/shared/types/http"
 import { getPercentageDiff } from "@/shared/utils/get-percentage-diff"
 import { convertToLocale } from "@/shared/formatting/money"
+import { isElectronicBookVariant } from "@/shared/utils/book-format"
 
 type VariantWithPrice = HttpTypes.StoreProductVariant & {
   calculated_price?: {
@@ -37,15 +38,17 @@ export const getPricesForVariant = (variant: VariantWithPrice) => {
 
 export function getProductPrice({ product, variantId }: { product: HttpTypes.StoreProduct; variantId?: string }) {
   if (!product || !product.id) {
-    throw new Error("No product provided")
+    throw new Error("Thiếu thông tin sách để tính giá.")
   }
 
+  const visibleVariants = product.variants?.filter((variant) => !isElectronicBookVariant(variant)) ?? []
+
   const cheapestPrice = () => {
-    if (!product || !product.variants?.length) {
+    if (!visibleVariants.length) {
       return null
     }
 
-    const cheapestVariant = (product.variants as VariantWithPrice[])
+    const cheapestVariant = (visibleVariants as VariantWithPrice[])
       .filter((v) => !!v.calculated_price)
       .sort((a, b) => (a.calculated_price?.calculated_amount ?? 0) - (b.calculated_price?.calculated_amount ?? 0))[0]
 
@@ -57,7 +60,7 @@ export function getProductPrice({ product, variantId }: { product: HttpTypes.Sto
       return null
     }
 
-    const variant = product.variants?.find((v) => v.id === variantId || v.sku === variantId) as VariantWithPrice | undefined
+    const variant = visibleVariants.find((v) => v.id === variantId || v.sku === variantId) as VariantWithPrice | undefined
 
     if (!variant) {
       return null

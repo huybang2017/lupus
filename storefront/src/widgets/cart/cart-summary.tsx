@@ -1,5 +1,5 @@
 
-import { Button, Heading } from "@/widgets/common/ui"
+import { Heading } from "@/widgets/common/ui"
 
 import CartTotals from "@/widgets/common/cart-totals"
 import Divider from "@/widgets/common/divider"
@@ -25,18 +25,19 @@ const Summary = ({ cart }: SummaryProps) => {
   const step = getCheckoutStep(cart)
 
   return (
-    <div className="flex flex-col gap-y-4">
-      <Heading level="h2" className="text-[2rem] leading-[2.75rem]">
-        Summary
+    <div className="flex flex-col gap-y-4 rounded-2xl border border-brand-gold/40 bg-brand-paper p-6 shadow-book">
+      <Heading level="h2" className="font-editorial text-[2rem] leading-[2.75rem] text-brand-ink">
+        Tóm tắt đơn hàng
       </Heading>
       <DiscountCode cart={cart} />
-      <Divider />
+      <Divider className="border-brand-gold/30" />
       <CartTotals totals={cart} />
       <LocalizedClientLink
         href={"/checkout?step=" + step}
+        className="inline-flex h-11 w-full items-center justify-center rounded-full bg-brand-forest px-5 text-sm font-semibold text-white transition-colors hover:bg-brand-forest-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-clay"
         data-testid="checkout-button"
       >
-        <Button className="w-full h-10">Go to checkout</Button>
+        Tiến hành thanh toán
       </LocalizedClientLink>
     </div>
   )

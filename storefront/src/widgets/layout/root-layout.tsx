@@ -1,5 +1,5 @@
-import { useEffect } from "react"
-import { Outlet, useNavigate } from "react-router-dom"
+import { useEffect, useLayoutEffect } from "react"
+import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { retrieveCart } from "@/entities/cart"
 import { retrieveCustomer } from "@/entities/customer"
 import { registerNavigator } from "@/shared/navigation/navigation"
@@ -8,6 +8,20 @@ import ErrorBoundary from "@/widgets/common/error-boundary"
 /** Mounted once: lets data-layer code (server-action stand-ins) navigate, and loads the cart and customer. */
 export function RootLayout() {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    const previousScrollRestoration = window.history.scrollRestoration
+    window.history.scrollRestoration = "manual"
+
+    return () => {
+      window.history.scrollRestoration = previousScrollRestoration
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" })
+  }, [location.key])
 
   useEffect(() => {
     registerNavigator((to, opts) => navigate(to, opts))

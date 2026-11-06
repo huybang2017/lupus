@@ -151,21 +151,21 @@ const Shipping: React.FC<ShippingProps> = ({
   }, [isOpen])
 
   return (
-    <div className="bg-white">
+    <div className="rounded-2xl border border-brand-gold/35 bg-brand-paper p-5 shadow-book sm:p-7">
       <div className="flex flex-row items-center justify-between mb-6">
         <Heading
           level="h2"
           className={clx(
-            "flex flex-row text-3xl-regular gap-x-2 items-baseline",
+            "font-editorial flex flex-row text-3xl-regular gap-x-2 items-baseline text-brand-ink",
             {
               "opacity-50 pointer-events-none select-none":
                 !isOpen && cart.shipping_methods?.length === 0,
             }
           )}
         >
-          Delivery
+          Giao hàng
           {!isOpen && (cart.shipping_methods?.length ?? 0) > 0 && (
-            <CheckCircleSolid />
+            <CheckCircleSolid className="text-brand-forest" />
           )}
         </Heading>
         {!isOpen &&
@@ -175,10 +175,10 @@ const Shipping: React.FC<ShippingProps> = ({
             <Text>
               <button
                 onClick={handleEdit}
-                className="text-ui-fg-interactive hover:text-ui-fg-interactive-hover"
+                className="font-medium text-brand-clay hover:text-brand-clay-dark"
                 data-testid="edit-delivery-button"
               >
-                Edit
+                Chỉnh sửa
               </button>
             </Text>
           )}
@@ -187,15 +187,20 @@ const Shipping: React.FC<ShippingProps> = ({
         <>
           <div className="grid">
             <div className="flex flex-col">
-              <span className="font-medium txt-medium text-ui-fg-base">
-                Shipping method
+              <span className="font-medium txt-medium text-brand-ink">
+                Phương thức giao hàng
               </span>
-              <span className="mb-4 text-ui-fg-muted txt-medium">
-                How would you like you order delivered
+              <span className="mb-4 text-brand-ink/60 txt-medium">
+                Bạn muốn nhận đơn sách theo cách nào?
               </span>
             </div>
             <div data-testid="delivery-options-container">
               <div className="pb-8 md:pt-0 pt-2">
+                {!availableShippingMethods?.length && (
+                  <div className="rounded-xl border border-brand-gold/40 bg-brand-cream/70 p-4 text-sm leading-6 text-brand-ink/70" role="status">
+                    Chưa có phương thức giao hàng cho địa chỉ này. Vui lòng kiểm tra lại địa chỉ hoặc cấu hình giao hàng trong trang quản trị.
+                  </div>
+                )}
                 {hasPickupOptions && (
                   <RadioGroup
                     value={showPickupOptions}
@@ -213,9 +218,9 @@ const Shipping: React.FC<ShippingProps> = ({
                       value={PICKUP_OPTION_ON}
                       data-testid="delivery-option-radio"
                       className={clx(
-                        "flex items-center justify-between text-small-regular cursor-pointer py-4 border rounded-rounded px-8 mb-2 hover:shadow-borders-interactive-with-active",
+                        "flex items-center justify-between text-small-regular cursor-pointer py-4 border border-brand-gold/40 rounded-xl bg-brand-paper px-5 sm:px-8 mb-2 transition-colors hover:border-brand-forest/50 hover:bg-brand-cream/50",
                         {
-                          "border-ui-border-interactive":
+                          "border-brand-forest bg-brand-cream/70":
                             showPickupOptions === PICKUP_OPTION_ON,
                         }
                       )}
@@ -225,7 +230,7 @@ const Shipping: React.FC<ShippingProps> = ({
                           checked={showPickupOptions === PICKUP_OPTION_ON}
                         />
                         <span className="text-base-regular">
-                          Pick up your order
+                          Nhận sách tại cửa hàng
                         </span>
                       </div>
                       <span className="justify-self-end text-ui-fg-base">
@@ -255,9 +260,9 @@ const Shipping: React.FC<ShippingProps> = ({
                         data-testid="delivery-option-radio"
                         disabled={isDisabled}
                         className={clx(
-                          "flex items-center justify-between text-small-regular cursor-pointer py-4 border rounded-rounded px-8 mb-2 hover:shadow-borders-interactive-with-active",
+                          "flex items-center justify-between text-small-regular cursor-pointer py-4 border border-brand-gold/40 rounded-xl bg-brand-paper px-5 sm:px-8 mb-2 transition-colors hover:border-brand-forest/50 hover:bg-brand-cream/50",
                           {
-                            "border-ui-border-interactive":
+                            "border-brand-forest bg-brand-cream/70":
                               option.id === shippingMethodId,
                             "hover:shadow-brders-none cursor-not-allowed":
                               isDisabled,
@@ -300,11 +305,11 @@ const Shipping: React.FC<ShippingProps> = ({
           {showPickupOptions === PICKUP_OPTION_ON && (
             <div className="grid">
               <div className="flex flex-col">
-                <span className="font-medium txt-medium text-ui-fg-base">
-                  Store
+                <span className="font-medium txt-medium text-brand-ink">
+                  Cửa hàng
                 </span>
-                <span className="mb-4 text-ui-fg-muted txt-medium">
-                  Choose a store near you
+                <span className="mb-4 text-brand-ink/60 txt-medium">
+                  Chọn cửa hàng thuận tiện với bạn
                 </span>
               </div>
               <div data-testid="delivery-options-container">
@@ -325,9 +330,9 @@ const Shipping: React.FC<ShippingProps> = ({
                           disabled={option.insufficient_inventory}
                           data-testid="delivery-option-radio"
                           className={clx(
-                            "flex items-center justify-between text-small-regular cursor-pointer py-4 border rounded-rounded px-8 mb-2 hover:shadow-borders-interactive-with-active",
+                            "flex items-center justify-between text-small-regular cursor-pointer py-4 border border-brand-gold/40 rounded-xl bg-brand-paper px-5 sm:px-8 mb-2 transition-colors hover:border-brand-forest/50 hover:bg-brand-cream/50",
                             {
-                              "border-ui-border-interactive":
+                              "border-brand-forest bg-brand-cream/70":
                                 option.id === shippingMethodId,
                               "hover:shadow-brders-none cursor-not-allowed":
                                 option.insufficient_inventory,
@@ -372,13 +377,13 @@ const Shipping: React.FC<ShippingProps> = ({
             />
             <Button
               size="large"
-              className="mt"
+              className="mt-2"
               onClick={handleSubmit}
               isLoading={isLoading}
               disabled={!cart.shipping_methods?.[0]}
               data-testid="submit-delivery-option-button"
             >
-              Continue to payment
+              Tiếp tục thanh toán
             </Button>
           </div>
         </>
@@ -386,9 +391,9 @@ const Shipping: React.FC<ShippingProps> = ({
         <div>
           <div className="text-small-regular">
             {cart && (cart.shipping_methods?.length ?? 0) > 0 && (
-              <div className="flex flex-col w-1/3">
-                <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                  Method
+              <div className="flex flex-col w-full sm:w-1/3">
+                <Text className="txt-medium-plus text-brand-ink mb-1">
+                  Phương thức
                 </Text>
                 <Text className="txt-medium text-ui-fg-subtle">
                   {cart.shipping_methods!.at(-1)!.name}{" "}
@@ -402,7 +407,7 @@ const Shipping: React.FC<ShippingProps> = ({
           </div>
         </div>
       )}
-      <Divider className="mt-8" />
+      <Divider className="mt-8 border-brand-gold/30" />
     </div>
   )
 }

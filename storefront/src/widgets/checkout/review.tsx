@@ -20,29 +20,26 @@ const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
     (cart.payment_collection || paidByGiftcard)
 
   return (
-    <div className="bg-white">
+    <div className="rounded-2xl border border-brand-gold/35 bg-brand-paper p-5 shadow-book sm:p-7">
       <div className="flex flex-row items-center justify-between mb-6">
         <Heading
           level="h2"
           className={clx(
-            "flex flex-row text-3xl-regular gap-x-2 items-baseline",
+            "font-editorial flex flex-row text-3xl-regular gap-x-2 items-baseline text-brand-ink",
             {
               "opacity-50 pointer-events-none select-none": !isOpen,
             }
           )}
         >
-          Review
+          Kiểm tra đơn hàng
         </Heading>
       </div>
       {isOpen && previousStepsCompleted && (
         <>
           <div className="flex items-start gap-x-1 w-full mb-6">
             <div className="w-full">
-              <Text className="txt-medium-plus text-ui-fg-base mb-1">
-                By clicking the Place Order button, you confirm that you have
-                read, understand and accept our Terms of Use, Terms of Sale and
-                Returns Policy and acknowledge that you have read Lupus
-                Store&apos;s Privacy Policy.
+              <Text className="txt-medium text-brand-ink/70 mb-1">
+                Hãy kiểm tra lại địa chỉ, phương thức giao hàng, thanh toán và tổng tiền. Khi nhấn Đặt hàng, bạn xác nhận các thông tin trên là chính xác.
               </Text>
             </div>
           </div>

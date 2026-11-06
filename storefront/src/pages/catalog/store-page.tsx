@@ -8,7 +8,7 @@ import StoreTemplate from "@/widgets/store/store-template"
 export function StorePage() {
   const { countryCode } = useCountryRegion()
   const searchParams = useSearchParams()
-  usePageTitle("Store", "Explore all of our products.")
+  usePageTitle("Tất cả sách | Lupus Books", "Khám phá toàn bộ tủ sách được chọn lọc tại Lupus Books.")
 
   const sortBy = (searchParams.get("sortBy") ?? undefined) as SortOptions | undefined
   const page = searchParams.get("page") ?? undefined

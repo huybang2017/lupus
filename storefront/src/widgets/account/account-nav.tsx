@@ -29,31 +29,31 @@ const AccountNav = ({
         {route !== `/${countryCode}/account` ? (
           <LocalizedClientLink
             href="/account"
-            className="flex items-center gap-x-2 text-small-regular py-2"
+            className="flex items-center gap-x-2 py-3 text-small-regular text-brand-forest"
             data-testid="account-main-link"
           >
             <>
               <ChevronDown className="transform rotate-90" />
-              <span>Account</span>
+              <span>Tài khoản</span>
             </>
           </LocalizedClientLink>
         ) : (
           <>
-            <div className="text-xl-semi mb-4 px-8">
-              Hello {customer?.first_name}
+            <div className="mb-4 px-8 font-serif text-2xl font-semibold text-brand-forest">
+              Xin chào, {customer?.first_name}
             </div>
             <div className="text-base-regular">
               <ul>
                 <li>
                   <LocalizedClientLink
                     href="/account/profile"
-                    className="flex items-center justify-between py-4 border-b border-gray-200 px-8"
+                    className="flex items-center justify-between border-b border-brand-gold/40 px-8 py-4 text-brand-ink"
                     data-testid="profile-link"
                   >
                     <>
                       <div className="flex items-center gap-x-2">
                         <User size={20} />
-                        <span>Profile</span>
+                        <span>Hồ sơ</span>
                       </div>
                       <ChevronDown className="transform -rotate-90" />
                     </>
@@ -62,13 +62,13 @@ const AccountNav = ({
                 <li>
                   <LocalizedClientLink
                     href="/account/addresses"
-                    className="flex items-center justify-between py-4 border-b border-gray-200 px-8"
+                    className="flex items-center justify-between border-b border-brand-gold/40 px-8 py-4 text-brand-ink"
                     data-testid="addresses-link"
                   >
                     <>
                       <div className="flex items-center gap-x-2">
                         <MapPin size={20} />
-                        <span>Addresses</span>
+                        <span>Địa chỉ</span>
                       </div>
                       <ChevronDown className="transform -rotate-90" />
                     </>
@@ -77,12 +77,12 @@ const AccountNav = ({
                 <li>
                   <LocalizedClientLink
                     href="/account/orders"
-                    className="flex items-center justify-between py-4 border-b border-gray-200 px-8"
+                    className="flex items-center justify-between border-b border-brand-gold/40 px-8 py-4 text-brand-ink"
                     data-testid="orders-link"
                   >
                     <div className="flex items-center gap-x-2">
                       <Package size={20} />
-                      <span>Orders</span>
+                      <span>Đơn hàng</span>
                     </div>
                     <ChevronDown className="transform -rotate-90" />
                   </LocalizedClientLink>
@@ -90,13 +90,13 @@ const AccountNav = ({
                 <li>
                   <button
                     type="button"
-                    className="flex items-center justify-between py-4 border-b border-gray-200 px-8 w-full"
+                    className="flex w-full items-center justify-between border-b border-brand-gold/40 px-8 py-4 text-brand-ink"
                     onClick={handleLogout}
                     data-testid="logout-button"
                   >
                     <div className="flex items-center gap-x-2">
                       <ArrowRightOnRectangle />
-                      <span>Log out</span>
+                      <span>Đăng xuất</span>
                     </div>
                     <ChevronDown className="transform -rotate-90" />
                   </button>
@@ -109,7 +109,7 @@ const AccountNav = ({
       <div className="hidden small:block" data-testid="account-nav">
         <div>
           <div className="pb-4">
-            <h3 className="text-base-semi">Account</h3>
+            <h3 className="font-serif text-xl font-semibold text-brand-forest">Tài khoản</h3>
           </div>
           <div className="text-base-regular">
             <ul className="flex mb-0 justify-start items-start flex-col gap-y-4">
@@ -119,7 +119,7 @@ const AccountNav = ({
                   route={route!}
                   data-testid="overview-link"
                 >
-                  Overview
+                  Tổng quan
                 </AccountNavLink>
               </li>
               <li>
@@ -128,7 +128,7 @@ const AccountNav = ({
                   route={route!}
                   data-testid="profile-link"
                 >
-                  Profile
+                  Hồ sơ
                 </AccountNavLink>
               </li>
               <li>
@@ -137,7 +137,7 @@ const AccountNav = ({
                   route={route!}
                   data-testid="addresses-link"
                 >
-                  Addresses
+                  Địa chỉ
                 </AccountNavLink>
               </li>
               <li>
@@ -146,16 +146,16 @@ const AccountNav = ({
                   route={route!}
                   data-testid="orders-link"
                 >
-                  Orders
+                  Đơn hàng
                 </AccountNavLink>
               </li>
-              <li className="text-grey-700">
+              <li className="text-brand-ink/70">
                 <button
                   type="button"
                   onClick={handleLogout}
                   data-testid="logout-button"
                 >
-                  Log out
+                  Đăng xuất
                 </button>
               </li>
             </ul>
@@ -185,8 +185,8 @@ const AccountNavLink = ({
   return (
     <LocalizedClientLink
       href={href}
-      className={clx("text-ui-fg-subtle hover:text-ui-fg-base", {
-        "text-ui-fg-base font-semibold": active,
+      className={clx("text-brand-ink/65 transition-colors hover:text-brand-clay", {
+        "font-semibold text-brand-forest": active,
       })}
       data-testid={dataTestId}
     >

@@ -11,8 +11,10 @@ import {
   PAYMENT_COLLECTION_SORT,
 } from "../infra/list-filter-specs"
 import { runList, sendList } from "../infra/list-query"
+import { demoBankCredentialsSchema, listDemoBanks } from "./demo-bank.service"
 import { orderService } from "./order.service"
 import { paymentService } from "./payment.service"
+import { generateOrderVietQr, VIETQR_PROVIDER_ID } from "./vietqr.service"
 
 // Port of Lupus store checkout + admin order/payment endpoints
 // (upstream/src/api/store/carts/*/complete + admin/orders + admin/payments).
@@ -43,8 +45,19 @@ function fulfillmentStatusCondition(status: unknown): string {
 
 orderRouter.post("/store/carts/:id/complete", async (req, res, next) => {
   try {
+    const { payment_data } = z
+      .object({ payment_data: z.object({ demo_bank: demoBankCredentialsSchema.optional() }).optional() })
+      .parse(req.body ?? {})
     // Lupus complete-cart answer: { type: "order", order }; a failure is an HTTP error (the storefront shows it)
-    res.status(201).json({ type: "order", order: await orderService.createFromCart(req.params.id) })
+    res.status(201).json({ type: "order", order: await orderService.createFromCart(req.params.id, payment_data?.demo_bank) })
+  } catch (e) {
+    next(e)
+  }
+})
+
+orderRouter.get("/store/demo-banks", async (_req, res, next) => {
+  try {
+    res.json({ banks: await listDemoBanks(), demo_pin: "123456" })
   } catch (e) {
     next(e)
   }
@@ -58,6 +71,29 @@ orderRouter.get("/store/orders/:id", async (req, res, next) => {
       return
     }
     res.json({ order })
+  } catch (e) {
+    next(e)
+  }
+})
+
+orderRouter.get("/store/orders/:id/vietqr", async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT o.id, o.display_id, o.total, o.currency_code, o.created_at, pc.status AS payment_status
+       FROM "order" o
+       JOIN payment_collection pc ON pc.id=o.payment_collection_id AND pc.deleted_at IS NULL
+       WHERE o.id=$1 AND o.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM payment_session ps
+           WHERE ps.payment_collection_id=pc.id AND ps.provider_id=$2 AND ps.deleted_at IS NULL
+         )`,
+      [req.params.id, VIETQR_PROVIDER_ID]
+    )
+    if (!result.rows[0]) {
+      res.status(404).json({ message: "Đơn hàng không sử dụng phương thức VietQR." })
+      return
+    }
+    res.json({ vietqr: await generateOrderVietQr(result.rows[0]) })
   } catch (e) {
     next(e)
   }

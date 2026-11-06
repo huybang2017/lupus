@@ -14,7 +14,7 @@ const Items = ({ order }: ItemsProps) => {
   const items = order.items
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col overflow-hidden rounded-xl border border-brand-gold/30 bg-brand-paper px-4">
       <Divider className="!mb-0" />
       <Table>
         <Table.Body data-testid="products-table">

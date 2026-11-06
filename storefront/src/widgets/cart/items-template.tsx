@@ -12,21 +12,21 @@ type ItemsTemplateProps = {
 const ItemsTemplate = ({ cart }: ItemsTemplateProps) => {
   const items = cart?.items
   return (
-    <div>
+    <div className="overflow-x-auto">
       <div className="pb-3 flex items-center">
-        <Heading className="text-[2rem] leading-[2.75rem]">Cart</Heading>
+        <Heading className="font-editorial text-[2rem] leading-[2.75rem] text-brand-ink">Giỏ sách</Heading>
       </div>
-      <Table>
+      <Table className="min-w-[560px] small:min-w-0">
         <Table.Header className="border-t-0">
-          <Table.Row className="text-ui-fg-subtle txt-medium-plus">
-            <Table.HeaderCell className="!pl-0">Item</Table.HeaderCell>
+          <Table.Row className="border-brand-gold/30 text-brand-ink/60 txt-medium-plus hover:bg-transparent">
+            <Table.HeaderCell className="!pl-0">Sách</Table.HeaderCell>
             <Table.HeaderCell></Table.HeaderCell>
-            <Table.HeaderCell>Quantity</Table.HeaderCell>
+            <Table.HeaderCell>Số lượng</Table.HeaderCell>
             <Table.HeaderCell className="hidden small:table-cell">
-              Price
+              Đơn giá
             </Table.HeaderCell>
             <Table.HeaderCell className="!pr-0 text-right">
-              Total
+              Thành tiền
             </Table.HeaderCell>
           </Table.Row>
         </Table.Header>

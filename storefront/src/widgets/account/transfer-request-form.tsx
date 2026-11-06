@@ -22,15 +22,15 @@ export default function TransferRequestForm() {
   }, [state.success, state.order])
 
   return (
-    <div className="flex flex-col gap-y-4 w-full">
+    <div className="flex w-full flex-col gap-y-4 rounded-xl bg-brand-cream/70 p-5 text-brand-ink">
       <div className="grid sm:grid-cols-2 items-center gap-x-8 gap-y-4 w-full">
         <div className="flex flex-col gap-y-1">
-          <Heading level="h3" className="!text-sm font-semibold text-neutral-950">
-            Order transfers
+          <Heading level="h3" className="!text-sm font-semibold text-brand-forest">
+            Chuyển đơn hàng vào tài khoản
           </Heading>
-          <p className="text-small-regular text-neutral-500">
-            Can&apos;t find the order you are looking for?
-            <br /> Connect an order to your account.
+          <p className="text-small-regular text-brand-ink/65">
+            Không thấy đơn hàng bạn đang tìm?
+            <br /> Hãy gửi yêu cầu liên kết đơn hàng với tài khoản này.
           </p>
         </div>
         <form
@@ -38,13 +38,13 @@ export default function TransferRequestForm() {
           className="flex flex-col gap-y-1 sm:items-end"
         >
           <div className="flex flex-col gap-y-2 w-full">
-            <Input className="w-full" name="order_id" placeholder="Order ID" />
+            <Input className="w-full" name="order_id" placeholder="Mã đơn hàng" />
             <SubmitButton
               variant="secondary"
               size="small"
               className="w-fit whitespace-nowrap self-end"
             >
-              Request transfer
+              Gửi yêu cầu
             </SubmitButton>
           </div>
         </form>
@@ -55,21 +55,22 @@ export default function TransferRequestForm() {
         </Text>
       )}
       {showSuccess && (
-        <div className="flex justify-between p-4 bg-neutral-50 shadow-borders-base w-full self-stretch items-center">
+        <div className="flex w-full items-center justify-between self-stretch rounded-lg border border-brand-gold/40 bg-brand-paper p-4">
           <div className="flex gap-x-2 items-center">
             <CheckCircleMiniSolid className="w-4 h-4 text-emerald-500" />
             <div className="flex flex-col gap-y-1">
-              <Text className="text-medim-pl text-neutral-950">
-                Transfer for order {state.order?.id} requested
+              <Text className="text-medim-pl text-brand-ink">
+                Đã yêu cầu chuyển đơn hàng {state.order?.id}
               </Text>
-              <Text className="text-base-regular text-neutral-600">
-                Transfer request email sent to {state.order?.email}
+              <Text className="text-base-regular text-brand-ink/65">
+                Email xác nhận đã được gửi đến {state.order?.email}
               </Text>
             </div>
           </div>
           <IconButton
             className="h-fit"
             onClick={() => setShowSuccess(false)}
+            aria-label="Đóng thông báo"
           >
             <XCircleSolid className="w-4 h-4 text-neutral-500" />
           </IconButton>

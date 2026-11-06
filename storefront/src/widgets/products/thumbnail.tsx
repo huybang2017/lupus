@@ -9,6 +9,7 @@ type ThumbnailProps = {
   size?: "small" | "medium" | "large" | "full" | "square"
   isFeatured?: boolean
   className?: string
+  alt?: string
   "data-testid"?: string
 }
 
@@ -16,8 +17,9 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
   thumbnail,
   images,
   size = "small",
-  isFeatured,
+  isFeatured: _isFeatured,
   className,
+  alt = "Bìa sách",
   "data-testid": dataTestid,
 }) => {
   const initialImage = thumbnail || images?.[0]?.url
@@ -25,11 +27,10 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
   return (
     <Container
       className={clx(
-        "relative w-full overflow-hidden p-4 bg-ui-bg-subtle shadow-elevation-card-rest rounded-large group-hover:shadow-elevation-card-hover transition-shadow ease-in-out duration-150",
+        "relative w-full overflow-hidden border border-brand-sand/70 bg-[#F1ECE1] p-4 shadow-book transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-book-hover",
         className,
         {
-          "aspect-[11/14]": isFeatured,
-          "aspect-[9/16]": !isFeatured && size !== "square",
+          "aspect-[2/3]": size !== "square",
           "aspect-[1/1]": size === "square",
           "w-[180px]": size === "small",
           "w-[290px]": size === "medium",
@@ -39,7 +40,7 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
       )}
       data-testid={dataTestid}
     >
-      <ImageOrPlaceholder image={initialImage} size={size} />
+      <ImageOrPlaceholder image={initialImage} size={size} alt={alt} />
     </Container>
   )
 }
@@ -47,14 +48,22 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
 const ImageOrPlaceholder = ({
   image,
   size,
-}: Pick<ThumbnailProps, "size"> & { image?: string }) => {
-  return image ? (
+  alt,
+}: Pick<ThumbnailProps, "size" | "alt"> & { image?: string }) => {
+  const [failed, setFailed] = React.useState(false)
+
+  React.useEffect(() => {
+    setFailed(false)
+  }, [image])
+
+  return image && !failed ? (
     <img
       src={image}
-      alt="Thumbnail"
-      className="absolute inset-0 h-full w-full object-cover object-center"
+      alt={alt}
+      className="absolute inset-3 h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] object-contain object-center drop-shadow-[0_14px_14px_rgba(31,41,36,0.18)]"
       draggable={false}
       loading="lazy"
+      onError={() => setFailed(true)}
     />
   ) : (
     <div className="w-full h-full absolute inset-0 flex items-center justify-center">

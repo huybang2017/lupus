@@ -9,7 +9,9 @@ import { customerService } from "../customer/customer.service"
 import { fulfillmentService } from "../fulfillment/fulfillment.service"
 import { currencyService } from "../infra/currency-analytics.service"
 import { orderService } from "../order/order.service"
+import { DEMO_BANK_PROVIDER_ID } from "../order/demo-bank.service"
 import { paymentSessionService, SYSTEM_PROVIDER_ID } from "../order/payment-session.service"
+import { isVietQrConfigured, VIETQR_PROVIDER_ID } from "../order/vietqr.service"
 import { promotionService } from "../promotion/promotion.service"
 import { regionAdminService } from "../region/region-admin.service"
 import { requestLocale, translateRows } from "../platform/translation-overlay"
@@ -972,6 +974,12 @@ storeCompatRouter.get("/store/payment-providers", async (req, res, next) => {
     }
     if (ids.length === 0) {
       ids = [SYSTEM_PROVIDER_ID]
+    }
+    if (isVietQrConfigured() && !ids.includes(VIETQR_PROVIDER_ID)) {
+      ids.push(VIETQR_PROVIDER_ID)
+    }
+    if (!ids.includes(DEMO_BANK_PROVIDER_ID)) {
+      ids.push(DEMO_BANK_PROVIDER_ID)
     }
     const all = ids.map((id) => ({ id, is_enabled: true }))
     res.json({ payment_providers: all.slice(offset, offset + limit), count: all.length, offset, limit })

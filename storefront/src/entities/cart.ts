@@ -51,7 +51,7 @@ export async function getOrSetCart(countryCode: string) {
   const region = await getRegion(countryCode)
 
   if (!region) {
-    throw new Error(`Region not found for country code: ${countryCode}`)
+    throw new Error(`Không tìm thấy khu vực bán hàng cho mã quốc gia: ${countryCode}`)
   }
 
   let cart = await retrieveCart()
@@ -81,7 +81,7 @@ export async function updateCart(data: HttpTypes.StoreUpdateCart) {
   const cartId = getCartId()
 
   if (!cartId) {
-    throw new Error("No existing cart found, please create one before updating")
+    throw new Error("Không tìm thấy giỏ sách để cập nhật.")
   }
 
   const { cart } = await apiFetch<{ cart: HttpTypes.StoreCart }>(`/store/carts/${cartId}`, { method: "POST", body: data })
@@ -91,13 +91,13 @@ export async function updateCart(data: HttpTypes.StoreUpdateCart) {
 
 export async function addToCart({ variantId, quantity, countryCode }: { variantId: string; quantity: number; countryCode: string }) {
   if (!variantId) {
-    throw new Error("Missing variant ID when adding to cart")
+    throw new Error("Thiếu mã phiên bản sách khi thêm vào giỏ.")
   }
 
   const cart = await getOrSetCart(countryCode)
 
   if (!cart) {
-    throw new Error("Error retrieving or creating cart")
+    throw new Error("Không thể tải hoặc tạo giỏ sách.")
   }
 
   const resp = await apiFetch<{ cart: HttpTypes.StoreCart }>(`/store/carts/${cart.id}/line-items`, {
@@ -109,13 +109,13 @@ export async function addToCart({ variantId, quantity, countryCode }: { variantI
 
 export async function updateLineItem({ lineId, quantity }: { lineId: string; quantity: number }) {
   if (!lineId) {
-    throw new Error("Missing lineItem ID when updating line item")
+    throw new Error("Thiếu mã sách trong giỏ cần cập nhật.")
   }
 
   const cartId = getCartId()
 
   if (!cartId) {
-    throw new Error("Missing cart ID when updating line item")
+    throw new Error("Thiếu mã giỏ sách cần cập nhật.")
   }
 
   const resp = await apiFetch<{ cart: HttpTypes.StoreCart }>(`/store/carts/${cartId}/line-items/${lineId}`, {
@@ -127,13 +127,13 @@ export async function updateLineItem({ lineId, quantity }: { lineId: string; qua
 
 export async function deleteLineItem(lineId: string) {
   if (!lineId) {
-    throw new Error("Missing lineItem ID when deleting line item")
+    throw new Error("Thiếu mã sách cần xóa khỏi giỏ.")
   }
 
   const cartId = getCartId()
 
   if (!cartId) {
-    throw new Error("Missing cart ID when deleting line item")
+    throw new Error("Thiếu mã giỏ sách khi xóa sách.")
   }
 
   const resp = await apiFetch<{ cart: HttpTypes.StoreCart }>(`/store/carts/${cartId}/line-items/${lineId}`, { method: "DELETE" })
@@ -170,7 +170,7 @@ export async function applyPromotions(codes: string[]) {
   const cartId = getCartId()
 
   if (!cartId) {
-    throw new Error("No existing cart found")
+    throw new Error("Không tìm thấy giỏ sách hiện tại.")
   }
 
   const resp = await apiFetch<{ cart: HttpTypes.StoreCart }>(`/store/carts/${cartId}`, { method: "POST", body: { promo_codes: codes } })
@@ -180,11 +180,11 @@ export async function applyPromotions(codes: string[]) {
 export async function setAddresses(_currentState: unknown, formData: FormData) {
   try {
     if (!formData) {
-      throw new Error("No form data found when setting addresses")
+      throw new Error("Không tìm thấy dữ liệu địa chỉ.")
     }
     const cartId = getCartId()
     if (!cartId) {
-      throw new Error("No existing cart found when setting addresses")
+      throw new Error("Không tìm thấy giỏ sách khi cập nhật địa chỉ.")
     }
 
     const read = (name: string) => (formData.get(name) as string | null) ?? ""
@@ -233,15 +233,27 @@ export async function setAddresses(_currentState: unknown, formData: FormData) {
  * Places an order for a cart. If no cart ID is provided, it uses the cart ID kept in storage.
  * On success it forgets the cart and goes to the confirmation page.
  */
-export async function placeOrder(cartId?: string) {
+export type CheckoutPaymentData = {
+  demo_bank?: {
+    bank_code: string
+    account_number: string
+    account_holder: string
+    expiry_month: number
+    expiry_year: number
+    pin: string
+  }
+}
+
+export async function placeOrder(cartId?: string, paymentData?: CheckoutPaymentData) {
   const id = cartId || getCartId()
 
   if (!id) {
-    throw new Error("No existing cart found when placing an order")
+    throw new Error("Không tìm thấy giỏ sách để đặt hàng.")
   }
 
   const cartRes = await apiFetch<{ type: "order" | "cart"; order?: HttpTypes.StoreOrder; cart?: HttpTypes.StoreCart }>(`/store/carts/${id}/complete`, {
     method: "POST",
+    body: paymentData ? { payment_data: paymentData } : undefined,
   })
 
   if (cartRes.type === "order" && cartRes.order) {
@@ -249,7 +261,10 @@ export async function placeOrder(cartId?: string) {
 
     removeCartId()
     publish(null)
-    redirect(`/${countryCode}/order/${cartRes.order.id}/confirmed`)
+    const orderPath = paymentData?.demo_bank
+      ? `/${countryCode}/order/${cartRes.order.id}/payment-success`
+      : `/${countryCode}/order/${cartRes.order.id}/confirmed`
+    redirect(orderPath)
     return undefined
   }
 
@@ -262,7 +277,7 @@ export async function updateRegion(countryCode: string, currentPath: string) {
   const region = await getRegion(countryCode)
 
   if (!region) {
-    throw new Error(`Region not found for country code: ${countryCode}`)
+    throw new Error(`Không tìm thấy khu vực bán hàng cho mã quốc gia: ${countryCode}`)
   }
 
   if (cartId) {

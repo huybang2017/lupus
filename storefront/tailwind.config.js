@@ -20,6 +20,19 @@ export default {
         padding: "padding-top padding-right padding-bottom padding-left",
       },
       colors: {
+        brand: {
+          ink: "#1F2924",
+          forest: "#274C3B",
+          "forest-dark": "#18372A",
+          moss: "#65765E",
+          clay: "#9C4A32",
+          "clay-dark": "#783824",
+          cream: "#F7F3EA",
+          paper: "#FFFDF8",
+          sand: "#E8DFC9",
+          gold: "#D7B96B",
+          mist: "#E9EFEA",
+        },
         grey: {
           0: "#FFFFFF",
           5: "#F9FAFB",
@@ -58,7 +71,14 @@ export default {
         "3xl": "2rem",
       },
       fontFamily: {
-        sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Ubuntu", "sans-serif"],
+        sans: ["Be Vietnam Pro", "Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        serif: ["Lora", "Georgia", "Times New Roman", "serif"],
+        display: ["Lora", "Georgia", "Times New Roman", "serif"],
+      },
+      boxShadow: {
+        book: "0 18px 45px -26px rgba(31, 41, 36, 0.45)",
+        "book-hover": "0 28px 60px -28px rgba(31, 41, 36, 0.55)",
+        editorial: "0 24px 70px -38px rgba(24, 55, 42, 0.45)",
       },
       keyframes: {
         ring: {

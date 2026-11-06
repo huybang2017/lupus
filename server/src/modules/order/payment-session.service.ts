@@ -1,4 +1,6 @@
 import { pool } from "../../db"
+import { DEMO_BANK_PROVIDER_ID } from "./demo-bank.service"
+import { VIETQR_PROVIDER_ID } from "./vietqr.service"
 
 // Port of Lupus payment provider flow (payment-session + provider interface +
 // create-payment-session workflow). Providers implement authorize(c, amount) etc.
@@ -27,11 +29,25 @@ function systemProvider(id: string): PaymentProvider {
   }
 }
 
+function deferredProvider(id: string): PaymentProvider {
+  return {
+    id,
+    async authorize() {
+      throw Object.assign(new Error(`Provider ${id} requires explicit payment confirmation`), { statusCode: 400 })
+    },
+    async capture() {
+      return
+    },
+  }
+}
+
 // "manual" is the legacy id, "pp_system_default" the id Lupus storefronts use for the same provider
 export const SYSTEM_PROVIDER_ID = "pp_system_default"
 const providers = new Map<string, PaymentProvider>([
   ["manual", systemProvider("manual")],
   [SYSTEM_PROVIDER_ID, systemProvider(SYSTEM_PROVIDER_ID)],
+  [VIETQR_PROVIDER_ID, deferredProvider(VIETQR_PROVIDER_ID)],
+  [DEMO_BANK_PROVIDER_ID, deferredProvider(DEMO_BANK_PROVIDER_ID)],
 ])
 
 export function listPaymentProviderIds(): string[] {

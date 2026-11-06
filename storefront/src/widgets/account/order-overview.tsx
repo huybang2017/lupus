@@ -1,6 +1,4 @@
 
-import { Button } from "@/widgets/common/ui"
-
 import OrderCard from "@/widgets/account/order-card"
 import LocalizedClientLink from "@/widgets/common/localized-client-link"
 import { HttpTypes } from "@/shared/types/http"
@@ -12,7 +10,7 @@ const OrderOverview = ({ orders }: { orders: HttpTypes.StoreOrder[] }) => {
         {orders.map((o) => (
           <div
             key={o.id}
-            className="border-b border-gray-200 pb-6 last:pb-0 last:border-none"
+            className="border-b border-brand-gold/40 pb-6 last:border-none last:pb-0"
           >
             <OrderCard order={o} />
           </div>
@@ -26,15 +24,17 @@ const OrderOverview = ({ orders }: { orders: HttpTypes.StoreOrder[] }) => {
       className="w-full flex flex-col items-center gap-y-4"
       data-testid="no-orders-container"
     >
-      <h2 className="text-large-semi">Nothing to see here</h2>
-      <p className="text-base-regular">
-        You don&apos;t have any orders yet, let us change that {":)"}
+      <h2 className="font-serif text-2xl font-semibold text-brand-forest">Kệ đơn hàng đang trống</h2>
+      <p className="text-base-regular text-brand-ink/70">
+        Bạn chưa có đơn hàng nào. Hãy chọn một cuốn sách thật hay để bắt đầu nhé.
       </p>
       <div className="mt-4">
-        <LocalizedClientLink href="/" passHref>
-          <Button data-testid="continue-shopping-button">
-            Continue shopping
-          </Button>
+        <LocalizedClientLink
+          href="/"
+          className="inline-flex h-11 items-center justify-center rounded-full bg-brand-forest px-6 text-sm font-semibold text-white transition-colors hover:bg-brand-forest-dark"
+          data-testid="continue-shopping-button"
+        >
+          Khám phá sách
         </LocalizedClientLink>
       </div>
     </div>

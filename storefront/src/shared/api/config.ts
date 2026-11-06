@@ -7,4 +7,4 @@ export const API_BASE = import.meta.env.VITE_API_URL ?? ""
 export const PUBLISHABLE_KEY = import.meta.env.VITE_PUBLISHABLE_KEY
 
 // Country used when the URL has none and nothing else matches (see CountryRoute)
-export const DEFAULT_REGION = (import.meta.env.VITE_DEFAULT_REGION ?? "dk").toLowerCase()
+export const DEFAULT_REGION = (import.meta.env.VITE_DEFAULT_REGION ?? "vn").toLowerCase()

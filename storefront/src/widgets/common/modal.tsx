@@ -34,13 +34,13 @@ const Modal = ({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-opacity-75 backdrop-blur-md  h-screen" />
+          <div className="fixed inset-0 h-screen bg-brand-ink/65 backdrop-blur-md" />
         </Transition.Child>
 
-        <div className="fixed inset-0 overflow-y-hidden">
+        <div className="fixed inset-0 overflow-y-auto overscroll-contain">
           <div
             className={clx(
-              "flex min-h-full h-full justify-center p-4 text-center",
+              "flex min-h-full justify-center p-4 text-center",
               {
                 "items-center": !search,
                 "items-start": search,
@@ -59,13 +59,13 @@ const Modal = ({
               <Dialog.Panel
                 data-testid={dataTestId}
                 className={clx(
-                  "flex flex-col justify-start w-full transform p-5 text-left align-middle transition-all max-h-[75vh] h-fit",
+                  "flex max-h-[calc(100dvh-2rem)] h-fit w-full transform flex-col justify-start overflow-y-auto overscroll-contain p-5 text-left align-middle transition-all",
                   {
                     "max-w-md": size === "small",
                     "max-w-xl": size === "medium",
                     "max-w-3xl": size === "large",
                     "bg-transparent shadow-none": search,
-                    "bg-white shadow-xl border rounded-rounded": !search,
+                    "surface-card shadow-xl": !search,
                   }
                 )}
               >
@@ -83,10 +83,10 @@ const Title: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { close } = useModal()
 
   return (
-    <Dialog.Title className="flex items-center justify-between">
-      <div className="text-large-semi">{children}</div>
+    <Dialog.Title className="flex items-center justify-between border-b border-brand-sand pb-4">
+      <div className="font-display text-xl font-semibold text-brand-forest">{children}</div>
       <div>
-        <button onClick={close} data-testid="close-modal-button">
+        <button onClick={close} data-testid="close-modal-button" aria-label="Đóng hộp thoại" className="grid h-9 w-9 place-items-center rounded-full text-brand-ink/50 hover:bg-brand-mist hover:text-brand-forest">
           <X size={20} />
         </button>
       </div>
@@ -96,7 +96,7 @@ const Title: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const Description: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
-    <Dialog.Description className="flex text-small-regular text-ui-fg-base items-center justify-center pt-2 pb-4 h-full">
+    <Dialog.Description className="flex h-full items-center justify-center pb-4 pt-2 text-small-regular text-brand-ink/65">
       {children}
     </Dialog.Description>
   )

@@ -82,11 +82,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || isLoading}
         className={clsx(
-          "inline-flex gap-2 items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-          variant === "primary" && "bg-black text-white hover:bg-gray-800",
+          "inline-flex gap-2 items-center justify-center rounded-full font-semibold transition-[background-color,border-color,box-shadow,color,opacity,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-clay focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+          variant === "primary" && "bg-brand-forest text-white shadow-sm hover:-translate-y-0.5 hover:bg-brand-forest-dark hover:shadow-book",
           variant === "secondary" &&
-            "bg-white text-black border border-gray-200 hover:bg-gray-50",
-          variant === "transparent" && "bg-transparent hover:bg-gray-100",
+            "bg-brand-paper text-brand-forest border border-brand-sand hover:border-brand-forest hover:bg-white",
+          variant === "transparent" && "bg-transparent text-brand-forest hover:bg-brand-mist",
           size === "small" && "h-8 px-3 text-sm",
           size === "medium" && "h-10 px-4",
           size === "large" && "h-12 px-6 text-lg",
@@ -94,7 +94,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         )}
         {...props}
       >
-        {isLoading ? "Loading..." : children}
+        {isLoading ? "Đang xử lý..." : children}
       </button>
     )
   }
@@ -109,7 +109,7 @@ export const Container = forwardRef<HTMLDivElement, ContainerProps>(
     return (
       <div
         ref={ref}
-        className={clsx("bg-white rounded-lg p-4", className)}
+        className={clsx("bg-brand-paper rounded-2xl p-4", className)}
         {...props}
       >
         {children}
@@ -214,18 +214,22 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, ...props }, ref) => {
+  ({ className, label, id, ...props }, ref) => {
+    const inputId = id ?? props.name
     return (
       <div className="flex flex-col gap-1">
-        {label && <Label>{label}</Label>}
-        <input
-          ref={ref}
-          className={clsx(
-            "flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-            className
-          )}
-          {...props}
-        />
+        {label && <Label htmlFor={inputId}>{label}</Label>}
+        <div className="field-shell flex w-full">
+          <input
+            ref={ref}
+            id={inputId}
+            className={clsx(
+              "field-control flex h-11 w-full rounded-[inherit] border-0 bg-transparent px-3 py-2 text-sm text-brand-ink placeholder:text-brand-ink/40 disabled:cursor-not-allowed disabled:opacity-50",
+              className
+            )}
+            {...props}
+          />
+        </div>
       </div>
     )
   }

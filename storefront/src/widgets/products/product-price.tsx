@@ -24,11 +24,11 @@ export default function ProductPrice({
   return (
     <div className="flex flex-col text-ui-fg-base">
       <span
-        className={clx("text-xl-semi", {
-          "text-ui-fg-interactive": selectedPrice.price_type === "sale",
+        className={clx("font-display text-2xl font-semibold text-brand-forest", {
+          "text-brand-clay": selectedPrice.price_type === "sale",
         })}
       >
-        {!variant && "From "}
+        {!variant && "Từ "}
         <span
           data-testid="product-price"
           data-value={selectedPrice.calculated_price_number}
@@ -39,7 +39,7 @@ export default function ProductPrice({
       {selectedPrice.price_type === "sale" && (
         <>
           <p>
-            <span className="text-ui-fg-subtle">Original: </span>
+            <span className="text-brand-ink/50">Giá gốc: </span>
             <span
               className="line-through"
               data-testid="original-product-price"
@@ -48,8 +48,8 @@ export default function ProductPrice({
               {selectedPrice.original_price}
             </span>
           </p>
-          <span className="text-ui-fg-interactive">
-            -{selectedPrice.percentage_diff}%
+          <span className="text-sm font-semibold text-brand-clay">
+            Tiết kiệm {selectedPrice.percentage_diff}%
           </span>
         </>
       )}

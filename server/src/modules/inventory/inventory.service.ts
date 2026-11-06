@@ -1,4 +1,5 @@
 import { pool } from "../../db"
+import { locationInventoryService } from "./location-inventory.service"
 
 // Port of Lupus confirm-variant-inventory workflow step + reservation logic (simplified to
 // single-location levels; Lupus: stock_location + inventory_item + reservation per location).
@@ -6,13 +7,14 @@ import { pool } from "../../db"
 // decrements stocked (like Lupus's create-reservations on complete-cart).
 export class InventoryService {
   async ensureAvailable(variantId: string, quantity: number): Promise<void> {
-    const { rows } = await pool.query(`SELECT stocked_quantity, reserved_quantity FROM inventory_level WHERE variant_id=$1`, [
-      variantId,
-    ])
-    if (rows.length === 0) {
-      return // untracked variant = unlimited (matches Lupus when no inventory item linked)
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw Object.assign(new Error("Quantity must be a positive integer"), { statusCode: 400 })
     }
-    const available = rows[0].stocked_quantity - rows[0].reserved_quantity
+    const variant = await pool.query(`SELECT manage_inventory, allow_backorder FROM product_variant WHERE id=$1 AND deleted_at IS NULL`, [variantId])
+    if (!variant.rows[0]?.manage_inventory || variant.rows[0]?.allow_backorder) return
+
+    const available = await locationInventoryService.availableForVariant(variantId)
+    if (available === Number.MAX_SAFE_INTEGER) return
     if (available < quantity) {
       throw Object.assign(new Error(`Insufficient stock: only ${available} available`), { statusCode: 400 })
     }

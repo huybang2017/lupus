@@ -38,17 +38,17 @@ const TransferActions = ({ id, token }: { id: string; token: string }) => {
   return (
     <div className="flex flex-col gap-y-4">
       {status?.accept === "success" && (
-        <Text className="text-emerald-500">
-          Order transferred successfully!
+        <Text className="font-semibold text-brand-forest">
+          Đã chuyển giao đơn hàng thành công!
         </Text>
       )}
       {status?.decline === "success" && (
-        <Text className="text-emerald-500">
-          Order transfer declined successfully!
+        <Text className="font-semibold text-brand-forest">
+          Đã từ chối chuyển giao đơn hàng.
         </Text>
       )}
       {status?.accept !== "success" && status?.decline !== "success" && (
-        <div className="flex gap-x-4">
+        <div className="flex flex-col gap-3 xsmall:flex-row">
           <Button
             size="large"
             onClick={acceptTransfer}
@@ -57,7 +57,7 @@ const TransferActions = ({ id, token }: { id: string; token: string }) => {
               status?.accept === "pending" || status?.decline === "pending"
             }
           >
-            Accept transfer
+            Chấp nhận chuyển giao
           </Button>
           <Button
             size="large"
@@ -68,7 +68,7 @@ const TransferActions = ({ id, token }: { id: string; token: string }) => {
               status?.accept === "pending" || status?.decline === "pending"
             }
           >
-            Decline transfer
+            Từ chối
           </Button>
         </div>
       )}

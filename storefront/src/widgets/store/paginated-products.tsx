@@ -6,6 +6,7 @@ import { OptionValueIds } from "@/shared/utils/product-option-filters"
 import ProductPreview from "@/widgets/products/product-preview"
 import { Pagination } from "@/widgets/store/pagination"
 import { SortOptions } from "@/widgets/store/sort-products"
+import { PageLoadError } from "@/widgets/common/page-state"
 
 const PRODUCT_LIMIT = 12
 
@@ -21,7 +22,7 @@ export default function PaginatedProducts({
   sortBy,
   page,
   collectionId,
-  categoryId,
+  categoryIds,
   productsIds,
   countryCode,
   optionValueIds,
@@ -30,7 +31,7 @@ export default function PaginatedProducts({
   sortBy?: SortOptions
   page: number
   collectionId?: string
-  categoryId?: string
+  categoryIds?: string[]
   productsIds?: string[]
   countryCode: string
   optionValueIds?: OptionValueIds
@@ -45,8 +46,8 @@ export default function PaginatedProducts({
     queryParams["collection_id"] = [collectionId]
   }
 
-  if (categoryId) {
-    queryParams["category_id"] = [categoryId]
+  if (categoryIds?.length) {
+    queryParams["category_id"] = categoryIds
   }
 
   if (productsIds) {
@@ -57,7 +58,7 @@ export default function PaginatedProducts({
     queryParams["order"] = "created_at"
   }
 
-  const { data } = useAsync(async () => {
+  const { data, error, loading, reload } = useAsync(async () => {
     const region = await getRegion(countryCode)
 
     if (!region) {
@@ -75,10 +76,31 @@ export default function PaginatedProducts({
     })
 
     return { region, products, count }
-  }, [page, sortBy, collectionId, categoryId, productsIds?.join(","), countryCode, optionValueIds?.join(",")])
+  }, [page, sortBy, collectionId, categoryIds?.join(","), productsIds?.join(","), countryCode, optionValueIds?.join(",")])
+
+  if (loading) {
+    return <SkeletonProductGrid numberOfProducts={numberOfProducts} />
+  }
+
+  if (error) {
+    return (
+      <PageLoadError
+        compact
+        title="Chưa thể tải kệ sách"
+        description="Kết nối đến danh mục sách đang gián đoạn. Bạn vui lòng thử lại."
+        onRetry={reload}
+      />
+    )
+  }
 
   if (!data) {
-    return <SkeletonProductGrid numberOfProducts={numberOfProducts} />
+    return (
+      <PageLoadError
+        compact
+        title="Chưa tìm thấy khu vực mua hàng"
+        description="Hãy kiểm tra mã quốc gia trong đường dẫn hoặc cấu hình khu vực bán hàng."
+      />
+    )
   }
 
   const { region, products, count } = data
@@ -87,7 +109,7 @@ export default function PaginatedProducts({
   return (
     <>
       <ul
-        className="grid grid-cols-2 w-full small:grid-cols-3 medium:grid-cols-4 gap-x-6 gap-y-8"
+        className="grid w-full grid-cols-2 gap-x-3 gap-y-10 sm:gap-x-5 md:grid-cols-3 xl:grid-cols-4"
         data-testid="products-list"
       >
         {products.map((p) => {
@@ -98,6 +120,12 @@ export default function PaginatedProducts({
           )
         })}
       </ul>
+      {!products.length && (
+        <div className="surface-card py-16 text-center">
+          <p className="font-display text-2xl font-semibold text-brand-forest">Chưa tìm thấy cuốn sách phù hợp</p>
+          <p className="mt-2 text-sm text-brand-ink/55">Hãy thử bỏ bớt bộ lọc hoặc quay lại sau nhé.</p>
+        </div>
+      )}
       {totalPages > 1 && (
         <Pagination
           data-testid="product-pagination"

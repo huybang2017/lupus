@@ -4,7 +4,6 @@ import Input from "@/widgets/common/input"
 import { LOGIN_VIEW } from "@/widgets/account/login-template"
 import ErrorMessage from "@/widgets/checkout/error-message"
 import { SubmitButton } from "@/widgets/checkout/submit-button"
-import LocalizedClientLink from "@/widgets/common/localized-client-link"
 import { signup } from "@/entities/customer"
 
 type Props = {
@@ -16,36 +15,36 @@ const Register = ({ setCurrentView }: Props) => {
 
   return (
     <div
-      className="max-w-sm flex flex-col items-center"
+      className="flex w-full max-w-md flex-col items-center rounded-2xl border border-brand-gold/40 bg-brand-paper p-6 text-brand-ink shadow-sm small:p-10"
       data-testid="register-page"
     >
-      <h1 className="text-large-semi uppercase mb-6">
-        Become a Lupus Store Member
+      <span className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-brand-clay">Lupus Books</span>
+      <h1 className="mb-4 text-center font-serif text-3xl font-semibold text-brand-forest">
+        Trở thành thành viên Lupus Books
       </h1>
-      <p className="text-center text-base-regular text-ui-fg-base mb-4">
-        Create your Lupus Store Member profile, and get access to an enhanced
-        shopping experience.
+      <p className="mb-6 text-center text-base-regular text-brand-ink/70">
+        Tạo tài khoản để lưu địa chỉ, theo dõi đơn hàng và khám phá sách thuận tiện hơn.
       </p>
       {message?.state === "verification_required" && (
         <div
           className="w-full mb-4 text-center text-base-regular text-ui-fg-base bg-ui-bg-subtle border border-ui-border-base rounded-rounded p-4"
           data-testid="register-verification-message"
         >
-          We sent a verification link to <strong>{message.email}</strong>.
-          Please check your inbox to verify your email, then sign in.
+          Chúng tôi đã gửi liên kết xác minh đến <strong>{message.email}</strong>.
+          Vui lòng kiểm tra hộp thư, xác minh email rồi đăng nhập.
         </div>
       )}
       <form className="w-full flex flex-col" action={formAction}>
         <div className="flex flex-col w-full gap-y-2">
           <Input
-            label="First name"
+            label="Tên"
             name="first_name"
             required
             autoComplete="given-name"
             data-testid="first-name-input"
           />
           <Input
-            label="Last name"
+            label="Họ"
             name="last_name"
             required
             autoComplete="family-name"
@@ -60,14 +59,14 @@ const Register = ({ setCurrentView }: Props) => {
             data-testid="email-input"
           />
           <Input
-            label="Phone"
+            label="Số điện thoại"
             name="phone"
             type="tel"
             autoComplete="tel"
             data-testid="phone-input"
           />
           <Input
-            label="Password"
+            label="Mật khẩu"
             name="password"
             required
             type="password"
@@ -79,34 +78,20 @@ const Register = ({ setCurrentView }: Props) => {
           error={message?.state === "error" ? message.error : null}
           data-testid="register-error"
         />
-        <span className="text-center text-ui-fg-base text-small-regular mt-6">
-          By creating an account, you agree to Lupus Store&apos;s{" "}
-          <LocalizedClientLink
-            href="/content/privacy-policy"
-            className="underline"
-          >
-            Privacy Policy
-          </LocalizedClientLink>{" "}
-          and{" "}
-          <LocalizedClientLink
-            href="/content/terms-of-use"
-            className="underline"
-          >
-            Terms of Use
-          </LocalizedClientLink>
-          .
+        <span className="mt-6 text-center text-small-regular text-brand-ink/70">
+          Thông tin bạn cung cấp được dùng để tạo tài khoản, xử lý đơn hàng và hỗ trợ quá trình mua sách.
         </span>
         <SubmitButton className="w-full mt-6" data-testid="register-button">
-          Join
+          Tạo tài khoản
         </SubmitButton>
       </form>
-      <span className="text-center text-ui-fg-base text-small-regular mt-6">
-        Already a member?{" "}
+      <span className="mt-6 text-center text-small-regular text-brand-ink/70">
+        Đã có tài khoản?{" "}
         <button
           onClick={() => setCurrentView(LOGIN_VIEW.SIGN_IN)}
-          className="underline"
+          className="font-semibold text-brand-clay underline underline-offset-4"
         >
-          Sign in
+          Đăng nhập
         </button>
         .
       </span>

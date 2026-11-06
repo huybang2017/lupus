@@ -51,16 +51,16 @@ export default function RelatedProducts({
 
   return (
     <div className="product-page-constraint">
-      <div className="flex flex-col items-center text-center mb-16">
-        <span className="text-base-regular text-gray-600 mb-6">
-          Related products
+      <div className="mb-10 flex flex-col items-center text-center">
+        <span className="eyebrow mb-3">
+          Có thể bạn cũng thích
         </span>
-        <p className="text-2xl-regular text-ui-fg-base max-w-lg">
-          You might also want to check out these products.
+        <p className="max-w-xl font-display text-3xl font-semibold text-brand-forest sm:text-4xl">
+          Những cuốn sách cùng mạch đọc
         </p>
       </div>
 
-      <ul className="grid grid-cols-2 small:grid-cols-3 medium:grid-cols-4 gap-x-6 gap-y-8">
+      <ul className="grid grid-cols-2 gap-x-3 gap-y-10 sm:gap-x-5 md:grid-cols-3 xl:grid-cols-4">
         {products.map((product) => (
           <li key={product.id}>
             <Product region={region} product={product} />

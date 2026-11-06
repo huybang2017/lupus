@@ -2,8 +2,10 @@ import { pool } from "../../db"
 import { cartService } from "../cart/cart.service"
 import { eventBus, runWorkflow } from "../infra/platform-infra.service"
 import { shapeStoreOrder } from "./order-store-shape"
+import { captureDemoBankPayment, DEMO_BANK_PROVIDER_ID, DemoBankCredentials } from "./demo-bank.service"
 import { paymentSessionService } from "./payment-session.service"
 import { OrderDTO } from "./order.types"
+import { VIETQR_PROVIDER_ID } from "./vietqr.service"
 
 // Port of Lupus checkout: complete-cart workflow + create-order + payment collection flow
 // (packages/core/core-flows/src/cart/workflows/complete-cart.ts + order/workflows/create-order.ts).
@@ -12,7 +14,7 @@ import { OrderDTO } from "./order.types"
 // create payment_collection for cart total, complete cart, bump promotion usage_count
 // (on-carry-promotions-flag / usage tracking). Compensation = ROLLBACK.
 export class OrderService {
-  async createFromCart(cartId: string): Promise<OrderDTO> {
+  async createFromCart(cartId: string, demoBankCredentials?: DemoBankCredentials): Promise<OrderDTO> {
     return runWorkflow("complete-cart", { cart_id: cartId }, async (step) => {
     const cart = await cartService.retrieve(cartId)
     if (!cart) {
@@ -30,14 +32,26 @@ export class OrderService {
     // one keeps the legacy behaviour: the order starts with a fresh not_paid collection.
     const cartPc = await pool.query(`SELECT id FROM payment_collection WHERE cart_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`, [cart.id])
     const cartPcId: string | null = cartPc.rows[0]?.id ?? null
+    let pendingSession: { id: string; provider_id: string } | null = null
     if (cartPcId) {
       const pending = await pool.query(
-        `SELECT id FROM payment_session WHERE payment_collection_id=$1 AND status='pending' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id, provider_id FROM payment_session WHERE payment_collection_id=$1 AND status='pending' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
         [cartPcId]
       )
       if (pending.rows[0]) {
+        pendingSession = pending.rows[0]
         await pool.query(`UPDATE payment_collection SET amount=$2 WHERE id=$1`, [cartPcId, cart.totals.total])
-        await paymentSessionService.authorizeSession(pending.rows[0].id)
+        if (pending.rows[0].provider_id === VIETQR_PROVIDER_ID) {
+          // A bank transfer is not paid merely because the customer placed the order.
+          // Keep the session pending until an admin has verified the incoming transfer.
+          await pool.query(`UPDATE payment_collection SET status='awaiting', updated_at=NOW() WHERE id=$1`, [cartPcId])
+        } else if (pending.rows[0].provider_id === DEMO_BANK_PROVIDER_ID) {
+          if (!demoBankCredentials) {
+            throw Object.assign(new Error("Vui lòng nhập tài khoản ngân hàng demo để thanh toán."), { statusCode: 400 })
+          }
+        } else {
+          await paymentSessionService.authorizeSession(pending.rows[0].id)
+        }
       }
     }
     const client = await pool.connect()
@@ -138,6 +152,18 @@ export class OrderService {
       )
       for (const s of spent.rows) {
         await client.query(`UPDATE campaign SET usage_count = usage_count + 1, budget_used = budget_used + $2 WHERE id = $1`, [s.campaign_id, Number(s.spent)])
+      }
+      if (pendingSession?.provider_id === DEMO_BANK_PROVIDER_ID) {
+        await captureDemoBankPayment(client, {
+          credentials: demoBankCredentials!,
+          paymentCollectionId: pc.rows[0].id,
+          paymentSessionId: pendingSession.id,
+          orderId: order.id,
+          displayId: Number(order.display_id),
+          amount: Number(order.total),
+          currencyCode: order.currency_code,
+        })
+        step("capture-demo-bank-payment", { order_id: order.id })
       }
       await client.query(`UPDATE cart SET completed_at=NOW() WHERE id=$1`, [cart.id])
       await client.query("COMMIT")

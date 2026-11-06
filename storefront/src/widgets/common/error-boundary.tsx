@@ -15,11 +15,12 @@ export default class ErrorBoundary extends React.Component<Props, { error: Error
       return this.props.children
     }
     return (
-      <div className="flex flex-col gap-4 items-center justify-center min-h-[calc(100vh-64px)]" data-testid="error-boundary">
-        <h1 className="text-2xl-semi text-ui-fg-base">Something went wrong</h1>
-        <p className="text-small-regular text-ui-fg-base">{this.state.error.message}</p>
-        <button className="text-ui-fg-interactive" onClick={() => window.location.reload()}>
-          Reload the page
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-brand-cream px-6 text-center" data-testid="error-boundary">
+        <p className="eyebrow">Lupus Books</p>
+        <h1 className="font-display text-3xl font-semibold text-brand-forest">Trang sách này đang bị gián đoạn</h1>
+        <p className="max-w-lg text-sm text-brand-ink/55">{this.state.error.message}</p>
+        <button className="rounded-full bg-brand-forest px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-forest-dark" onClick={() => window.location.reload()}>
+          Tải lại trang
         </button>
       </div>
     )

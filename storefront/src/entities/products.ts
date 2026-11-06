@@ -10,6 +10,20 @@ type ProductListQueryParams = (HttpTypes.FindParams & HttpTypes.StoreProductList
   option_value_id?: string | string[]
 }
 
+let bookProductTypeIdPromise: Promise<string | null> | null = null
+
+const getBookProductTypeId = () => {
+  if (!bookProductTypeIdPromise) {
+    bookProductTypeIdPromise = apiFetch<{ product_types: Array<{ id: string; value: string }> }>("/store/product-types", {
+      query: { value: "book", limit: 1 },
+      cacheMs: 60_000,
+    })
+      .then(({ product_types }) => product_types[0]?.id ?? null)
+      .catch(() => null)
+  }
+  return bookProductTypeIdPromise
+}
+
 export const listProducts = async ({
   pageParam = 1,
   queryParams,
@@ -26,21 +40,24 @@ export const listProducts = async ({
   queryParams?: ProductListQueryParams
 }> => {
   if (!countryCode && !regionId) {
-    throw new Error("Country code or region ID is required")
+    throw new Error("Cần mã quốc gia hoặc mã khu vực để tải sách.")
   }
 
   const limit = queryParams?.limit || 12
   const _pageParam = Math.max(pageParam, 1)
   const offset = _pageParam === 1 ? 0 : (_pageParam - 1) * limit
 
-  const region = countryCode ? await getRegion(countryCode) : await retrieveRegion(regionId!)
+  const [region, bookTypeId] = await Promise.all([
+    countryCode ? getRegion(countryCode) : retrieveRegion(regionId!),
+    getBookProductTypeId(),
+  ])
 
-  if (!region) {
+  if (!region || !bookTypeId) {
     return { response: { products: [], count: 0 }, nextPage: null }
   }
 
   return apiFetch<{ products: HttpTypes.StoreProduct[]; count: number }>("/store/products", {
-    query: { limit, offset, region_id: region.id, ...queryParams },
+    query: { limit, offset, region_id: region.id, ...queryParams, type_id: bookTypeId },
   }).then(({ products, count }) => {
     const nextPage = count > offset + limit ? pageParam + 1 : null
     return { response: { products, count }, nextPage, queryParams }

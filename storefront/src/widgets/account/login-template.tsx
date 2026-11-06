@@ -1,5 +1,5 @@
 
-import { useState } from "react"
+import { useLayoutEffect, useState } from "react"
 
 import Register from "@/widgets/account/register"
 import Login from "@/widgets/account/login"
@@ -12,8 +12,13 @@ export enum LOGIN_VIEW {
 const LoginTemplate = () => {
   const [currentView, setCurrentView] = useState("sign-in")
 
+  useLayoutEffect(() => {
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
+  }, [currentView])
+
   return (
-    <div className="w-full flex justify-start px-8 py-8">
+    <div className="flex w-full justify-center py-4 [overflow-anchor:none] small:py-8">
       {currentView === "sign-in" ? (
         <Login setCurrentView={setCurrentView} />
       ) : (

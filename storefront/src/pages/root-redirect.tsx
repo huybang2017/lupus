@@ -2,6 +2,9 @@ import { Navigate, useLocation } from "react-router-dom"
 import { DEFAULT_REGION } from "@/shared/api/config"
 import { loadRegionMap } from "@/entities/regions"
 import { useAsync } from "@/shared/hooks/use-async"
+import { useEffect } from "react"
+
+const REGION_RETRY_DELAY_MS = 1_500
 
 function defaultCountry(map: Map<string, unknown>): string | undefined {
   if (map.has(DEFAULT_REGION)) {
@@ -17,17 +20,24 @@ function FullPageMessage({ children }: { children: React.ReactNode }) {
 /** "/" goes to the default country, like the starter's middleware. */
 export function RootRedirect() {
   const location = useLocation()
-  const { data: map, error, loading } = useAsync(() => loadRegionMap(), [])
+  const { data: map, error, loading, reload } = useAsync(() => loadRegionMap(), [])
+
+  useEffect(() => {
+    if (!error) return
+
+    const retryTimer = window.setTimeout(reload, REGION_RETRY_DELAY_MS)
+    return () => window.clearTimeout(retryTimer)
+  }, [error, reload])
 
   if (loading) {
-    return <FullPageMessage>Loading...</FullPageMessage>
+    return <FullPageMessage>Đang mở tủ sách...</FullPageMessage>
   }
   if (error || !map) {
-    return <FullPageMessage>Could not load the store. Please try again.</FullPageMessage>
+    return <FullPageMessage>Máy chủ đang khởi động, Lupus Books sẽ tự kết nối lại...</FullPageMessage>
   }
   const country = defaultCountry(map)
   if (!country) {
-    return <FullPageMessage>This store has no regions yet.</FullPageMessage>
+    return <FullPageMessage>Cửa hàng chưa được thiết lập khu vực bán hàng.</FullPageMessage>
   }
   return <Navigate to={`/${country}${location.pathname === "/" ? "" : location.pathname}${location.search}`} replace />
 }

@@ -7,7 +7,7 @@ import Overview from "@/widgets/account/overview"
 
 export function AccountOverviewPage() {
   const { customer } = useCustomer()
-  usePageTitle("Account", "Overview of your account activity.")
+  usePageTitle("Tài khoản", "Tổng quan hoạt động tài khoản của bạn.")
 
   const { data: orders } = useAsync(() => listOrders().catch(() => null), [customer?.id])
 

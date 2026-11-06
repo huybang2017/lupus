@@ -6,6 +6,7 @@ import { usePageTitle } from "@/shared/hooks/use-page-title"
 import { notFound, useSearchParams } from "@/shared/navigation/router"
 import { HttpTypes } from "@/shared/types/http"
 import ProductTemplate from "@/widgets/products/product-template"
+import { PageLoadError, PageLoading } from "@/widgets/common/page-state"
 
 function getImagesForVariant(product: HttpTypes.StoreProduct, selectedVariantId?: string) {
   if (!selectedVariantId || !product.variants) {
@@ -27,7 +28,7 @@ export function ProductPage() {
   const searchParams = useSearchParams()
   const selectedVariantId = searchParams.get("v_id") ?? undefined
 
-  const { data: product, loading } = useAsync(
+  const { data: product, error, loading, reload } = useAsync(
     () =>
       listProducts({
         countryCode,
@@ -36,10 +37,19 @@ export function ProductPage() {
     [handle, countryCode]
   )
 
-  usePageTitle(product ? `${product.title} | Lupus Store` : undefined, product ? product.title : undefined)
+  usePageTitle(product ? `${product.title} | Lupus Books` : undefined, product ? (product.subtitle ?? product.title) : undefined)
 
   if (loading) {
-    return null
+    return <PageLoading message="Đang lấy cuốn sách bạn chọn…" />
+  }
+  if (error) {
+    return (
+      <PageLoadError
+        title="Chưa thể tải thông tin sách"
+        description="Kết nối đến kệ sách đang gián đoạn. Bạn vui lòng thử lại."
+        onRetry={reload}
+      />
+    )
   }
   if (!product) {
     return notFound()

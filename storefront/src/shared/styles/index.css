@@ -2,6 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes payment-success-pop {
+  0% { opacity: 0; transform: scale(0.72) rotate(-7deg); }
+  65% { opacity: 1; transform: scale(1.06) rotate(1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+@keyframes payment-success-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes payment-success-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@layer base {
+  :root {
+    color: #1f2924;
+    background: #f7f3ea;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply min-h-screen bg-brand-cream font-sans text-brand-ink antialiased;
+    margin: 0;
+  }
+
+  ::selection {
+    @apply bg-brand-gold/40 text-brand-forest-dark;
+  }
+
+  a,
+  button,
+  [role="button"] {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-clay focus-visible:ring-offset-2 focus-visible:ring-offset-brand-cream;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
 @layer utilities {
   /* Chrome, Safari and Opera */
   .no-scrollbar::-webkit-scrollbar {
@@ -35,8 +94,9 @@
   select:-webkit-autofill,
   select:-webkit-autofill:hover,
   select:-webkit-autofill:focus {
-    border: 1px solid #212121;
-    -webkit-text-fill-color: #212121;
+    border: 0;
+    -webkit-text-fill-color: #1f2924;
+    caret-color: #1f2924;
     -webkit-box-shadow: 0 0 0px 1000px #fff inset;
     transition: background-color 5000s ease-in-out 0s;
   }
@@ -51,11 +111,31 @@
 
 @layer components {
   .content-container {
-    @apply max-w-[1440px] w-full mx-auto px-6;
+    @apply max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-10;
   }
 
   .contrast-btn {
-    @apply px-4 py-2 border border-black rounded-full hover:bg-black hover:text-white transition-colors duration-200 ease-in;
+    @apply px-4 py-2 border border-brand-forest rounded-full hover:bg-brand-forest hover:text-white transition-colors duration-200 ease-in;
+  }
+
+  .font-editorial {
+    @apply font-display;
+  }
+
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-clay;
+  }
+
+  .surface-card {
+    @apply rounded-[1.5rem] border border-brand-sand/80 bg-brand-paper shadow-book;
+  }
+
+  .field-shell {
+    @apply rounded-xl border border-brand-sand bg-brand-paper shadow-[0_1px_0_rgba(31,41,36,0.03)] transition-[border-color,background-color,box-shadow] duration-200 hover:border-brand-moss/60 hover:bg-white focus-within:border-brand-forest focus-within:bg-white focus-within:ring-[3px] focus-within:ring-brand-forest/10;
+  }
+
+  .field-control {
+    @apply focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0;
   }
 
   .text-xsmall-regular {

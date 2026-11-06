@@ -4,7 +4,7 @@ import { pool } from "../../db"
 import { requireAuth } from "../../middleware/require-auth"
 import { fulfillmentService } from "../fulfillment/fulfillment.service"
 import { orderChangeService } from "./order-change.service"
-import { paymentSessionService } from "./payment-session.service"
+import { listPaymentProviderIds, paymentSessionService } from "./payment-session.service"
 import { pricingService } from "../pricing/pricing.service"
 
 // Lupus-compat order endpoints (dashboard parity: orders retrieve/update/preview,
@@ -836,21 +836,52 @@ ordersCompatRouter.post("/admin/payment-collections/:id/mark-as-paid", requireAu
       res.status(404).json({ message: "Payment collection not found" })
       return
     }
-    const provider = provider_id ?? "manual"
+    const order = await pool.query(
+      `SELECT id FROM "order" WHERE id=$1 AND payment_collection_id=$2 AND deleted_at IS NULL`,
+      [order_id, req.params.id]
+    )
+    if (!order.rows[0]) {
+      res.status(400).json({ message: "Order does not belong to this payment collection" })
+      return
+    }
+    const latestSession = await pool.query(
+      `SELECT provider_id FROM payment_session WHERE payment_collection_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    )
+    const provider = provider_id ?? latestSession.rows[0]?.provider_id ?? "manual"
     const client = await pool.connect()
     try {
       await client.query("BEGIN")
-      await client.query(`INSERT INTO payment_session (payment_collection_id, provider_id, status) VALUES ($1,$2,'authorized')`, [req.params.id, provider])
-      await client.query(
-        `INSERT INTO payment (payment_collection_id, provider_id, amount, currency_code, status) VALUES ($1,$2,$3,$4,'captured')`,
-        [req.params.id, provider, c.rows[0].amount, c.rows[0].currency_code]
-      )
-      await client.query(
-        `UPDATE payment_collection SET authorized_amount=$2, captured_amount=$2, status='captured', completed_at=NOW(), updated_at=NOW() WHERE id=$1`,
-        [req.params.id, c.rows[0].amount]
-      )
-      await client.query(`UPDATE "order" SET status='completed' WHERE id=$1`, [order_id])
-      await client.query("COMMIT")
+      const locked = await client.query(`SELECT * FROM payment_collection WHERE id=$1 FOR UPDATE`, [req.params.id])
+      if (locked.rows[0].status === "captured") {
+        await client.query("COMMIT")
+      } else {
+        const updatedSessions = await client.query(
+          `UPDATE payment_session SET status='captured', updated_at=NOW()
+           WHERE payment_collection_id=$1 AND deleted_at IS NULL AND status IN ('pending','authorized')`,
+          [req.params.id]
+        )
+        if (updatedSessions.rowCount === 0) {
+          await client.query(
+            `INSERT INTO payment_session (payment_collection_id, provider_id, status) VALUES ($1,$2,'captured')`,
+            [req.params.id, provider]
+          )
+        }
+        await client.query(
+          `INSERT INTO payment (payment_collection_id, provider_id, amount, currency_code, status)
+           SELECT $1,$2,$3,$4,'captured'
+           WHERE NOT EXISTS (
+             SELECT 1 FROM payment WHERE payment_collection_id=$1 AND status='captured' AND deleted_at IS NULL
+           )`,
+          [req.params.id, provider, c.rows[0].amount, c.rows[0].currency_code]
+        )
+        await client.query(
+          `UPDATE payment_collection SET authorized_amount=$2, captured_amount=$2, status='captured', completed_at=NOW(), updated_at=NOW() WHERE id=$1`,
+          [req.params.id, c.rows[0].amount]
+        )
+        await client.query(`UPDATE "order" SET status='completed', updated_at=NOW() WHERE id=$1`, [order_id])
+        await client.query("COMMIT")
+      }
     } catch (e) {
       await client.query("ROLLBACK")
       throw e
@@ -876,7 +907,7 @@ ordersCompatRouter.get("/admin/payments/payment-providers", requireAuth, async (
     const seen = await pool.query(
       `SELECT DISTINCT provider_id FROM ((SELECT provider_id FROM payment WHERE deleted_at IS NULL) UNION (SELECT provider_id FROM payment_session WHERE deleted_at IS NULL)) p`
     )
-    const ids = new Set(["manual", ...seen.rows.map((r: any) => r.provider_id).filter(Boolean)])
+    const ids = new Set([...listPaymentProviderIds(), ...seen.rows.map((r: any) => r.provider_id).filter(Boolean)])
     const all = [...ids].map((id) => ({ id, is_enabled: true }))
     res.json({ payment_providers: all.slice(skip, skip + take), count: all.length, offset: skip, limit: take })
   } catch (e) {
