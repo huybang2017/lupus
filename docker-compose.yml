@@ -1,4 +1,20 @@
 services:
+  postgres:
+    container_name: lupus-postgres
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: lupus
+    ports:
+      - "5432:5432"
+    volumes:
+      - lupus_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lupus"]
+      interval: 5s
+      retries: 10
+
   redis:
     container_name: lupus-redis
     image: redis:7-alpine
@@ -7,18 +23,40 @@ services:
     volumes:
       - lupus_redis_data:/data
 
-  postgres:
-    container_name: lupus-postgres
-    image: postgres:16
+  api:
+    container_name: lupus-api
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: lupus
-    ports:
-      - "5432:5432"
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/lupus
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?đặt JWT_SECRET trong .env}
+      PORT: 9001
+      STORE_CORS: ${STORE_CORS:-http://localhost:8000}
+      ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9001}
     volumes:
-      - lupus_postgres_data:/var/lib/postgresql/data
+      - lupus_uploads:/app/server/uploads
+    ports:
+      - "${API_PORT:-9001}:9001"
+
+  storefront:
+    container_name: lupus-storefront
+    build:
+      context: .
+      dockerfile: storefront/Dockerfile
+      args:
+        VITE_PUBLISHABLE_KEY: ${VITE_PUBLISHABLE_KEY}
+        VITE_DEFAULT_REGION: ${VITE_DEFAULT_REGION:-us}
+    depends_on:
+      - api
+    ports:
+      - "${STOREFRONT_PORT:-8000}:80"
 
 volumes:
   lupus_postgres_data:
   lupus_redis_data:
+  lupus_uploads:

@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+.git
+.turbo
+_archive
+audit
+**/.env*
+server/uploads
