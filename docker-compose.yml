@@ -37,11 +37,21 @@ services:
       JWT_SECRET: ${JWT_SECRET:?đặt JWT_SECRET trong .env}
       PORT: 9001
       STORE_CORS: ${STORE_CORS:-http://localhost:8000}
-      ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9001}
+      ADMIN_CORS: ${ADMIN_CORS:-http://localhost:5099}
     volumes:
       - lupus_uploads:/app/server/uploads
     ports:
       - "${API_PORT:-9001}:9001"
+
+  client:
+    container_name: lupus-client
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "${CLIENT_PORT:-5099}:80"
 
   storefront:
     container_name: lupus-storefront

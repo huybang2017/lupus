@@ -1,0 +1,481 @@
+// Lupus backend ERD (DBML) - generated from server/src/db/*.sql in db:migrate order
+// Paste into https://dbdiagram.io
+
+Table campaign {
+  id text [primary key]
+  name text [not null]
+  description text
+  currency_code text
+  starts_at timestamptz
+  ends_at timestamptz
+  budget_limit integer
+  budget_used integer [not null]
+  usage_limit integer
+  usage_count integer [not null]
+  identifier text [unique]
+}
+
+Table cart {
+  id text [primary key]
+  region_id text
+  customer_id text
+  email text
+  currency_code text [not null]
+  completed_at timestamptz
+  sales_channel_id text
+  locale text
+}
+
+Table cart_line_item {
+  id text [primary key]
+  cart_id text [not null]
+  variant_id text
+  product_id text
+  title text [not null]
+  variant_title text
+  variant_sku text
+  quantity integer [not null]
+  unit_price bigint [not null]
+  is_tax_inclusive boolean [not null]
+}
+
+Table cart_shipping_method {
+  id text [primary key]
+  cart_id text [not null]
+  name text [not null]
+  amount bigint [not null]
+  shipping_option_id text
+  data jsonb
+}
+
+Table customer {
+  id text [primary key]
+  email text
+  first_name text
+  last_name text
+  company_name text
+  phone text
+  has_account boolean [not null]
+  created_by text
+
+  indexes {
+    (email, has_account) [unique]
+  }
+}
+
+Table customer_address {
+  id text [primary key]
+  customer_id text [not null]
+  first_name text
+  last_name text
+  address_1 text
+  address_2 text
+  city text
+  country_code text
+  postal_code text
+  phone text
+}
+
+Table customer_group {
+  id text [primary key]
+  name text [not null]
+}
+
+Table customer_group_customer {
+  customer_group_id text
+  customer_id text
+
+  indexes {
+    (customer_group_id, customer_id) [pk]
+  }
+}
+
+Table fulfillment {
+  id text [primary key]
+  order_id text [not null]
+  location_id text [not null]
+  provider_id text [not null]
+  shipping_option_id text
+  packed_at timestamptz
+  shipped_at timestamptz
+  delivered_at timestamptz
+  canceled_at timestamptz
+  data jsonb
+}
+
+Table fulfillment_item {
+  id text [primary key]
+  fulfillment_id text [not null]
+  line_item_id text [not null]
+  quantity integer [not null]
+}
+
+Table inventory_level {
+  variant_id text [primary key]
+  stocked_quantity integer [not null]
+  reserved_quantity integer [not null]
+}
+
+Table "order" {
+  id text [primary key]
+  display_id serial
+  cart_id text
+  customer_id text
+  region_id text
+  payment_collection_id text
+  email text
+  currency_code text [not null]
+  status text [not null]
+  subtotal bigint [not null]
+  shipping_total bigint [not null]
+  tax_total bigint [not null]
+  total bigint [not null]
+  canceled_at timestamptz
+  discount_total bigint [not null]
+  version integer [not null]
+  sales_channel_id text
+  is_draft_order boolean [not null]
+}
+
+Table order_address {
+  id text [primary key]
+  order_id text [not null]
+  kind text [not null]
+  first_name text
+  last_name text
+  address_1 text
+  city text
+  country_code text
+  postal_code text
+  phone text
+  company text
+  address_2 text
+  province text
+
+  indexes {
+    (order_id, kind) [unique]
+  }
+}
+
+Table order_line_item {
+  id text [primary key]
+  order_id text [not null]
+  variant_id text
+  product_id text
+  title text [not null]
+  quantity integer [not null]
+  unit_price bigint [not null]
+  discount_total bigint [not null]
+  variant_title text
+  variant_sku text
+}
+
+Table order_shipping_method {
+  id text [primary key]
+  order_id text [not null]
+  shipping_option_id text
+  name text [not null]
+  amount bigint [not null]
+  data jsonb
+}
+
+Table payment {
+  id text [primary key]
+  payment_collection_id text [not null]
+  provider_id text [not null]
+  amount bigint [not null]
+  currency_code text [not null]
+  status text [not null]
+  data jsonb
+  refunded_amount bigint [not null]
+}
+
+Table payment_collection {
+  id text [primary key]
+  currency_code text [not null]
+  amount bigint [not null]
+  authorized_amount bigint [not null]
+  captured_amount bigint [not null]
+  refunded_amount bigint [not null]
+  status text [not null]
+  completed_at timestamptz
+  cart_id text
+}
+
+Table price {
+  id text [primary key]
+  price_set_id text [not null]
+  currency_code text [not null]
+  amount bigint [not null]
+  min_quantity integer
+  max_quantity integer
+  price_list_id text
+
+  indexes {
+    (price_set_id, currency_code) [unique]
+  }
+}
+
+Table price_set {
+  id text [primary key]
+}
+
+Table product {
+  id text [primary key]
+  title text [not null]
+  handle text [not null, unique]
+  subtitle text
+  description text
+  is_giftcard boolean [not null]
+  status text [not null]
+  thumbnail text
+  weight float
+  discountable boolean [not null]
+  external_id text
+  collection_id text
+  type_id text
+  shipping_profile_id text
+  tax_code text
+  height float
+  width float
+  length float
+  mid_code text
+  hs_code text
+  origin_country text
+  material text
+}
+
+Table product_category {
+  id text [primary key]
+  name text [not null]
+  handle text [not null, unique]
+  description text
+  is_active boolean [not null]
+  is_internal boolean [not null]
+  parent_category_id text
+  rank integer [not null]
+}
+
+Table product_category_product {
+  product_id text
+  category_id text
+
+  indexes {
+    (product_id, category_id) [pk]
+  }
+}
+
+Table product_collection {
+  id text [primary key]
+  title text [not null]
+  handle text [not null, unique]
+}
+
+Table product_image {
+  id text [primary key]
+  product_id text [not null]
+  url text [not null]
+  rank integer [not null]
+}
+
+Table product_option {
+  id text [primary key]
+  product_id text
+  title text [not null]
+  is_exclusive boolean [not null]
+}
+
+Table product_option_value {
+  id text [primary key]
+  option_id text [not null]
+  value text [not null]
+  rank integer [not null]
+}
+
+Table product_sales_channel {
+  product_id text
+  sales_channel_id text
+
+  indexes {
+    (product_id, sales_channel_id) [pk]
+  }
+}
+
+Table product_tag {
+  id text [primary key]
+  value text [not null, unique]
+}
+
+Table product_tags {
+  product_id text
+  tag_id text
+
+  indexes {
+    (product_id, tag_id) [pk]
+  }
+}
+
+Table product_variant {
+  id text [primary key]
+  product_id text [not null]
+  title text [not null]
+  sku text
+  barcode text
+  ean text
+  upc text
+  inventory_quantity integer [not null]
+  price_set_id text
+  manage_inventory boolean [not null]
+  allow_backorder boolean [not null]
+  variant_rank integer
+  origin_country text
+  mid_code text
+  material text
+  hs_code text
+  weight float
+  length float
+  height float
+  width float
+  thumbnail text
+}
+
+Table product_variant_option_value {
+  variant_id text
+  option_value_id text
+
+  indexes {
+    (variant_id, option_value_id) [pk]
+  }
+}
+
+Table promotion {
+  id text [primary key]
+  code text [not null, unique]
+  status text [not null]
+  is_automatic boolean [not null]
+  application_type text [not null]
+  application_target text [not null]
+  application_allocation text
+  application_value float
+  application_currency text
+  application_max_quantity integer
+  buy_min_quantity integer
+  starts_at timestamptz
+  ends_at timestamptz
+  usage_limit integer
+  usage_count integer [not null]
+  campaign_id text
+  min_subtotal integer
+  customer_group_id text
+  is_tax_inclusive boolean [not null]
+  application_apply_to_quantity integer
+}
+
+Table region {
+  id text [primary key]
+  name text [not null]
+  currency_code text [not null]
+  automatic_taxes boolean [not null]
+}
+
+Table return_item {
+  id text [primary key]
+  return_id text [not null]
+  line_item_id text [not null]
+  quantity integer [not null]
+  received_quantity integer [not null]
+  damaged_quantity integer [not null]
+  reason_id text
+  dismissed boolean [not null]
+}
+
+Table return_request {
+  id text [primary key]
+  order_id text [not null]
+  order_change_id text
+  status text [not null]
+  refund_amount bigint [not null]
+  refunded boolean [not null]
+  reason_id text
+  created_by text
+}
+
+Table sales_channel {
+  id text [primary key]
+  name text [not null]
+  description text
+  is_disabled boolean [not null]
+}
+
+Table shipping_option {
+  id text [primary key]
+  name text [not null]
+  price_type text [not null]
+  provider_id text [not null]
+  service_zone_name text
+  country_code text
+  amount bigint [not null]
+  currency_code text [not null]
+  is_return boolean [not null]
+  shipping_profile_id text
+  fulfillment_set_id text
+  service_zone_id text
+  shipping_option_type_id text
+  enabled_in_store boolean [not null]
+  data jsonb
+}
+
+Table shipping_profile {
+  id text [primary key]
+  name text [not null]
+  type text [not null]
+}
+
+Ref fk_cart_region_id: cart.region_id ?> region.id [delete: set null]
+Ref fk_cart_customer_id: cart.customer_id ?> customer.id [delete: set null]
+Ref fk_cart_sales_channel_id: cart.sales_channel_id ?> sales_channel.id [delete: set null]
+Ref fk_cart_line_item_cart_id: cart_line_item.cart_id > cart.id [delete: cascade]
+Ref fk_cart_line_item_variant_id: cart_line_item.variant_id ?> product_variant.id [delete: set null]
+Ref fk_cart_line_item_product_id: cart_line_item.product_id ?> product.id [delete: set null]
+Ref fk_cart_shipping_method_cart_id: cart_shipping_method.cart_id > cart.id [delete: cascade]
+Ref fk_customer_address_customer_id: customer_address.customer_id > customer.id [delete: cascade]
+Ref fk_customer_group_customer_customer_group_id: customer_group_customer.customer_group_id > customer_group.id [delete: cascade]
+Ref fk_customer_group_customer_customer_id: customer_group_customer.customer_id > customer.id [delete: cascade]
+Ref fk_fulfillment_order_id: fulfillment.order_id > "order".id [delete: cascade]
+Ref fk_fulfillment_shipping_option_id: fulfillment.shipping_option_id ?> shipping_option.id [delete: set null]
+Ref fk_fulfillment_item_fulfillment_id: fulfillment_item.fulfillment_id > fulfillment.id [delete: cascade]
+Ref fk_fulfillment_item_line_item_id: fulfillment_item.line_item_id > order_line_item.id [delete: cascade]
+Ref fk_inventory_level_variant_id: inventory_level.variant_id > product_variant.id [delete: cascade]
+Ref fk_order_cart_id: "order".cart_id ?> cart.id [delete: set null]
+Ref fk_order_customer_id: "order".customer_id ?> customer.id [delete: set null]
+Ref fk_order_region_id: "order".region_id ?> region.id [delete: set null]
+Ref fk_order_payment_collection_id: "order".payment_collection_id ?> payment_collection.id [delete: set null]
+Ref fk_order_sales_channel_id: "order".sales_channel_id ?> sales_channel.id [delete: set null]
+Ref fk_order_address_order_id: order_address.order_id > "order".id [delete: cascade]
+Ref fk_order_line_item_order_id: order_line_item.order_id > "order".id [delete: cascade]
+Ref fk_order_shipping_method_order_id: order_shipping_method.order_id > "order".id [delete: cascade]
+Ref fk_order_shipping_method_shipping_option_id: order_shipping_method.shipping_option_id ?> shipping_option.id [delete: set null]
+Ref fk_payment_payment_collection_id: payment.payment_collection_id > payment_collection.id [delete: cascade]
+Ref fk_price_price_set_id: price.price_set_id > price_set.id [delete: cascade]
+Ref fk_product_collection_id: product.collection_id ?> product_collection.id [delete: set null]
+Ref fk_product_shipping_profile_id: product.shipping_profile_id ?> shipping_profile.id [delete: set null]
+Ref fk_product_category_parent_category_id: product_category.parent_category_id ?> product_category.id [delete: set null]
+Ref fk_product_category_product_product_id: product_category_product.product_id > product.id [delete: cascade]
+Ref fk_product_category_product_category_id: product_category_product.category_id > product_category.id [delete: cascade]
+Ref fk_product_image_product_id: product_image.product_id > product.id [delete: cascade]
+Ref fk_product_option_product_id: product_option.product_id ?> product.id [delete: cascade]
+Ref fk_product_option_value_option_id: product_option_value.option_id > product_option.id [delete: cascade]
+Ref fk_product_sales_channel_product_id: product_sales_channel.product_id > product.id [delete: cascade]
+Ref fk_product_sales_channel_sales_channel_id: product_sales_channel.sales_channel_id > sales_channel.id [delete: cascade]
+Ref fk_product_tags_product_id: product_tags.product_id > product.id [delete: cascade]
+Ref fk_product_tags_tag_id: product_tags.tag_id > product_tag.id [delete: cascade]
+Ref fk_product_variant_product_id: product_variant.product_id > product.id [delete: cascade]
+Ref fk_product_variant_price_set_id: product_variant.price_set_id ?> price_set.id [delete: set null]
+Ref fk_product_variant_option_value_variant_id: product_variant_option_value.variant_id > product_variant.id [delete: cascade]
+Ref fk_product_variant_option_value_option_value_id: product_variant_option_value.option_value_id > product_option_value.id [delete: cascade]
+Ref fk_promotion_campaign_id: promotion.campaign_id ?> campaign.id [delete: set null]
+Ref fk_promotion_customer_group_id: promotion.customer_group_id ?> customer_group.id [delete: set null]
+Ref fk_return_item_return_id: return_item.return_id > return_request.id [delete: cascade]
+Ref fk_return_item_line_item_id: return_item.line_item_id > order_line_item.id [delete: cascade]
+Ref fk_return_request_order_id: return_request.order_id > "order".id [delete: cascade]
+Ref fk_shipping_option_shipping_profile_id: shipping_option.shipping_profile_id ?> shipping_profile.id [delete: set null]

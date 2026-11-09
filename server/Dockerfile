@@ -6,8 +6,7 @@ COPY client/package.json client/
 COPY storefront/package.json storefront/
 RUN npm ci
 COPY server server
-COPY client client
-RUN npm run build --workspace @dtc/admin && npm run build --workspace @dtc/lupus-backend
+RUN npm run build --workspace @dtc/lupus-backend
 
 FROM node:22-alpine
 RUN apk add --no-cache postgresql-client

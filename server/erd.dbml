@@ -1,0 +1,1582 @@
+// Lupus backend ERD (DBML) - generated from server/src/db/*.sql in db:migrate order
+// Paste into https://dbdiagram.io
+
+Table admin_layout {
+  user_id text
+  view_id text
+  layout jsonb [not null, default: `'{}'`]
+  updated_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (user_id, view_id) [pk]
+  }
+}
+
+Table admin_user {
+  id text [primary key]
+  email text [not null, unique]
+  first_name text
+  last_name text
+  avatar_url text
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table admin_user_auth {
+  admin_user_id text
+  auth_identity_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (admin_user_id, auth_identity_id) [pk]
+  }
+}
+
+Table admin_user_role {
+  admin_user_id text
+  role_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (admin_user_id, role_id) [pk]
+  }
+}
+
+Table admin_view {
+  id text [primary key]
+  name text [not null]
+  config jsonb [not null, default: `'{}'`]
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table analytics_event {
+  id text [primary key]
+  event text [not null]
+  actor text
+  properties jsonb [not null, default: `'{}'`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table api_key {
+  id text [primary key]
+  token text [not null, unique]
+  title text [not null]
+  type text [not null]
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  revoked_at timestamptz
+  redacted text
+  last_used_at timestamptz
+  revoked_by text
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table api_key_sales_channel {
+  api_key_id text
+  sales_channel_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (api_key_id, sales_channel_id) [pk]
+  }
+}
+
+Table auth_identity {
+  id text [primary key]
+  app_metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table auth_mfa_challenge {
+  id text [primary key]
+  auth_identity_id text [not null]
+  auth_provider text [not null, default: `'emailpass'`]
+  completed_at timestamptz
+  expires_at timestamptz [not null, default: `(NOW() + INTERVAL '10 minutes')`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table auth_mfa_factor {
+  id text [primary key]
+  auth_identity_id text [not null]
+  provider text [not null, default: `'totp'`]
+  label text
+  secret text [not null]
+  status text [not null, default: `'pending'`]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table auth_mfa_recovery_code {
+  id text [primary key]
+  auth_identity_id text [not null]
+  code_hash text [not null]
+  used_at timestamptz
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table auth_session {
+  id text [primary key]
+  auth_identity_id text [not null]
+  provider text [not null, default: `'emailpass'`]
+  revoked boolean [not null, default: `FALSE`]
+  expires_at timestamptz [not null, default: `(NOW() + INTERVAL '7 days')`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table auth_verification {
+  id text [primary key]
+  auth_identity_id text [not null]
+  code_hash text [not null]
+  consumed boolean [not null, default: `FALSE`]
+  expires_at timestamptz [not null, default: `(NOW() + INTERVAL '15 minutes')`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table campaign {
+  id text [primary key]
+  name text [not null]
+  description text
+  currency_code text
+  starts_at timestamptz
+  ends_at timestamptz
+  budget_limit integer
+  budget_used integer [not null, default: `0`]
+  usage_limit integer
+  usage_count integer [not null, default: `0`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  identifier text [unique]
+  metadata jsonb
+}
+
+Table cart {
+  id text [primary key]
+  region_id text
+  customer_id text
+  email text
+  currency_code text [not null]
+  completed_at timestamptz
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  sales_channel_id text
+  locale text
+}
+
+Table cart_address {
+  id text [primary key]
+  cart_id text [not null]
+  kind text [not null]
+  first_name text
+  last_name text
+  address_1 text
+  city text
+  country_code text
+  postal_code text
+  phone text
+  created_at timestamptz [not null, default: `NOW()`]
+  province text
+  company text
+  address_2 text
+
+  indexes {
+    (cart_id, kind) [unique]
+  }
+}
+
+Table cart_credit_line {
+  cart_id text
+  credit_line_id text
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (cart_id, credit_line_id) [pk]
+  }
+}
+
+Table cart_gift_card {
+  cart_id text
+  gift_card_id text
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (cart_id, gift_card_id) [pk]
+  }
+}
+
+Table cart_line_item {
+  id text [primary key]
+  cart_id text [not null]
+  variant_id text
+  product_id text
+  title text [not null]
+  variant_title text
+  variant_sku text
+  quantity integer [not null]
+  unit_price bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  is_tax_inclusive boolean [not null, default: `FALSE`]
+}
+
+Table cart_promotion {
+  cart_id text
+  promotion_id text
+  code text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (cart_id, promotion_id) [pk]
+  }
+}
+
+Table cart_shipping_method {
+  id text [primary key]
+  cart_id text [not null]
+  name text [not null]
+  amount bigint [not null, default: `0`]
+  created_at timestamptz [not null, default: `NOW()`]
+  shipping_option_id text
+  data jsonb
+}
+
+Table claim {
+  id text [primary key]
+  order_id text [not null]
+  order_change_id text
+  type text [not null, default: `'refund'`]
+  status text [not null, default: `'requested'`]
+  refund_amount bigint [not null, default: `0`]
+  refunded boolean [not null, default: `FALSE`]
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table claim_item {
+  id text [primary key]
+  claim_id text [not null]
+  direction text [not null]
+  line_item_id text
+  variant_id text
+  title text
+  quantity integer [not null]
+  unit_price bigint [not null, default: `0`]
+  received_quantity integer [not null, default: `0`]
+  reason_id text
+  dismissed boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table credit_line {
+  id text [primary key]
+  customer_id text
+  currency_code text [not null]
+  amount bigint [not null]
+  remaining bigint [not null]
+  reference text
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table currency {
+  code text [primary key]
+  symbol text [not null]
+  symbol_native text [not null, default: `''`]
+  name text [not null, default: `''`]
+  decimal_digits integer [not null, default: `2`]
+}
+
+Table customer {
+  id text [primary key]
+  email text
+  first_name text
+  last_name text
+  company_name text
+  phone text
+  has_account boolean [not null, default: `FALSE`]
+  metadata jsonb
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+
+  indexes {
+    (email, has_account) [unique]
+  }
+}
+
+Table customer_address {
+  id text [primary key]
+  customer_id text [not null]
+  first_name text
+  last_name text
+  address_1 text
+  address_2 text
+  city text
+  country_code text
+  postal_code text
+  phone text
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table customer_group {
+  id text [primary key]
+  name text [not null]
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table customer_group_customer {
+  customer_group_id text
+  customer_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (customer_group_id, customer_id) [pk]
+  }
+}
+
+Table event_outbox {
+  id text [primary key]
+  name text [not null]
+  payload jsonb [not null, default: `'{}'`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table exchange {
+  id text [primary key]
+  order_id text [not null]
+  order_change_id text
+  status text [not null, default: `'requested'`]
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table exchange_item {
+  id text [primary key]
+  exchange_id text [not null]
+  direction text [not null]
+  line_item_id text
+  variant_id text
+  title text
+  quantity integer [not null]
+  unit_price bigint [not null, default: `0`]
+  received_quantity integer [not null, default: `0`]
+  dismissed boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table feature_flag {
+  "key" text [primary key]
+  is_enabled boolean [not null, default: `FALSE`]
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table file_record {
+  id text [primary key]
+  url text [not null]
+  filename text [not null]
+  mime_type text
+  size_bytes integer
+  provider_id text [not null, default: `'local'`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table fulfillment {
+  id text [primary key]
+  order_id text [not null]
+  location_id text [not null, default: `'default'`]
+  provider_id text [not null, default: `'manual'`]
+  shipping_option_id text
+  packed_at timestamptz
+  shipped_at timestamptz
+  delivered_at timestamptz
+  canceled_at timestamptz
+  data jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table fulfillment_item {
+  id text [primary key]
+  fulfillment_id text [not null]
+  line_item_id text [not null]
+  quantity integer [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table fulfillment_set {
+  id text [primary key]
+  name text [not null]
+  type text [not null, default: `'shipping'`]
+  stock_location_id text
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table geo_zone {
+  id text [primary key]
+  service_zone_id text [not null]
+  type text [not null]
+  country_code text [not null]
+  province_code text
+  city text
+  postal_expression text
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table gift_card {
+  id text [primary key]
+  code text [not null, unique]
+  value bigint [not null]
+  balance bigint [not null]
+  currency_code text [not null]
+  is_disabled boolean [not null, default: `FALSE`]
+  ends_at timestamptz
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table gift_card_transaction {
+  id text [primary key]
+  gift_card_id text [not null]
+  order_id text
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table group_price {
+  id text [primary key]
+  customer_group_id text [not null]
+  variant_id text [not null]
+  currency_code text [not null]
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (customer_group_id, variant_id, currency_code) [unique]
+  }
+}
+
+Table inventory_item {
+  id text [primary key]
+  sku text
+  origin_country text
+  hs_code text
+  requires_shipping boolean [not null, default: `TRUE`]
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  title text
+  description text
+  weight float
+  length float
+  height float
+  width float
+  mid_code text
+  material text
+}
+
+Table inventory_level {
+  variant_id text [primary key]
+  stocked_quantity integer [not null, default: `0`]
+  reserved_quantity integer [not null, default: `0`]
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table inventory_level_location {
+  inventory_item_id text
+  location_id text
+  stocked_quantity integer [not null, default: `0`]
+  reserved_quantity integer [not null, default: `0`]
+  incoming_quantity integer [not null, default: `0`]
+  updated_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (inventory_item_id, location_id) [pk]
+  }
+}
+
+Table invite {
+  id text [primary key]
+  email text [not null]
+  token text [not null, unique]
+  accepted boolean [not null, default: `FALSE`]
+  expires_at timestamptz [not null, default: `(NOW() + INTERVAL '7 days')`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table line_item_adjustment {
+  id text [primary key]
+  cart_id text
+  line_item_id text
+  promotion_id text
+  code text
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table line_item_tax_line {
+  id text [primary key]
+  cart_id text
+  line_item_id text
+  description text
+  code text
+  rate float [not null]
+  provider_id text [not null, default: `'system'`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table money_amount {
+  id text [primary key]
+  variant_id text
+  currency_code text [not null]
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table notification {
+  id text [primary key]
+  to_address text [not null]
+  channel text [not null]
+  template text [not null]
+  data jsonb
+  provider_id text [not null, default: `'log'`]
+  status text [not null, default: `'pending'`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table notification_template {
+  id text [primary key]
+  event_name text [not null, unique]
+  channel text [not null, default: `'email'`]
+  subject text [not null, default: `''`]
+  template text [not null, default: `''`]
+  is_enabled boolean [not null, default: `TRUE`]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table "order" {
+  id text [primary key]
+  display_id serial
+  cart_id text
+  customer_id text
+  region_id text
+  payment_collection_id text
+  email text
+  currency_code text [not null]
+  status text [not null, default: `'pending'`]
+  subtotal bigint [not null, default: `0`]
+  shipping_total bigint [not null, default: `0`]
+  tax_total bigint [not null, default: `0`]
+  total bigint [not null, default: `0`]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  canceled_at timestamptz
+  discount_total bigint [not null, default: `0`]
+  version integer [not null, default: `1`]
+  sales_channel_id text
+  is_draft_order boolean [not null, default: `FALSE`]
+  metadata jsonb
+}
+
+Table order_address {
+  id text [primary key]
+  order_id text [not null]
+  kind text [not null]
+  first_name text
+  last_name text
+  address_1 text
+  city text
+  country_code text
+  postal_code text
+  phone text
+  created_at timestamptz [not null, default: `NOW()`]
+  company text
+  address_2 text
+  province text
+
+  indexes {
+    (order_id, kind) [unique]
+  }
+}
+
+Table order_change {
+  id text [primary key]
+  order_id text [not null]
+  change_type text
+  description text
+  status text [not null, default: `'pending'`]
+  version integer [not null, default: `1`]
+  requested_at timestamptz
+  confirmed_at timestamptz
+  declined_at timestamptz
+  canceled_at timestamptz
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table order_change_action {
+  id text [primary key]
+  order_change_id text [not null]
+  action text [not null]
+  line_item_id text
+  variant_id text
+  title text
+  quantity integer
+  unit_price bigint
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table order_credit_line {
+  id text [primary key]
+  order_id text [not null]
+  credit_line_id text
+  amount bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table order_line_item {
+  id text [primary key]
+  order_id text [not null]
+  variant_id text
+  product_id text
+  title text [not null]
+  quantity integer [not null]
+  unit_price bigint [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  discount_total bigint [not null, default: `0`]
+  variant_title text
+  variant_sku text
+}
+
+Table order_shipping_method {
+  id text [primary key]
+  order_id text [not null]
+  shipping_option_id text
+  name text [not null]
+  amount bigint [not null, default: `0`]
+  data jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table password_reset_token {
+  id text [primary key]
+  token text [not null, unique]
+  provider_identity_id text [not null]
+  consumed boolean [not null, default: `FALSE`]
+  expires_at timestamptz [not null, default: `(NOW() + INTERVAL '1 hour')`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table payment {
+  id text [primary key]
+  payment_collection_id text [not null]
+  provider_id text [not null, default: `'manual'`]
+  amount bigint [not null]
+  currency_code text [not null]
+  status text [not null, default: `'pending'`]
+  data jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  refunded_amount bigint [not null, default: `0`]
+}
+
+Table payment_collection {
+  id text [primary key]
+  currency_code text [not null]
+  amount bigint [not null]
+  authorized_amount bigint [not null, default: `0`]
+  captured_amount bigint [not null, default: `0`]
+  refunded_amount bigint [not null, default: `0`]
+  status text [not null, default: `'not_paid'`]
+  completed_at timestamptz
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  cart_id text
+}
+
+Table payment_session {
+  id text [primary key]
+  payment_collection_id text [not null]
+  provider_id text [not null, default: `'manual'`]
+  status text [not null, default: `'pending'`]
+  data jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table price {
+  id text [primary key]
+  price_set_id text [not null]
+  currency_code text [not null]
+  amount bigint [not null]
+  min_quantity integer
+  max_quantity integer
+  price_list_id text
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+
+  indexes {
+    (price_set_id, currency_code) [unique]
+  }
+}
+
+Table price_list {
+  id text [primary key]
+  title text [not null]
+  description text
+  starts_at timestamptz
+  ends_at timestamptz
+  status text [not null, default: `'active'`]
+  type text [not null, default: `'sale'`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  metadata jsonb
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table price_list_customer_group {
+  price_list_id text
+  customer_group_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (price_list_id, customer_group_id) [pk]
+  }
+}
+
+Table price_preference {
+  id text [primary key]
+  attribute text
+  value text
+  is_tax_inclusive boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table price_set {
+  id text [primary key]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table product {
+  id text [primary key]
+  title text [not null]
+  handle text [not null, unique]
+  subtitle text
+  description text
+  is_giftcard boolean [not null, default: `FALSE`]
+  status text [not null, default: `'draft'`]
+  thumbnail text
+  weight float
+  discountable boolean [not null, default: `TRUE`]
+  external_id text
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  collection_id text
+  type_id text
+  shipping_profile_id text
+  tax_code text
+  height float
+  width float
+  length float
+  mid_code text
+  hs_code text
+  origin_country text
+  material text
+}
+
+Table product_category {
+  id text [primary key]
+  name text [not null]
+  handle text [not null, unique]
+  description text
+  is_active boolean [not null, default: `TRUE`]
+  is_internal boolean [not null, default: `FALSE`]
+  parent_category_id text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  rank integer [not null, default: `0`]
+  metadata jsonb
+}
+
+Table product_category_product {
+  product_id text
+  category_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (product_id, category_id) [pk]
+  }
+}
+
+Table product_collection {
+  id text [primary key]
+  title text [not null]
+  handle text [not null, unique]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  metadata jsonb
+}
+
+Table product_image {
+  id text [primary key]
+  product_id text [not null]
+  url text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  rank integer [not null, default: `0`]
+  metadata jsonb
+}
+
+Table product_option {
+  id text [primary key]
+  product_id text
+  title text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  is_exclusive boolean [not null, default: `TRUE`]
+  metadata jsonb
+}
+
+Table product_option_value {
+  id text [primary key]
+  option_id text [not null]
+  value text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  rank integer [not null, default: `0`]
+}
+
+Table product_sales_channel {
+  product_id text
+  sales_channel_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (product_id, sales_channel_id) [pk]
+  }
+}
+
+Table product_tag {
+  id text [primary key]
+  value text [not null, unique]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table product_tags {
+  product_id text
+  tag_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (product_id, tag_id) [pk]
+  }
+}
+
+Table product_type {
+  id text [primary key]
+  value text [not null, unique]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table product_variant {
+  id text [primary key]
+  product_id text [not null]
+  title text [not null]
+  sku text
+  barcode text
+  ean text
+  upc text
+  inventory_quantity integer [not null, default: `0`]
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  price_set_id text
+  manage_inventory boolean [not null, default: `TRUE`]
+  allow_backorder boolean [not null, default: `FALSE`]
+  variant_rank integer
+  origin_country text
+  mid_code text
+  material text
+  hs_code text
+  weight float
+  length float
+  height float
+  width float
+  thumbnail text
+}
+
+Table product_variant_image {
+  variant_id text
+  image_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (variant_id, image_id) [pk]
+  }
+}
+
+Table product_variant_option_value {
+  variant_id text
+  option_value_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (variant_id, option_value_id) [pk]
+  }
+}
+
+Table promotion {
+  id text [primary key]
+  code text [not null, unique]
+  status text [not null, default: `'active'`]
+  is_automatic boolean [not null, default: `FALSE`]
+  application_type text [not null]
+  application_target text [not null, default: `'order'`]
+  application_allocation text
+  application_value float
+  application_currency text
+  application_max_quantity integer
+  buy_min_quantity integer
+  starts_at timestamptz
+  ends_at timestamptz
+  usage_limit integer
+  usage_count integer [not null, default: `0`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  campaign_id text
+  min_subtotal integer
+  customer_group_id text
+  is_tax_inclusive boolean [not null, default: `FALSE`]
+  application_apply_to_quantity integer
+  metadata jsonb
+}
+
+Table promotion_rule {
+  id text [primary key]
+  promotion_id text [not null]
+  attribute text [not null]
+  operator text [not null, default: `'eq'`]
+  values jsonb [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table promotion_target_rule {
+  id text [primary key]
+  promotion_id text [not null]
+  attribute text [not null]
+  operator text [not null, default: `'in'`]
+  values jsonb [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table property_label {
+  id text [primary key]
+  entity text [not null]
+  property text [not null]
+  label text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (entity, property) [unique]
+  }
+}
+
+Table provider_identity {
+  id text [primary key]
+  auth_identity_id text [not null]
+  entity_id text [not null]
+  provider text [not null, default: `'emailpass'`]
+  password_hash text
+  user_metadata jsonb
+  provider_metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+
+  indexes {
+    (provider, entity_id) [unique]
+  }
+}
+
+Table rbac_policy {
+  id text [primary key]
+  name text [not null, unique]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table rbac_role {
+  id text [primary key]
+  name text [not null, unique]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table rbac_role_parent {
+  role_id text
+  parent_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (role_id, parent_id) [pk]
+  }
+}
+
+Table rbac_role_policy {
+  role_id text
+  policy_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (role_id, policy_id) [pk]
+  }
+}
+
+Table refund_reason {
+  id text [primary key]
+  label text [not null]
+  description text
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table region {
+  id text [primary key]
+  name text [not null]
+  currency_code text [not null]
+  automatic_taxes boolean [not null, default: `TRUE`]
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table region_country {
+  id text [primary key]
+  region_id text [not null]
+  iso_2 text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+
+  indexes {
+    (region_id, iso_2) [unique]
+  }
+}
+
+Table region_payment_provider {
+  region_id text
+  provider_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (region_id, provider_id) [pk]
+  }
+}
+
+Table reservation_item {
+  id text [primary key]
+  inventory_item_id text [not null]
+  location_id text [not null]
+  line_item_id text
+  quantity integer [not null]
+  allow_backorder boolean [not null, default: `FALSE`]
+  external_id text
+  description text
+  created_by text
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table return_item {
+  id text [primary key]
+  return_id text [not null]
+  line_item_id text [not null]
+  quantity integer [not null]
+  received_quantity integer [not null, default: `0`]
+  damaged_quantity integer [not null, default: `0`]
+  reason_id text
+  dismissed boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table return_request {
+  id text [primary key]
+  order_id text [not null]
+  order_change_id text
+  status text [not null, default: `'requested'`]
+  refund_amount bigint [not null, default: `0`]
+  refunded boolean [not null, default: `FALSE`]
+  reason_id text
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table sales_channel {
+  id text [primary key]
+  name text [not null]
+  description text
+  is_disabled boolean [not null, default: `FALSE`]
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table sales_channel_stock_location {
+  sales_channel_id text
+  stock_location_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (sales_channel_id, stock_location_id) [pk]
+  }
+}
+
+Table service_zone {
+  id text [primary key]
+  fulfillment_set_id text [not null]
+  name text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table shipping_option {
+  id text [primary key]
+  name text [not null]
+  price_type text [not null, default: `'flat'`]
+  provider_id text [not null, default: `'manual'`]
+  service_zone_name text
+  country_code text
+  amount bigint [not null, default: `0`]
+  currency_code text [not null, default: `'usd'`]
+  is_return boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  shipping_profile_id text
+  fulfillment_set_id text
+  service_zone_id text
+  shipping_option_type_id text
+  enabled_in_store boolean [not null, default: `TRUE`]
+  data jsonb
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table shipping_option_price {
+  id text [primary key]
+  shipping_option_id text [not null]
+  currency_code text
+  region_id text
+  amount bigint [not null]
+  rules jsonb [not null, default: `'[]'`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table shipping_option_rule {
+  id text [primary key]
+  shipping_option_id text [not null]
+  attribute text [not null]
+  operator text [not null]
+  value text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table shipping_option_type {
+  id text [primary key]
+  label text [not null]
+  code text [not null]
+  description text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+}
+
+Table shipping_profile {
+  id text [primary key]
+  name text [not null]
+  type text [not null, default: `'default'`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  metadata jsonb
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table shipping_tax_line {
+  id text [primary key]
+  cart_id text
+  shipping_method_id text
+  description text
+  code text
+  rate float [not null]
+  provider_id text [not null, default: `'system'`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table stock_location {
+  id text [primary key]
+  name text [not null]
+  address_1 text
+  city text
+  country_code text
+  postal_code text
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  address_2 text
+  province text
+  phone text
+  company text
+}
+
+Table stock_location_fulfillment_provider {
+  stock_location_id text
+  provider_id text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (stock_location_id, provider_id) [pk]
+  }
+}
+
+Table store {
+  id text [primary key]
+  name text [not null, default: `'Default Store'`]
+  default_sales_channel_id text
+  default_region_id text
+  metadata jsonb
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  default_location_id text
+}
+
+Table store_currency {
+  store_id text
+  currency_code text
+  is_default boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (store_id, currency_code) [pk]
+  }
+}
+
+Table store_locale {
+  store_id text
+  locale_code text
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (store_id, locale_code) [pk]
+  }
+}
+
+Table stripe_webhook_event {
+  event_id text [primary key]
+  type text [not null]
+  payment_intent_id text
+  status text [not null, default: `'received'`]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table tax_provider {
+  id text [primary key]
+  is_enabled boolean [not null, default: `TRUE`]
+}
+
+Table tax_rate {
+  id text [primary key]
+  tax_region_id text [not null]
+  code text [not null]
+  name text [not null]
+  rate float
+  is_default boolean [not null, default: `FALSE`]
+  is_combinable boolean [not null, default: `FALSE`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  metadata jsonb
+  created_by text
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table tax_rate_rule {
+  id text [primary key]
+  tax_rate_id text [not null]
+  reference text [not null]
+  reference_id text [not null]
+  metadata jsonb
+  created_by text
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+
+  indexes {
+    (tax_rate_id, reference, reference_id) [unique]
+  }
+}
+
+Table tax_region {
+  id text [primary key]
+  country_code text [not null]
+  province_code text
+  provider_id text [not null, default: `'system'`]
+  created_at timestamptz [not null, default: `NOW()`]
+  deleted_at timestamptz
+  parent_id text
+  metadata jsonb
+  created_by text
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Table tax_region_rule {
+  id text [primary key]
+  tax_region_id text [not null]
+  reference text [not null]
+  reference_id text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table translation {
+  id text [primary key]
+  locale_code text [not null]
+  entity text [not null]
+  entity_id text [not null]
+  field text [not null]
+  text text [not null]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (locale_code, entity, entity_id, field) [unique]
+  }
+}
+
+Table translation_locale {
+  code text [primary key]
+  created_at timestamptz [not null, default: `NOW()`]
+}
+
+Table user_preference {
+  user_id text
+  "key" text
+  value jsonb [not null, default: `'{}'`]
+  updated_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (user_id, "key") [pk]
+  }
+}
+
+Table variant_inventory_item {
+  variant_id text
+  inventory_item_id text
+  required_quantity integer [not null, default: `1`]
+  created_at timestamptz [not null, default: `NOW()`]
+
+  indexes {
+    (variant_id, inventory_item_id) [pk]
+  }
+}
+
+Table workflow_execution {
+  id text [primary key]
+  workflow_id text [not null]
+  input jsonb
+  steps jsonb [not null, default: `'[]'`]
+  status text [not null, default: `'running'`]
+  output jsonb
+  error text
+  created_at timestamptz [not null, default: `NOW()`]
+  finished_at timestamptz
+  transaction_id text
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+Ref fk_admin_layout_view_id: admin_layout.view_id > admin_view.id [delete: cascade]
+Ref fk_admin_user_auth_admin_user_id: admin_user_auth.admin_user_id > admin_user.id [delete: cascade]
+Ref fk_admin_user_auth_auth_identity_id: admin_user_auth.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_admin_user_role_admin_user_id: admin_user_role.admin_user_id > admin_user.id [delete: cascade]
+Ref fk_admin_user_role_role_id: admin_user_role.role_id > rbac_role.id [delete: cascade]
+Ref fk_api_key_sales_channel_api_key_id: api_key_sales_channel.api_key_id > api_key.id [delete: cascade]
+Ref fk_api_key_sales_channel_sales_channel_id: api_key_sales_channel.sales_channel_id > sales_channel.id [delete: cascade]
+Ref fk_auth_mfa_challenge_auth_identity_id: auth_mfa_challenge.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_auth_mfa_factor_auth_identity_id: auth_mfa_factor.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_auth_mfa_recovery_code_auth_identity_id: auth_mfa_recovery_code.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_auth_session_auth_identity_id: auth_session.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_auth_verification_auth_identity_id: auth_verification.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_cart_region_id: cart.region_id ?> region.id [delete: set null]
+Ref fk_cart_customer_id: cart.customer_id ?> customer.id [delete: set null]
+Ref fk_cart_sales_channel_id: cart.sales_channel_id ?> sales_channel.id [delete: set null]
+Ref fk_cart_address_cart_id: cart_address.cart_id > cart.id [delete: cascade]
+Ref fk_cart_credit_line_cart_id: cart_credit_line.cart_id > cart.id [delete: cascade]
+Ref fk_cart_credit_line_credit_line_id: cart_credit_line.credit_line_id > credit_line.id [delete: cascade]
+Ref fk_cart_gift_card_cart_id: cart_gift_card.cart_id > cart.id [delete: cascade]
+Ref fk_cart_gift_card_gift_card_id: cart_gift_card.gift_card_id > gift_card.id [delete: cascade]
+Ref fk_cart_line_item_cart_id: cart_line_item.cart_id > cart.id [delete: cascade]
+Ref fk_cart_line_item_variant_id: cart_line_item.variant_id ?> product_variant.id [delete: set null]
+Ref fk_cart_line_item_product_id: cart_line_item.product_id ?> product.id [delete: set null]
+Ref fk_cart_promotion_cart_id: cart_promotion.cart_id > cart.id [delete: cascade]
+Ref fk_cart_promotion_promotion_id: cart_promotion.promotion_id > promotion.id [delete: cascade]
+Ref fk_cart_shipping_method_cart_id: cart_shipping_method.cart_id > cart.id [delete: cascade]
+Ref fk_claim_order_id: claim.order_id > "order".id [delete: cascade]
+Ref fk_claim_order_change_id: claim.order_change_id ?> order_change.id [delete: set null]
+Ref fk_claim_item_claim_id: claim_item.claim_id > claim.id [delete: cascade]
+Ref fk_claim_item_line_item_id: claim_item.line_item_id ?> order_line_item.id [delete: set null]
+Ref fk_claim_item_reason_id: claim_item.reason_id ?> refund_reason.id [delete: set null]
+Ref fk_credit_line_customer_id: credit_line.customer_id ?> customer.id [delete: set null]
+Ref fk_customer_address_customer_id: customer_address.customer_id > customer.id [delete: cascade]
+Ref fk_customer_group_customer_customer_group_id: customer_group_customer.customer_group_id > customer_group.id [delete: cascade]
+Ref fk_customer_group_customer_customer_id: customer_group_customer.customer_id > customer.id [delete: cascade]
+Ref fk_exchange_order_id: exchange.order_id > "order".id [delete: cascade]
+Ref fk_exchange_order_change_id: exchange.order_change_id ?> order_change.id [delete: set null]
+Ref fk_exchange_item_exchange_id: exchange_item.exchange_id > exchange.id [delete: cascade]
+Ref fk_exchange_item_line_item_id: exchange_item.line_item_id ?> order_line_item.id [delete: set null]
+Ref fk_fulfillment_order_id: fulfillment.order_id > "order".id [delete: cascade]
+Ref fk_fulfillment_shipping_option_id: fulfillment.shipping_option_id ?> shipping_option.id [delete: set null]
+Ref fk_fulfillment_item_fulfillment_id: fulfillment_item.fulfillment_id > fulfillment.id [delete: cascade]
+Ref fk_fulfillment_item_line_item_id: fulfillment_item.line_item_id > order_line_item.id [delete: cascade]
+Ref fk_fulfillment_set_stock_location_id: fulfillment_set.stock_location_id ?> stock_location.id [delete: set null]
+Ref fk_geo_zone_service_zone_id: geo_zone.service_zone_id > service_zone.id [delete: cascade]
+Ref fk_gift_card_transaction_gift_card_id: gift_card_transaction.gift_card_id > gift_card.id [delete: cascade]
+Ref fk_gift_card_transaction_order_id: gift_card_transaction.order_id ?> "order".id [delete: set null]
+Ref fk_group_price_customer_group_id: group_price.customer_group_id > customer_group.id [delete: cascade]
+Ref fk_group_price_variant_id: group_price.variant_id > product_variant.id [delete: cascade]
+Ref fk_inventory_level_variant_id: inventory_level.variant_id > product_variant.id [delete: cascade]
+Ref fk_inventory_level_location_inventory_item_id: inventory_level_location.inventory_item_id > inventory_item.id [delete: cascade]
+Ref fk_inventory_level_location_location_id: inventory_level_location.location_id > stock_location.id [delete: cascade]
+Ref fk_line_item_adjustment_cart_id: line_item_adjustment.cart_id ?> cart.id [delete: cascade]
+Ref fk_line_item_adjustment_line_item_id: line_item_adjustment.line_item_id ?> cart_line_item.id [delete: cascade]
+Ref fk_line_item_adjustment_promotion_id: line_item_adjustment.promotion_id ?> promotion.id [delete: set null]
+Ref fk_line_item_tax_line_cart_id: line_item_tax_line.cart_id ?> cart.id [delete: cascade]
+Ref fk_line_item_tax_line_line_item_id: line_item_tax_line.line_item_id ?> cart_line_item.id [delete: cascade]
+Ref fk_money_amount_variant_id: money_amount.variant_id ?> product_variant.id [delete: cascade]
+Ref fk_order_cart_id: "order".cart_id ?> cart.id [delete: set null]
+Ref fk_order_customer_id: "order".customer_id ?> customer.id [delete: set null]
+Ref fk_order_region_id: "order".region_id ?> region.id [delete: set null]
+Ref fk_order_payment_collection_id: "order".payment_collection_id ?> payment_collection.id [delete: set null]
+Ref fk_order_sales_channel_id: "order".sales_channel_id ?> sales_channel.id [delete: set null]
+Ref fk_order_address_order_id: order_address.order_id > "order".id [delete: cascade]
+Ref fk_order_change_order_id: order_change.order_id > "order".id [delete: cascade]
+Ref fk_order_change_action_order_change_id: order_change_action.order_change_id > order_change.id [delete: cascade]
+Ref fk_order_change_action_line_item_id: order_change_action.line_item_id ?> order_line_item.id [delete: set null]
+Ref fk_order_credit_line_order_id: order_credit_line.order_id > "order".id [delete: cascade]
+Ref fk_order_credit_line_credit_line_id: order_credit_line.credit_line_id ?> credit_line.id [delete: set null]
+Ref fk_order_line_item_order_id: order_line_item.order_id > "order".id [delete: cascade]
+Ref fk_order_shipping_method_order_id: order_shipping_method.order_id > "order".id [delete: cascade]
+Ref fk_order_shipping_method_shipping_option_id: order_shipping_method.shipping_option_id ?> shipping_option.id [delete: set null]
+Ref fk_password_reset_token_provider_identity_id: password_reset_token.provider_identity_id > provider_identity.id [delete: cascade]
+Ref fk_payment_payment_collection_id: payment.payment_collection_id > payment_collection.id [delete: cascade]
+Ref fk_payment_session_payment_collection_id: payment_session.payment_collection_id > payment_collection.id [delete: cascade]
+Ref fk_price_price_set_id: price.price_set_id > price_set.id [delete: cascade]
+Ref fk_price_list_customer_group_price_list_id: price_list_customer_group.price_list_id > price_list.id [delete: cascade]
+Ref fk_price_list_customer_group_customer_group_id: price_list_customer_group.customer_group_id > customer_group.id [delete: cascade]
+Ref fk_product_collection_id: product.collection_id ?> product_collection.id [delete: set null]
+Ref fk_product_type_id: product.type_id ?> product_type.id [delete: set null]
+Ref fk_product_shipping_profile_id: product.shipping_profile_id ?> shipping_profile.id [delete: set null]
+Ref fk_product_category_parent_category_id: product_category.parent_category_id ?> product_category.id [delete: set null]
+Ref fk_product_category_product_product_id: product_category_product.product_id > product.id [delete: cascade]
+Ref fk_product_category_product_category_id: product_category_product.category_id > product_category.id [delete: cascade]
+Ref fk_product_image_product_id: product_image.product_id > product.id [delete: cascade]
+Ref fk_product_option_product_id: product_option.product_id ?> product.id [delete: cascade]
+Ref fk_product_option_value_option_id: product_option_value.option_id > product_option.id [delete: cascade]
+Ref fk_product_sales_channel_product_id: product_sales_channel.product_id > product.id [delete: cascade]
+Ref fk_product_sales_channel_sales_channel_id: product_sales_channel.sales_channel_id > sales_channel.id [delete: cascade]
+Ref fk_product_tags_product_id: product_tags.product_id > product.id [delete: cascade]
+Ref fk_product_tags_tag_id: product_tags.tag_id > product_tag.id [delete: cascade]
+Ref fk_product_variant_product_id: product_variant.product_id > product.id [delete: cascade]
+Ref fk_product_variant_price_set_id: product_variant.price_set_id ?> price_set.id [delete: set null]
+Ref fk_product_variant_image_variant_id: product_variant_image.variant_id > product_variant.id [delete: cascade]
+Ref fk_product_variant_image_image_id: product_variant_image.image_id > product_image.id [delete: cascade]
+Ref fk_product_variant_option_value_variant_id: product_variant_option_value.variant_id > product_variant.id [delete: cascade]
+Ref fk_product_variant_option_value_option_value_id: product_variant_option_value.option_value_id > product_option_value.id [delete: cascade]
+Ref fk_promotion_campaign_id: promotion.campaign_id ?> campaign.id [delete: set null]
+Ref fk_promotion_customer_group_id: promotion.customer_group_id ?> customer_group.id [delete: set null]
+Ref fk_promotion_rule_promotion_id: promotion_rule.promotion_id > promotion.id [delete: cascade]
+Ref fk_promotion_target_rule_promotion_id: promotion_target_rule.promotion_id > promotion.id [delete: cascade]
+Ref fk_provider_identity_auth_identity_id: provider_identity.auth_identity_id > auth_identity.id [delete: cascade]
+Ref fk_rbac_role_parent_role_id: rbac_role_parent.role_id > rbac_role.id [delete: cascade]
+Ref fk_rbac_role_parent_parent_id: rbac_role_parent.parent_id > rbac_role.id [delete: cascade]
+Ref fk_rbac_role_policy_role_id: rbac_role_policy.role_id > rbac_role.id [delete: cascade]
+Ref fk_rbac_role_policy_policy_id: rbac_role_policy.policy_id > rbac_policy.id [delete: cascade]
+Ref fk_region_country_region_id: region_country.region_id > region.id [delete: cascade]
+Ref fk_region_payment_provider_region_id: region_payment_provider.region_id > region.id [delete: cascade]
+Ref fk_reservation_item_inventory_item_id: reservation_item.inventory_item_id > inventory_item.id [delete: cascade]
+Ref fk_reservation_item_location_id: reservation_item.location_id > stock_location.id [delete: cascade]
+Ref fk_return_item_return_id: return_item.return_id > return_request.id [delete: cascade]
+Ref fk_return_item_line_item_id: return_item.line_item_id > order_line_item.id [delete: cascade]
+Ref fk_return_item_reason_id: return_item.reason_id ?> refund_reason.id [delete: set null]
+Ref fk_return_request_order_id: return_request.order_id > "order".id [delete: cascade]
+Ref fk_return_request_order_change_id: return_request.order_change_id ?> order_change.id [delete: set null]
+Ref fk_return_request_reason_id: return_request.reason_id ?> refund_reason.id [delete: set null]
+Ref fk_sales_channel_stock_location_sales_channel_id: sales_channel_stock_location.sales_channel_id > sales_channel.id [delete: cascade]
+Ref fk_sales_channel_stock_location_stock_location_id: sales_channel_stock_location.stock_location_id > stock_location.id [delete: cascade]
+Ref fk_service_zone_fulfillment_set_id: service_zone.fulfillment_set_id > fulfillment_set.id [delete: cascade]
+Ref fk_shipping_option_shipping_profile_id: shipping_option.shipping_profile_id ?> shipping_profile.id [delete: set null]
+Ref fk_shipping_option_fulfillment_set_id: shipping_option.fulfillment_set_id ?> fulfillment_set.id [delete: set null]
+Ref fk_shipping_option_service_zone_id: shipping_option.service_zone_id ?> service_zone.id [delete: set null]
+Ref fk_shipping_option_shipping_option_type_id: shipping_option.shipping_option_type_id ?> shipping_option_type.id [delete: set null]
+Ref fk_shipping_option_price_shipping_option_id: shipping_option_price.shipping_option_id > shipping_option.id [delete: cascade]
+Ref fk_shipping_option_rule_shipping_option_id: shipping_option_rule.shipping_option_id > shipping_option.id [delete: cascade]
+Ref fk_shipping_tax_line_cart_id: shipping_tax_line.cart_id ?> cart.id [delete: cascade]
+Ref fk_shipping_tax_line_shipping_method_id: shipping_tax_line.shipping_method_id ?> cart_shipping_method.id [delete: cascade]
+Ref fk_stock_location_fulfillment_provider_stock_location_id: stock_location_fulfillment_provider.stock_location_id > stock_location.id [delete: cascade]
+Ref fk_store_default_sales_channel_id: store.default_sales_channel_id ?> sales_channel.id [delete: set null]
+Ref fk_store_default_region_id: store.default_region_id ?> region.id [delete: set null]
+Ref fk_store_default_location_id: store.default_location_id ?> stock_location.id [delete: set null]
+Ref fk_store_currency_store_id: store_currency.store_id > store.id [delete: cascade]
+Ref fk_store_locale_store_id: store_locale.store_id > store.id [delete: cascade]
+Ref fk_tax_rate_tax_region_id: tax_rate.tax_region_id > tax_region.id [delete: cascade]
+Ref fk_tax_rate_rule_tax_rate_id: tax_rate_rule.tax_rate_id > tax_rate.id [delete: cascade]
+Ref fk_tax_region_parent_id: tax_region.parent_id ?> tax_region.id [delete: cascade]
+Ref fk_tax_region_rule_tax_region_id: tax_region_rule.tax_region_id > tax_region.id [delete: cascade]
+Ref fk_translation_locale_code: translation.locale_code > translation_locale.code [delete: cascade]
+Ref fk_variant_inventory_item_variant_id: variant_inventory_item.variant_id > product_variant.id [delete: cascade]
+Ref fk_variant_inventory_item_inventory_item_id: variant_inventory_item.inventory_item_id > inventory_item.id [delete: cascade]
