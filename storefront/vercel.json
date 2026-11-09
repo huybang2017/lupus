@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/:p(store|auth|admin|hooks|uploads|health)/:path*", "destination": "https://lupus-api-hsgo.onrender.com/:p/:path*" },
+    { "source": "/:p(store|auth|admin|hooks|uploads|health)", "destination": "https://lupus-api-hsgo.onrender.com/:p" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
